@@ -14,6 +14,9 @@ import (
 // settings.
 type Config struct {
 	CheckInterval    time.Duration
+	AlertAfter       time.Duration // how long a problem must persist before it fires
+	Retention        time.Duration // how long resolved findings are kept
+	DBPath           string
 	ListenAddr       string
 	LogFormat        string // "json", "text" or "auto"
 	LogLevel         string // "debug", "info", "warn" or "error"
@@ -34,6 +37,9 @@ func Load(getenv func(string) string) (Config, error) {
 
 	cfg := Config{
 		CheckInterval:    r.duration("SMOKEALARM_CHECK_INTERVAL", 30*time.Second),
+		AlertAfter:       r.duration("SMOKEALARM_ALERT_AFTER", 2*time.Minute),
+		Retention:        r.duration("SMOKEALARM_RETENTION", 30*24*time.Hour),
+		DBPath:           r.text("SMOKEALARM_DB_PATH", "smokealarm.db"),
 		ListenAddr:       r.text("SMOKEALARM_LISTEN_ADDR", ":8080"),
 		LogFormat:        r.choice("SMOKEALARM_LOG_FORMAT", "auto", "json", "text", "auto"),
 		LogLevel:         r.choice("SMOKEALARM_LOG_LEVEL", "info", "debug", "info", "warn", "error"),
@@ -47,6 +53,12 @@ func Load(getenv func(string) string) (Config, error) {
 
 	if cfg.CheckInterval <= 0 {
 		r.fail("SMOKEALARM_CHECK_INTERVAL: must be greater than zero")
+	}
+	if cfg.AlertAfter < 0 {
+		r.fail("SMOKEALARM_ALERT_AFTER: must not be negative")
+	}
+	if cfg.Retention <= 0 {
+		r.fail("SMOKEALARM_RETENTION: must be greater than zero")
 	}
 	if cfg.RestartThreshold < 0 {
 		r.fail("SMOKEALARM_RESTART_THRESHOLD: must not be negative")

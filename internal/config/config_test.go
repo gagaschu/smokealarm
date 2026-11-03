@@ -18,6 +18,9 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	want := Config{
 		CheckInterval:    30 * time.Second,
+		AlertAfter:       2 * time.Minute,
+		Retention:        30 * 24 * time.Hour,
+		DBPath:           "smokealarm.db",
 		ListenAddr:       ":8080",
 		LogFormat:        "auto",
 		LogLevel:         "info",
@@ -34,6 +37,9 @@ func TestLoadDefaults(t *testing.T) {
 func TestLoadValues(t *testing.T) {
 	cfg, err := Load(env(map[string]string{
 		"SMOKEALARM_CHECK_INTERVAL":    "1m",
+		"SMOKEALARM_ALERT_AFTER":       "0s",
+		"SMOKEALARM_RETENTION":         "7d",
+		"SMOKEALARM_DB_PATH":           "/data/smokealarm.db",
 		"SMOKEALARM_LISTEN_ADDR":       "127.0.0.1:9000",
 		"SMOKEALARM_LOG_FORMAT":        "text",
 		"SMOKEALARM_LOG_LEVEL":         "debug",
@@ -55,6 +61,9 @@ func TestLoadValues(t *testing.T) {
 	}
 	if cfg.CheckInterval != time.Minute {
 		t.Errorf("CheckInterval = %v", cfg.CheckInterval)
+	}
+	if cfg.AlertAfter != 0 || cfg.Retention != 7*24*time.Hour || cfg.DBPath != "/data/smokealarm.db" {
+		t.Errorf("AlertAfter = %v, Retention = %v, DBPath = %q", cfg.AlertAfter, cfg.Retention, cfg.DBPath)
 	}
 	if cfg.PodPendingAfter != 48*time.Hour {
 		t.Errorf("PodPendingAfter = %v, want 48h", cfg.PodPendingAfter)
@@ -93,5 +102,24 @@ func TestLoadRejectsNonPositiveInterval(t *testing.T) {
 	_, err := Load(env(map[string]string{"SMOKEALARM_CHECK_INTERVAL": "0s"}))
 	if err == nil || !strings.Contains(err.Error(), "greater than zero") {
 		t.Errorf("got %v, want a 'greater than zero' error", err)
+	}
+}
+
+func TestLoadRejectsBadAlertAndRetention(t *testing.T) {
+	tests := []struct {
+		name string
+		env  map[string]string
+		want string
+	}{
+		{"negative alert after", map[string]string{"SMOKEALARM_ALERT_AFTER": "-1m"}, "SMOKEALARM_ALERT_AFTER"},
+		{"zero retention", map[string]string{"SMOKEALARM_RETENTION": "0s"}, "SMOKEALARM_RETENTION"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Load(env(tt.env))
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("got %v, want an error mentioning %s", err, tt.want)
+			}
+		})
 	}
 }
