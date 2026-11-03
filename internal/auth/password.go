@@ -5,6 +5,7 @@
 package auth
 
 import (
+	"crypto/subtle"
 	"fmt"
 
 	"golang.org/x/crypto/bcrypt"
@@ -18,4 +19,19 @@ func HashPassword(password string) (string, error) {
 		return "", fmt.Errorf("hash password: %w", err)
 	}
 	return string(hash), nil
+}
+
+// PasswordLogin checks the credentials of the single local admin user.
+type PasswordLogin struct {
+	Username string
+	Hash     []byte // bcrypt hash of the password
+}
+
+// Verify reports whether the credentials are correct. It always does the
+// expensive bcrypt comparison, even for a wrong username, so the response
+// time does not reveal whether the username exists.
+func (p PasswordLogin) Verify(username, password string) bool {
+	userOK := subtle.ConstantTimeCompare([]byte(username), []byte(p.Username)) == 1
+	passwordOK := bcrypt.CompareHashAndPassword(p.Hash, []byte(password)) == nil
+	return userOK && passwordOK
 }
