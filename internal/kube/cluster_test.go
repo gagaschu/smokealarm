@@ -7,7 +7,10 @@ import (
 	"testing"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 )
@@ -74,6 +77,14 @@ func TestBuildSnapshotReadsFromCache(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{Namespace: "media", Name: "e1"},
 			Type:       corev1.EventTypeWarning,
 		},
+		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: "media", Name: "d"}},
+		&appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Namespace: "media", Name: "s"}},
+		&appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Namespace: "media", Name: "ds"}},
+		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "pi-1"}},
+		&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Namespace: "media", Name: "j"}},
+		&batchv1.CronJob{ObjectMeta: metav1.ObjectMeta{Namespace: "media", Name: "cj"}},
+		&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Namespace: "media", Name: "pvc"}},
+		&storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: "local-path"}},
 	)
 	cluster, err := New(client, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
@@ -99,9 +110,23 @@ func TestBuildSnapshotReadsFromCache(t *testing.T) {
 	if !snap.Now.Equal(now) {
 		t.Errorf("Now = %v, want %v", snap.Now, now)
 	}
-	if len(snap.Namespaces) != 1 || len(snap.Pods) != 1 || len(snap.Events) != 1 {
-		t.Fatalf("got %d namespaces, %d pods, %d events; want 1 each",
-			len(snap.Namespaces), len(snap.Pods), len(snap.Events))
+	counts := map[string]int{
+		"namespaces":     len(snap.Namespaces),
+		"pods":           len(snap.Pods),
+		"events":         len(snap.Events),
+		"deployments":    len(snap.Deployments),
+		"statefulsets":   len(snap.StatefulSets),
+		"daemonsets":     len(snap.DaemonSets),
+		"nodes":          len(snap.Nodes),
+		"jobs":           len(snap.Jobs),
+		"cronjobs":       len(snap.CronJobs),
+		"pvcs":           len(snap.PVCs),
+		"storageclasses": len(snap.StorageClasses),
+	}
+	for kind, n := range counts {
+		if n != 1 {
+			t.Errorf("snapshot has %d %s, want 1", n, kind)
+		}
 	}
 	if len(snap.Pods[0].ManagedFields) != 0 {
 		t.Error("transform was not applied to cached pod")

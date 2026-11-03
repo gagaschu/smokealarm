@@ -5,10 +5,15 @@
 package checks
 
 import (
+	"fmt"
+	"slices"
 	"strings"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
 )
 
 // Severity says how urgent a finding is.
@@ -43,16 +48,26 @@ type Finding struct {
 
 // Snapshot is a read-only copy of the cluster objects the checks need.
 type Snapshot struct {
-	Now        time.Time
-	Namespaces []*corev1.Namespace
-	Pods       []*corev1.Pod
-	Events     []*corev1.Event // Warning events only
+	Now            time.Time
+	Namespaces     []*corev1.Namespace
+	Pods           []*corev1.Pod
+	Events         []*corev1.Event // Warning events only
+	Deployments    []*appsv1.Deployment
+	StatefulSets   []*appsv1.StatefulSet
+	DaemonSets     []*appsv1.DaemonSet
+	Nodes          []*corev1.Node
+	Jobs           []*batchv1.Job
+	CronJobs       []*batchv1.CronJob
+	PVCs           []*corev1.PersistentVolumeClaim
+	StorageClasses []*storagev1.StorageClass
 }
 
 // Options holds the configurable thresholds and the ignore list.
 type Options struct {
 	RestartThreshold  int
 	PodPendingAfter   time.Duration
+	PVCPendingAfter   time.Duration
+	CronJobGrace      time.Duration
 	IgnoredNamespaces []string
 }
 
@@ -72,7 +87,38 @@ func All() []Check {
 		{Name: checkPodOOMKilled, Run: PodOOMKilled},
 		{Name: checkPodRestarts, Run: PodRestarts},
 		{Name: checkPodPending, Run: PodPending},
+		{Name: checkWorkloadReplicas, Run: WorkloadReplicas},
+		{Name: checkNodeNotReady, Run: NodeNotReady},
+		{Name: checkNodePressure, Run: NodePressure},
+		{Name: checkJobFailed, Run: JobFailed},
+		{Name: checkCronJobMissed, Run: CronJobMissed},
+		{Name: checkPVCPending, Run: PVCPending},
 	}
+}
+
+// Select returns all checks except the disabled ones. A name that matches no
+// check is an error, so a typo in the configuration cannot silently leave a
+// check running (or silently disable nothing).
+func Select(disabled []string) ([]Check, error) {
+	all := All()
+	var names []string
+	for _, c := range all {
+		names = append(names, c.Name)
+	}
+	for _, name := range disabled {
+		if !slices.Contains(names, name) {
+			return nil, fmt.Errorf("unknown check %q in SMOKEALARM_DISABLED_CHECKS; known checks: %s",
+				name, strings.Join(names, ", "))
+		}
+	}
+
+	var enabled []Check
+	for _, c := range all {
+		if !slices.Contains(disabled, c.Name) {
+			enabled = append(enabled, c)
+		}
+	}
+	return enabled, nil
 }
 
 // newFinding fills in the key so every check builds it the same way.

@@ -23,6 +23,8 @@ func TestLoadDefaults(t *testing.T) {
 		LogLevel:         "info",
 		RestartThreshold: 5,
 		PodPendingAfter:  5 * time.Minute,
+		PVCPendingAfter:  5 * time.Minute,
+		CronJobGrace:     5 * time.Minute,
 	}
 	if !reflect.DeepEqual(cfg, want) {
 		t.Errorf("got %+v, want %+v", cfg, want)
@@ -38,9 +40,18 @@ func TestLoadValues(t *testing.T) {
 		"SMOKEALARM_IGNORE_NAMESPACES": "kube-system, test ,,",
 		"SMOKEALARM_RESTART_THRESHOLD": "10",
 		"SMOKEALARM_POD_PENDING_AFTER": "2d",
+		"SMOKEALARM_PVC_PENDING_AFTER": "10m",
+		"SMOKEALARM_CRONJOB_GRACE":     "90s",
+		"SMOKEALARM_DISABLED_CHECKS":   "pod-restarts, pvc-pending",
 	}))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
+	}
+	if cfg.PVCPendingAfter != 10*time.Minute || cfg.CronJobGrace != 90*time.Second {
+		t.Errorf("PVCPendingAfter = %v, CronJobGrace = %v", cfg.PVCPendingAfter, cfg.CronJobGrace)
+	}
+	if want := []string{"pod-restarts", "pvc-pending"}; !reflect.DeepEqual(cfg.DisabledChecks, want) {
+		t.Errorf("DisabledChecks = %v, want %v", cfg.DisabledChecks, want)
 	}
 	if cfg.CheckInterval != time.Minute {
 		t.Errorf("CheckInterval = %v", cfg.CheckInterval)

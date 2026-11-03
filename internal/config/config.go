@@ -10,17 +10,20 @@ import (
 	"time"
 )
 
-// Config holds all settings. Phase 1 only has the variables that the
-// skeleton needs; later phases add database, mail and login settings.
+// Config holds all settings. Later phases add database, mail and login
+// settings.
 type Config struct {
 	CheckInterval    time.Duration
 	ListenAddr       string
 	LogFormat        string // "json", "text" or "auto"
 	LogLevel         string // "debug", "info", "warn" or "error"
 	IgnoreNamespaces []string
+	DisabledChecks   []string
 
 	RestartThreshold int
 	PodPendingAfter  time.Duration
+	PVCPendingAfter  time.Duration
+	CronJobGrace     time.Duration
 }
 
 // Load builds the configuration. The lookup function is injected (instead of
@@ -35,8 +38,11 @@ func Load(getenv func(string) string) (Config, error) {
 		LogFormat:        r.choice("SMOKEALARM_LOG_FORMAT", "auto", "json", "text", "auto"),
 		LogLevel:         r.choice("SMOKEALARM_LOG_LEVEL", "info", "debug", "info", "warn", "error"),
 		IgnoreNamespaces: r.list("SMOKEALARM_IGNORE_NAMESPACES"),
+		DisabledChecks:   r.list("SMOKEALARM_DISABLED_CHECKS"),
 		RestartThreshold: r.integer("SMOKEALARM_RESTART_THRESHOLD", 5),
 		PodPendingAfter:  r.duration("SMOKEALARM_POD_PENDING_AFTER", 5*time.Minute),
+		PVCPendingAfter:  r.duration("SMOKEALARM_PVC_PENDING_AFTER", 5*time.Minute),
+		CronJobGrace:     r.duration("SMOKEALARM_CRONJOB_GRACE", 5*time.Minute),
 	}
 
 	if cfg.CheckInterval <= 0 {
