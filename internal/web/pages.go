@@ -37,6 +37,7 @@ type page struct {
 	// overview
 	Problems          []problemView
 	CanAcknowledgeAny bool // explains the button once, not on every problem
+	AcknowledgedAny   bool // the same for removing an acknowledgement
 	WaitingFirstRun   bool
 	AllGood           bool
 	LastRun           string
@@ -200,6 +201,7 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 		view.DowntimeUntil = downtimeEnds[rec.Key]
 		data.Problems = append(data.Problems, view)
 		data.CanAcknowledgeAny = data.CanAcknowledgeAny || view.CanAcknowledge
+		data.AcknowledgedAny = data.AcknowledgedAny || view.AcknowledgedAt != ""
 	}
 
 	lastRun := s.Status().LastRun
@@ -246,6 +248,25 @@ func (s *Server) acknowledge(w http.ResponseWriter, r *http.Request) {
 	}
 	if changed {
 		s.Logger.Info("finding acknowledged", "key", key)
+	}
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// unacknowledge takes an acknowledgement back, which can bring back reminders
+// right away. It also returns to the overview in every case.
+func (s *Server) unacknowledge(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	key, changed, err := s.Store.Unacknowledge(r.Context(), id)
+	if err != nil {
+		s.serverError(w, "remove acknowledgement", err)
+		return
+	}
+	if changed {
+		s.Logger.Info("finding acknowledgement removed", "key", key)
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }

@@ -126,10 +126,11 @@ If one run finds several changes, the subject is a count (`[smokealarm] 3 new pr
 
 Only firing critical problems can be acknowledged. Warnings are not repeated anyway.
 
-- An acknowledged problem sends no reminders, and the mark lasts until the problem is resolved. There is no undo.
+- An acknowledged problem sends no reminders, and the mark lasts until the problem is resolved or until you remove it.
 - "Resolved" is always reported, even if the first mail never went out. A first mail that is still waiting, for example during a mail server outage, is dropped once the problem is acknowledged. If you have several recipients, the others then only hear about it from the "resolved" mail.
 - If an acknowledged problem becomes a warning and then critical again, it stays acknowledged and no mail is sent.
 - If the problem returns after "resolved", it is a new alarm with a new mail.
+- **Remove acknowledgement** takes it back, and the problem behaves like any other again. A reminder that is overdue, or a first mail that was held back, goes out in the next run, unless a downtime is running. If the problem is only a warning at that moment, nothing is sent until it is critical again, and only then can you acknowledge it again.
 
 An acknowledgement covers one problem, identified by its key: check, object and reason. Only `pvc-usage`, `cert-expiry` and `workload-replicas` keep their key when the reason changes. For the other checks a new reason counts as a new problem, and so does a new object name, such as a pod that was recreated by its Deployment. The new problem gets its own mail and is not acknowledged.
 

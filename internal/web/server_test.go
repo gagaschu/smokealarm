@@ -672,3 +672,95 @@ func TestAcknowledgeIsExplainedOnceAndOnlyIfItCanBeUsed(t *testing.T) {
 		t.Errorf("hint shown %d times, want once:\n%s", strings.Count(body, hint), body)
 	}
 }
+
+func unacknowledgePath(id int64) string {
+	return "/problems/" + strconv.FormatInt(id, 10) + "/unacknowledge"
+}
+
+func TestRemoveAcknowledgementFromOverview(t *testing.T) {
+	const hint = "Removing an acknowledgement brings the reminders back"
+
+	e := newTestEnv(t)
+	cookie := e.login()
+	e.status.LastRun = testNow
+	id := e.firingID("a", checks.Critical)
+
+	before := e.do(http.MethodGet, "/", nil, cookie).Body.String()
+	if strings.Contains(before, unacknowledgePath(id)) || strings.Contains(before, hint) {
+		t.Errorf("overview offers to remove an acknowledgement nobody made:\n%s", before)
+	}
+
+	e.do(http.MethodPost, acknowledgePath(id), url.Values{}, cookie)
+	e.do(http.MethodPost, acknowledgePath(e.firingID("b", checks.Critical)), url.Values{}, cookie)
+	acknowledged := e.do(http.MethodGet, "/", nil, cookie).Body.String()
+	if !strings.Contains(acknowledged, `action="`+unacknowledgePath(id)+`"`) {
+		t.Errorf("overview has no form to remove the acknowledgement:\n%s", acknowledged)
+	}
+	if strings.Count(acknowledged, hint) != 1 {
+		t.Errorf("hint shown %d times, want once:\n%s", strings.Count(acknowledged, hint), acknowledged)
+	}
+
+	rec := e.do(http.MethodPost, unacknowledgePath(id), url.Values{}, cookie)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/" {
+		t.Fatalf("status = %d, location = %q, want 303 to /", rec.Code, rec.Header().Get("Location"))
+	}
+	if at := e.openRecord("a").AcknowledgedAt; at != nil {
+		t.Errorf("AcknowledgedAt = %v, want nil", at)
+	}
+	if at := e.openRecord("b").AcknowledgedAt; at == nil {
+		t.Error("the acknowledgement of another problem was removed")
+	}
+
+	after := e.do(http.MethodGet, "/", nil, cookie).Body.String()
+	if !strings.Contains(after, `action="`+acknowledgePath(id)+`"`) || strings.Contains(after, unacknowledgePath(id)) {
+		t.Errorf("overview does not offer to acknowledge again:\n%s", after)
+	}
+}
+
+func TestRemoveAcknowledgementNeedsLoginPostAndValidID(t *testing.T) {
+	e := newTestEnv(t)
+	cookie := e.login()
+	id := e.firingID("a", checks.Critical)
+	e.do(http.MethodPost, acknowledgePath(id), url.Values{}, cookie)
+
+	rec := e.do(http.MethodPost, unacknowledgePath(id), url.Values{}, nil)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/login" {
+		t.Errorf("without login: status = %d, location = %q, want 303 to /login", rec.Code, rec.Header().Get("Location"))
+	}
+	if rec := e.do(http.MethodGet, unacknowledgePath(id), nil, cookie); rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("GET: status = %d, want 405", rec.Code)
+	}
+	if rec := e.do(http.MethodPost, "/problems/abc/unacknowledge", url.Values{}, cookie); rec.Code != http.StatusBadRequest {
+		t.Errorf("invalid id: status = %d, want 400", rec.Code)
+	}
+	if rec := e.do(http.MethodPost, unacknowledgePath(42), url.Values{}, cookie); rec.Code != http.StatusSeeOther {
+		t.Errorf("unknown id: status = %d, want 303", rec.Code)
+	}
+	if e.openRecord("a").AcknowledgedAt == nil {
+		t.Error("the acknowledgement was removed")
+	}
+}
+
+func TestRemoveAcknowledgementRefusesOtherOrigins(t *testing.T) {
+	for _, value := range []string{"cross-site", "same-site"} {
+		t.Run(value, func(t *testing.T) {
+			e := newTestEnv(t)
+			cookie := e.login()
+			id := e.firingID("a", checks.Critical)
+			e.do(http.MethodPost, acknowledgePath(id), url.Values{}, cookie)
+
+			req := httptest.NewRequest(http.MethodPost, unacknowledgePath(id), nil)
+			req.Header.Set("Sec-Fetch-Site", value)
+			req.AddCookie(cookie)
+			rec := httptest.NewRecorder()
+			e.handler.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusForbidden {
+				t.Errorf("status = %d, want 403", rec.Code)
+			}
+			if e.openRecord("a").AcknowledgedAt == nil {
+				t.Error("the acknowledgement was removed by a request from another origin")
+			}
+		})
+	}
+}

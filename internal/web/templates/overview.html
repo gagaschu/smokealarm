@@ -28,12 +28,14 @@
     </div>
     <div class="actions">
       {{if .CanAcknowledge}}<form method="post" action="/problems/{{.ID}}/acknowledge"><button type="submit">Acknowledge</button></form>{{end}}
+      {{if .AcknowledgedAt}}<form method="post" action="/problems/{{.ID}}/unacknowledge"><button type="submit">Remove acknowledgement</button></form>{{end}}
       <a class="button" href="/downtimes/new?finding={{.ID}}">{{if .DowntimeUntil}}Change downtime{{else}}Set downtime{{end}}</a>
     </div>
   </li>
   {{end}}
 </ul>
 {{if .CanAcknowledgeAny}}<p class="footnote">Acknowledge stops the reminders. You still get a mail when it is resolved.</p>
+{{end}}{{if .AcknowledgedAny}}<p class="footnote">Removing an acknowledgement brings the reminders back, so a mail can go out in the next run.</p>
 {{end}}<p class="footnote">Last check: <time title="{{.LastRun}}">{{.LastRunAgo}} ago</time>.</p>
 {{end}}
 {{end}}

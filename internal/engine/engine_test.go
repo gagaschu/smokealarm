@@ -1078,3 +1078,137 @@ func TestFailedResolvedMailOfAcknowledgedProblemIsRetried(t *testing.T) {
 		t.Fatalf("sent %+v, want the resolved mail after the restart", h.notifier.sent[sent:])
 	}
 }
+
+// unacknowledge does what the "Remove acknowledgement" button does, for the
+// open problem with this key.
+func (h *harness) unacknowledge(key string) {
+	h.t.Helper()
+	ctx := context.Background()
+	records, err := h.engine.Store.OpenRecords(ctx)
+	if err != nil {
+		h.t.Fatalf("OpenRecords: %v", err)
+	}
+	for _, r := range records {
+		if r.Key != key {
+			continue
+		}
+		_, changed, err := h.engine.Store.Unacknowledge(ctx, r.ID)
+		if err != nil || !changed {
+			h.t.Fatalf("Unacknowledge(%s) = %v, %v, want true, nil", key, changed, err)
+		}
+		return
+	}
+	h.t.Fatalf("no open problem with key %s", key)
+}
+
+func TestOverdueReminderGoesOutAfterRemovingTheAcknowledgement(t *testing.T) {
+	h := firingCritical(t)
+	h.acknowledge("a")
+	h.mustRun(3 * time.Hour)
+	h.wantSent(1)
+
+	h.unacknowledge("a")
+	h.mustRun(30 * time.Second)
+	h.wantSent(2)
+	if alertKeys(h.notifier.sent[1].Reminders) != "a" {
+		t.Fatalf("sent %+v, want a reminder for a", h.notifier.sent[1])
+	}
+
+	// From there it repeats as usual.
+	h.mustRun(59 * time.Minute)
+	h.wantSent(2)
+	h.mustRun(time.Minute)
+	h.wantSent(3)
+}
+
+func TestReminderWaitsForTheIntervalAfterRemovingTheAcknowledgement(t *testing.T) {
+	h := firingCritical(t)
+	h.acknowledge("a")
+	h.mustRun(10 * time.Minute)
+
+	h.unacknowledge("a")
+	h.mustRun(49 * time.Minute)
+	h.wantSent(1)
+
+	h.mustRun(time.Minute)
+	h.wantSent(2)
+	if alertKeys(h.notifier.sent[1].Reminders) != "a" {
+		t.Fatalf("sent %+v, want a reminder for a", h.notifier.sent[1])
+	}
+}
+
+func TestFirstMailGoesOutAfterRemovingTheAcknowledgement(t *testing.T) {
+	h := firingUnreported(t)
+	h.acknowledge("a")
+	h.mustRun(time.Minute)
+	h.wantSent(0)
+
+	h.unacknowledge("a")
+	h.mustRun(time.Minute)
+	h.wantSent(1)
+	h.wantLastNew("a")
+}
+
+func TestRemovingTheAcknowledgementOfAWarningSendsNothingUntilItIsCritical(t *testing.T) {
+	h := newHarness(t)
+	h.engine.CriticalRepeatInterval = time.Hour
+	h.findings = []checks.Finding{escalating(checks.Critical)}
+	h.mustRun(0)
+	h.mustRun(2 * time.Minute)
+	h.acknowledge("vol")
+	h.findings = []checks.Finding{escalating(checks.Warning)}
+	h.mustRun(time.Minute)
+
+	h.unacknowledge("vol")
+	h.mustRun(2 * time.Hour)
+	h.wantSent(1)
+
+	h.findings = []checks.Finding{escalating(checks.Critical)}
+	h.mustRun(time.Minute)
+	h.wantSent(2)
+	h.wantLastNew("vol")
+}
+
+func TestRemovingTheAcknowledgementDuringADowntimeSendsNothingUntilItEnds(t *testing.T) {
+	h := firingCritical(t)
+	h.acknowledge("a")
+	h.setDowntime("a", time.Hour)
+
+	h.unacknowledge("a")
+	h.mustRun(59 * time.Minute)
+	h.wantSent(1)
+
+	h.mustRun(time.Minute)
+	h.wantSent(2)
+	h.wantLastNew("a")
+}
+
+func TestRemovingTheAcknowledgementAfterADowntimeBringsRemindersBack(t *testing.T) {
+	h := firingCritical(t)
+	h.acknowledge("a")
+	h.setDowntime("a", time.Hour)
+	h.mustRun(time.Hour)
+	h.wantSent(1) // acknowledged, so the end of the downtime sends nothing
+
+	h.unacknowledge("a")
+	h.mustRun(30 * time.Second)
+	h.wantSent(2)
+	if alertKeys(h.notifier.sent[1].Reminders) != "a" {
+		t.Fatalf("sent %+v, want a reminder for a", h.notifier.sent[1])
+	}
+}
+
+func TestAcknowledgingAgainAfterRemovingIsSilentUntilResolved(t *testing.T) {
+	h := firingCritical(t)
+	h.acknowledge("a")
+	h.unacknowledge("a")
+	h.acknowledge("a")
+
+	h.mustRun(3 * time.Hour)
+	h.wantSent(1)
+
+	h.findings = nil
+	h.mustRun(time.Minute)
+	h.wantSent(2)
+	h.wantLastResolved("a")
+}
