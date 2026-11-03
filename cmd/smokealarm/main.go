@@ -101,11 +101,10 @@ func run() error {
 		AlertAfter: cfg.AlertAfter,
 		Retention:  cfg.Retention,
 		Store:      db,
-		// Mail replaces this in a later phase; until then state changes
-		// only show up in the log.
-		Notifier: &notify.Log{Logger: logger},
-		Now:      time.Now,
-		Logger:   logger,
+		Notifier:   newNotifier(cfg, logger),
+		BaseURL:    cfg.BaseURL,
+		Now:        time.Now,
+		Logger:     logger,
 	}
 	go loop.Run(ctx)
 
@@ -122,6 +121,28 @@ func run() error {
 		return fmt.Errorf("shut down http server: %w", err)
 	}
 	return nil
+}
+
+// newNotifier sends mail if SMTP is configured; otherwise state changes only
+// show up in the log. Never log the password.
+func newNotifier(cfg config.Config, logger *slog.Logger) notify.Notifier {
+	smtp := cfg.SMTP
+	if !smtp.Enabled() {
+		logger.Info("mail not configured, notifications go to the log only")
+		return &notify.Log{Logger: logger}
+	}
+	logger.Info("mail notifications enabled",
+		"host", smtp.Host, "port", smtp.Port, "tls", smtp.TLS, "recipients", len(smtp.To))
+	return &notify.Mail{
+		Host:     smtp.Host,
+		Port:     smtp.Port,
+		TLS:      smtp.TLS,
+		Username: smtp.Username,
+		Password: smtp.Password,
+		From:     smtp.From,
+		To:       smtp.To,
+		Now:      time.Now,
+	}
 }
 
 // newLogger builds the slog logger. "auto" means JSON inside a cluster (easy

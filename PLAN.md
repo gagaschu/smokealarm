@@ -221,7 +221,7 @@ type Alert struct {
 }
 func Subject(n Notification) string // "[smokealarm] CRITICAL: CrashLoopBackOff media/jellyfin" or "[smokealarm] 3 new problems, 1 resolved"
 func Body(n Notification) (string, error) // text/template
-type Mail struct{ ... }  // net/smtp; starttls | tls (port 465) | none; optional PLAIN auth; multiple recipients
+type Mail struct{ Host, Port, TLS, Username, Password, From, To, TLSConfig, Now } // net/smtp; starttls | tls (port 465) | none; optional PLAIN auth; multiple recipients
 type Log struct{ logger *slog.Logger } // used when no SMTP is configured, and in phases 1–3
 ```
 Telegram/webhook later as separate files `telegram.go` / `webhook.go` that implement `Notifier`; the engine does not change.
@@ -325,7 +325,7 @@ Every phase: own branch from main, unit tests with fake objects, `go build`/`go 
 1. **phase-1-skeleton** – `go.mod`, `.gitignore`, minimal `.golangci.yml` (standard linters), `config` (core variables), slog setup, `kube` (clients, informers with transform, `BuildSnapshot` for core resources), `checks` types + `pods.go` + ignore helper with table-driven tests, `engine` loop that **logs** findings for now, `/healthz` and `/readyz` (cache sync). Try it: `KUBECONFIG=... go run ./cmd/smokealarm` (admin variables are not needed before phase 5).
 2. **phase-2-core-checks** – `workloads.go`, `nodes.go`, `jobs.go` (incl. cronjob-missed with robfig/cron, `time/tzdata` import for distroless), `storage.go` (pvc-pending), `DISABLED_CHECKS`, tests incl. edge cases (just below/above threshold, ignored, suspended).
 3. **phase-3-store** – `store` with migrations, `Reconcile`, retention, `notify.Log` as the notifier. Engine tests against a temp SQLite: pending→firing→resolved, flap suppressed, skipped check does not resolve, failed send gets retried.
-4. **phase-4-mail** – `notify.Mail` (STARTTLS/TLS/auth/multiple recipients), subject/body templates, golden tests (`testdata/*.golden`, `-update` flag), SMTP config validation, last send error in `Status`. Try it locally with Mailpit (`SMTP_TLS=none`).
+4. **phase-4-mail** – `notify.Mail` (STARTTLS/TLS/auth/multiple recipients), subject/body templates, golden tests (`testdata/*.golden`, updated with `UPDATE_GOLDEN=1`), SMTP config validation, last send error in `Status`. Try it locally with Mailpit (`SMTP_TLS=none`).
 5. **phase-5-web** – `auth` (login, sessions, middleware, rate limit), `hash-password` subcommand, `web` (overview, history with namespace filter, status, CSS, auto-refresh), `/readyz` incl. DB ping. Handler tests with `httptest`.
 6. **phase-6-optional-checks** – discovery of cert-manager/Argo CD, dynamic informers + conversion to `Certificate`/`Application`, `certs.go`, `argocd.go`, kubelet stats + `pvc-usage`, skip reasons on the status page. Tests incl. "CRD missing".
 7. **phase-7-packaging** – Dockerfile (multi-stage, distroless/static:nonroot, buildx amd64/arm64), Makefile (build, test, lint, run, image), Helm chart (RBAC read access: namespaces, pods, events, nodes, deployments, statefulsets, daemonsets, jobs, cronjobs, persistentvolumeclaims, storageclasses; Recreate, PVC, RBAC switches, Secret/existingSecret, probes, resources, securityContext, optional Ingress), README, ARCHITECTURE.md, LICENSE (Apache-2.0), CHANGELOG.md.
@@ -343,3 +343,6 @@ Every phase: own branch from main, unit tests with fake objects, `go build`/`go 
 - **`skipped` instead of `ranChecks` (phase 3):** `reconcile` gets the checks that could not run this time. Problems of checks that were disabled (or removed) are resolved normally instead of staying "firing" forever.
 - **Per-run finding log line is Debug (phase 3):** state transitions are logged at Info, so the log does not repeat every 30 s.
 - **`go:embed` needs one package-level variable** (`migrationFiles` in `internal/store`); it is never modified.
+- **Mail (phase 4):** STARTTLS is required in `starttls` mode (a server without it is an error, no silent downgrade); `none` is for local testing. The body is quoted-printable. There is no connection test at startup, so a mail server that is briefly down at boot does not stop monitoring.
+- **Golden tests use `UPDATE_GOLDEN=1`** instead of a `-update` flag, because a `flag` variable would be a package-level variable.
+- **`Status` starts minimal (phase 4):** only `NotifierName`, `LastNotifyError` and `LastNotifyErrorAt`; the error is cleared by the next successful send. `LastRun`, checks and the rest follow with the status page in phase 5.

@@ -289,6 +289,41 @@ func TestOneNotificationForSeveralChanges(t *testing.T) {
 	}
 }
 
+func TestStatusShowsSendErrorUntilNextSuccess(t *testing.T) {
+	h := newHarness(t)
+	if got := h.engine.Status(); got.NotifierName != "fake" || got.LastNotifyError != "" {
+		t.Fatalf("initial status = %+v", got)
+	}
+
+	h.findings = []checks.Finding{finding("a", checks.Critical)}
+	h.mustRun(0)
+	h.notifier.fail = true
+	_ = h.run(2 * time.Minute)
+
+	got := h.engine.Status()
+	if !strings.Contains(got.LastNotifyError, "smtp server unreachable") || !got.LastNotifyErrorAt.Equal(h.now) {
+		t.Errorf("status after a failed send = %+v, want the error and its time", got)
+	}
+
+	h.notifier.fail = false
+	h.mustRun(30 * time.Second)
+	if got := h.engine.Status(); got.LastNotifyError != "" || !got.LastNotifyErrorAt.IsZero() {
+		t.Errorf("status after recovery = %+v, want the error cleared", got)
+	}
+}
+
+func TestNotificationCarriesBaseURL(t *testing.T) {
+	h := newHarness(t)
+	h.engine.BaseURL = "https://smokealarm.example.com"
+	h.findings = []checks.Finding{finding("a", checks.Critical)}
+	h.mustRun(0)
+	h.mustRun(2 * time.Minute)
+
+	if len(h.notifier.sent) != 1 || h.notifier.sent[0].BaseURL != "https://smokealarm.example.com" {
+		t.Errorf("sent %+v, want the base URL in the notification", h.notifier.sent)
+	}
+}
+
 func TestResolvedBeforeReportedStaysSilent(t *testing.T) {
 	h := newHarness(t)
 	h.findings = []checks.Finding{finding("a", checks.Critical)}

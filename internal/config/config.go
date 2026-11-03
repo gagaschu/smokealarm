@@ -10,8 +10,7 @@ import (
 	"time"
 )
 
-// Config holds all settings. Later phases add database, mail and login
-// settings.
+// Config holds all settings. Later phases add login settings.
 type Config struct {
 	CheckInterval    time.Duration
 	AlertAfter       time.Duration // how long a problem must persist before it fires
@@ -22,6 +21,9 @@ type Config struct {
 	LogLevel         string // "debug", "info", "warn" or "error"
 	IgnoreNamespaces []string
 	DisabledChecks   []string
+	BaseURL          string // public URL of the web UI, linked in mails
+
+	SMTP SMTPConfig
 
 	RestartThreshold int
 	PodPendingAfter  time.Duration
@@ -45,6 +47,8 @@ func Load(getenv func(string) string) (Config, error) {
 		LogLevel:         r.choice("SMOKEALARM_LOG_LEVEL", "info", "debug", "info", "warn", "error"),
 		IgnoreNamespaces: r.list("SMOKEALARM_IGNORE_NAMESPACES"),
 		DisabledChecks:   r.list("SMOKEALARM_DISABLED_CHECKS"),
+		BaseURL:          r.text("SMOKEALARM_BASE_URL", ""),
+		SMTP:             loadSMTP(&r),
 		RestartThreshold: r.integer("SMOKEALARM_RESTART_THRESHOLD", 5),
 		PodPendingAfter:  r.duration("SMOKEALARM_POD_PENDING_AFTER", 5*time.Minute),
 		PVCPendingAfter:  r.duration("SMOKEALARM_PVC_PENDING_AFTER", 5*time.Minute),
@@ -60,6 +64,8 @@ func Load(getenv func(string) string) (Config, error) {
 	if cfg.Retention <= 0 {
 		r.fail("SMOKEALARM_RETENTION: must be greater than zero")
 	}
+	validateBaseURL(&r, cfg.BaseURL)
+	validateSMTP(&r, cfg.SMTP)
 	if cfg.RestartThreshold < 0 {
 		r.fail("SMOKEALARM_RESTART_THRESHOLD: must not be negative")
 	}

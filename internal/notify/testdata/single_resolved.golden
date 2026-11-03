@@ -1,0 +1,11 @@
+1 resolved
+
+RESOLVED
+
+[RESOLVED] CrashLoopBackOff
+  Object:   Pod media/jellyfin
+  Message:  container jellyfin keeps crashing (7 restarts), last exit code 137 (Error)
+  Since:    2026-11-03 10:00:00 UTC
+  Resolved: 2026-11-03 12:30:00 UTC
+
+Details: https://smokealarm.example.com
