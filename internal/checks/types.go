@@ -13,6 +13,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
 )
 
 // Severity says how urgent a finding is.
@@ -47,22 +48,25 @@ type Finding struct {
 
 // Snapshot is a read-only copy of the cluster objects the checks need.
 type Snapshot struct {
-	Now          time.Time
-	Namespaces   []*corev1.Namespace
-	Pods         []*corev1.Pod
-	Events       []*corev1.Event // Warning events only
-	Deployments  []*appsv1.Deployment
-	StatefulSets []*appsv1.StatefulSet
-	DaemonSets   []*appsv1.DaemonSet
-	Nodes        []*corev1.Node
-	Jobs         []*batchv1.Job
-	CronJobs     []*batchv1.CronJob
+	Now            time.Time
+	Namespaces     []*corev1.Namespace
+	Pods           []*corev1.Pod
+	Events         []*corev1.Event // Warning events only
+	Deployments    []*appsv1.Deployment
+	StatefulSets   []*appsv1.StatefulSet
+	DaemonSets     []*appsv1.DaemonSet
+	Nodes          []*corev1.Node
+	Jobs           []*batchv1.Job
+	CronJobs       []*batchv1.CronJob
+	PVCs           []*corev1.PersistentVolumeClaim
+	StorageClasses []*storagev1.StorageClass
 }
 
 // Options holds the configurable thresholds and the ignore list.
 type Options struct {
 	RestartThreshold  int
 	PodPendingAfter   time.Duration
+	PVCPendingAfter   time.Duration
 	CronJobGrace      time.Duration
 	IgnoredNamespaces []string
 }
@@ -88,6 +92,7 @@ func All() []Check {
 		{Name: checkNodePressure, Run: NodePressure},
 		{Name: checkJobFailed, Run: JobFailed},
 		{Name: checkCronJobMissed, Run: CronJobMissed},
+		{Name: checkPVCPending, Run: PVCPending},
 	}
 }
 
