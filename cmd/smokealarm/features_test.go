@@ -59,3 +59,34 @@ func TestSplitByFeaturesKeepsDisabledChecksOut(t *testing.T) {
 		t.Errorf("unavailable = %+v, want only the Argo CD checks", unavailable)
 	}
 }
+
+func TestFeaturesInUse(t *testing.T) {
+	all := kube.Features{CertManager: true, ArgoCD: true}
+
+	tests := []struct {
+		name     string
+		disabled []string
+		detected kube.Features
+		want     kube.Features
+	}{
+		{"all checks active", nil, all, all},
+		{"cert-manager checks disabled", []string{"cert-not-ready", "cert-expiry"}, all, kube.Features{ArgoCD: true}},
+		{"only one of the two cert-manager checks disabled", []string{"cert-expiry"}, all, all},
+		{"all Argo CD checks disabled", []string{"argocd-health", "argocd-sync"}, all, kube.Features{CertManager: true}},
+		{"everything disabled", []string{"cert-not-ready", "cert-expiry", "argocd-health", "argocd-sync"}, all, kube.Features{}},
+		{"CRDs not installed", nil, kube.Features{}, kube.Features{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			enabled, err := checks.Select(tt.disabled)
+			if err != nil {
+				t.Fatal(err)
+			}
+			active, _ := splitByFeatures(enabled, tt.detected)
+
+			if got := featuresInUse(active, tt.detected); got != tt.want {
+				t.Errorf("featuresInUse = %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}

@@ -90,7 +90,7 @@ func run() error {
 	}
 
 	cluster, err := kube.New(clients.Kube, clients.Dynamic, kube.Options{
-		Features:    features,
+		Features:    featuresInUse(activeChecks, features),
 		VolumeStats: hasCheck(activeChecks, checks.PVCUsageCheck),
 	}, logger)
 	if err != nil {
@@ -154,6 +154,25 @@ func splitByFeatures(enabled []checks.Check, features kube.Features) ([]checks.C
 		unavailable = append(unavailable, engine.SkippedCheck{Name: c.Name, Reason: missingFeatureReason(c.Requires)})
 	}
 	return active, unavailable
+}
+
+// featuresInUse narrows the detected features to those that an active check
+// needs. Without this, installed CRDs would get informers even when all their
+// checks are disabled, and without RBAC permission for them the caches would
+// never sync.
+func featuresInUse(active []checks.Check, detected kube.Features) kube.Features {
+	needs := func(requires string) bool {
+		for _, c := range active {
+			if c.Requires == requires {
+				return true
+			}
+		}
+		return false
+	}
+	return kube.Features{
+		CertManager: detected.CertManager && needs(checks.RequiresCertManager),
+		ArgoCD:      detected.ArgoCD && needs(checks.RequiresArgoCD),
+	}
 }
 
 func missingFeatureReason(requires string) string {
