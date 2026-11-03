@@ -1,0 +1,9 @@
+New:
+- CRITICAL Pod media/jellyfin: CrashLoopBackOff (since 2026-11-03 10:00 UTC)
+- WARNING Deployment media/sonarr: ReplicasUnavailable (since 2026-11-03 10:30 UTC)
+Still critical:
+- Node pi-2: NotReady (since 2026-11-03 10:00 UTC)
+Resolved:
+- Deployment media/sonarr: ReplicasUnavailable (since 2026-11-03 10:30 UTC, resolved 2026-11-03 12:30 UTC)
+
+https://smokealarm.example.com

@@ -1,0 +1,3 @@
+Resolved:
+- Pod media/jellyfin: CrashLoopBackOff (since 2026-11-03 10:00 UTC, resolved 2026-11-03 12:30 UTC)
+- Node pi-2: NotReady (since 2026-11-03 10:00 UTC, resolved 2026-11-03 12:30 UTC)
