@@ -5,6 +5,8 @@
 package checks
 
 import (
+	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -73,6 +75,31 @@ func All() []Check {
 		{Name: checkPodRestarts, Run: PodRestarts},
 		{Name: checkPodPending, Run: PodPending},
 	}
+}
+
+// Select returns all checks except the disabled ones. A name that matches no
+// check is an error, so a typo in the configuration cannot silently leave a
+// check running (or silently disable nothing).
+func Select(disabled []string) ([]Check, error) {
+	all := All()
+	var names []string
+	for _, c := range all {
+		names = append(names, c.Name)
+	}
+	for _, name := range disabled {
+		if !slices.Contains(names, name) {
+			return nil, fmt.Errorf("unknown check %q in SMOKEALARM_DISABLED_CHECKS; known checks: %s",
+				name, strings.Join(names, ", "))
+		}
+	}
+
+	var enabled []Check
+	for _, c := range all {
+		if !slices.Contains(disabled, c.Name) {
+			enabled = append(enabled, c)
+		}
+	}
+	return enabled, nil
 }
 
 // newFinding fills in the key so every check builds it the same way.
