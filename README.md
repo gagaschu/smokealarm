@@ -268,6 +268,7 @@ make test-race   # the same with the race detector (on Linux this needs a C comp
 make lint        # golangci-lint
 make build       # bin/smokealarm
 make chart       # lint and render the Helm chart: the defaults and every file in deploy/helm/examples
+make screenshots # take the images in docs/screenshots again (needs Chrome or Chromium, and pngquant)
 
 export SMOKEALARM_ADMIN_PASSWORD_HASH="$(make -s hash-password)"
 make run         # runs against the cluster from KUBECONFIG, UI on http://localhost:8080

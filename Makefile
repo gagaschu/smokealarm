@@ -35,6 +35,13 @@ test-race: ## Run the tests with the race detector (needs a C compiler on Linux)
 lint: ## Run golangci-lint
 	golangci-lint run
 
+# The images in docs/screenshots, used by the README. Made-up data, rendered by
+# the real handlers. Needs Google Chrome or Chromium (CHROME=/path/to/chrome if
+# it is not found) and pngquant to keep the files small.
+.PHONY: screenshots
+screenshots: ## Take the README screenshots again (needs Chrome and pngquant)
+	UPDATE_SCREENSHOTS=1 go test ./internal/web -run TestScreenshots -count=1 -v
+
 # Local run against the cluster from KUBECONFIG. The password hash is required;
 # create one with "make hash-password". The defaults suit local development:
 # readable logs and a session cookie that also works over plain HTTP.
