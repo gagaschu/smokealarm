@@ -2,6 +2,8 @@
 
 # Build stage. It always runs on the build machine's own architecture and
 # cross-compiles, so multi-arch images need no emulation (smokealarm is pure Go).
+# The default lets a plain "docker build ." work. It must equal the version in
+# go.mod (a test checks this); "make image" passes the version from go.mod.
 ARG GO_VERSION=1.27.3
 FROM --platform=$BUILDPLATFORM golang:${GO_VERSION} AS build
 ARG TARGETOS

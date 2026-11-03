@@ -18,9 +18,12 @@ First version.
 - **Web UI** with overview, history (filter by namespace) and status page; light and dark mode; usable on a phone. No JavaScript.
 - **Login** for one local admin (bcrypt hash), server-side sessions, rate limit for failed logins, and the `hash-password` subcommand.
 - **Ignore rules**: an annotation on an object or its namespace, a list of namespaces, and switching single checks off.
-- Optional CRDs (cert-manager, Argo CD) are detected at startup; checks that cannot run are skipped and shown with the reason.
+- Optional CRDs (cert-manager, Argo CD) are looked at only if an enabled check needs them. At startup smokealarm detects whether the CRD is installed and whether the service account may list it; checks that cannot run are skipped and shown with the reason. Without the permission their open problems stay open, because they may still exist.
+- If the informer caches do not sync within two minutes (usually a missing permission), smokealarm exits with an error that names the resources, instead of staying unready forever.
 - `/healthz` and `/readyz` endpoints.
-- **Packaging**: a multi-arch container image (amd64, arm64) on a distroless base, a Helm chart with read-only RBAC, optional permissions behind switches and a locked-down security context, a Makefile, and documentation (README, ARCHITECTURE).
+- **Packaging**: a multi-arch container image (amd64, arm64) on a distroless base, a Makefile, and documentation (README, ARCHITECTURE).
+- **Helm chart** with read RBAC, optional permissions behind switches (`rbac.nodesProxy`, `rbac.certManager`, `rbac.argocd`; a switch that is off also disables the checks that need it), a locked-down security context, startup, liveness and readiness probes, and example values files in `deploy/helm/examples/` (ingress with TLS, mail, minimal permissions, own Secret). The `nodes/proxy` rule exists only while `pvc-usage` is active; the README explains why `get` on `nodes/proxy` is not a read-only permission. The ClusterRole is named `<namespace>-<release>`, so the chart can be installed in several namespaces.
+- `make test` runs without the race detector (it needs a C compiler on Linux); `make test-race` adds it. `make chart` lints and renders the chart with the defaults and every example file.
 
 [Unreleased]: https://github.com/gagaschu/smokealarm/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/gagaschu/smokealarm/releases/tag/v0.1.0

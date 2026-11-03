@@ -1,0 +1,15 @@
+# Reach the web UI through an ingress with TLS. With TLS on, the login cookie
+# can stay Secure (the default), and the link in the mails becomes
+# https://<host> automatically.
+#
+#   helm install smokealarm ./deploy/helm/smokealarm -n smokealarm --create-namespace \
+#     -f deploy/helm/examples/ingress-tls.yaml --set-string auth.passwordHash="$HASH"
+ingress:
+  enabled: true
+  className: nginx          # for example traefik on k3s
+  host: smokealarm.example.com
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt   # remove if you manage the certificate yourself
+  tls:
+    enabled: true
+    secretName: smokealarm-tls

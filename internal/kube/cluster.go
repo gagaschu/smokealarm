@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -18,6 +20,12 @@ import (
 // resyncPeriod is zero: we only read the caches, so periodic resyncs of
 // unchanged objects would just waste CPU.
 const resyncPeriod = 0
+
+// syncTimeout is how long the caches get to fill at startup. A cache that does
+// not fill in this time is almost always one the service account may not read:
+// the informer then retries forever and logs "forbidden". Failing with a clear
+// message is better than a pod that never becomes ready.
+const syncTimeout = 2 * time.Minute
 
 // Cluster owns the informers. Informers keep a local copy of the objects
 // up to date through a watch, so each check run reads memory instead of
@@ -50,6 +58,15 @@ type Cluster struct {
 	// the stats of one node; tests replace it.
 	volumeStats bool
 	fetchStats  statsFetcher
+
+	// syncTimeout is a field so tests can make it short.
+	syncTimeout time.Duration
+}
+
+// namedInformer pairs an informer with the name of its resource, for messages.
+type namedInformer struct {
+	name     string
+	informer cache.SharedIndexInformer
 }
 
 // Options tells the cluster which optional parts to use.
@@ -68,6 +85,7 @@ func New(client kubernetes.Interface, dynamicClient dynamic.Interface, options O
 		logger:      logger,
 		volumeStats: options.VolumeStats,
 		fetchStats:  kubeletStatsFetcher(client),
+		syncTimeout: syncTimeout,
 		coreFactory: informers.NewSharedInformerFactory(client, resyncPeriod),
 		eventFactory: informers.NewSharedInformerFactoryWithOptions(client, resyncPeriod,
 			informers.WithTweakListOptions(onlyWarnings)),
@@ -85,8 +103,8 @@ func New(client kubernetes.Interface, dynamicClient dynamic.Interface, options O
 	c.storageClasses = c.coreFactory.Storage().V1().StorageClasses().Informer()
 
 	// Transforms must be set before the informers start.
-	for _, informer := range c.allInformers() {
-		if err := informer.SetTransform(trimObject); err != nil {
+	for _, n := range c.allInformers() {
+		if err := n.informer.SetTransform(trimObject); err != nil {
 			return nil, fmt.Errorf("set informer transform: %w", err)
 		}
 	}
@@ -123,25 +141,37 @@ func (c *Cluster) addCustomResources(dynamicClient dynamic.Interface, features F
 }
 
 // allInformers lists the typed informers, which share one transform.
-func (c *Cluster) allInformers() []cache.SharedIndexInformer {
-	return []cache.SharedIndexInformer{
-		c.namespaces, c.pods, c.events,
-		c.deployments, c.statefulSets, c.daemonSets,
-		c.nodes, c.jobs, c.cronJobs, c.pvcs, c.storageClasses,
+func (c *Cluster) allInformers() []namedInformer {
+	return []namedInformer{
+		{"namespaces", c.namespaces}, {"pods", c.pods}, {"events", c.events},
+		{"deployments", c.deployments}, {"statefulsets", c.statefulSets}, {"daemonsets", c.daemonSets},
+		{"nodes", c.nodes}, {"jobs", c.jobs}, {"cronjobs", c.cronJobs},
+		{"persistentvolumeclaims", c.pvcs}, {"storageclasses", c.storageClasses},
 	}
 }
 
 // syncedInformers lists every informer that must be synced, including the
 // optional custom resources that are in use.
-func (c *Cluster) syncedInformers() []cache.SharedIndexInformer {
+func (c *Cluster) syncedInformers() []namedInformer {
 	informers := c.allInformers()
 	if c.certificates != nil {
-		informers = append(informers, c.certificates)
+		informers = append(informers, namedInformer{"certificates", c.certificates})
 	}
 	if c.applications != nil {
-		informers = append(informers, c.applications)
+		informers = append(informers, namedInformer{"applications", c.applications})
 	}
 	return informers
+}
+
+// unsyncedNames lists the resources whose caches are not filled yet.
+func (c *Cluster) unsyncedNames() []string {
+	var names []string
+	for _, n := range c.syncedInformers() {
+		if !n.informer.HasSynced() {
+			names = append(names, n.name)
+		}
+	}
+	return names
 }
 
 // onlyWarnings keeps Normal events out of the cache; they are the vast
@@ -161,27 +191,31 @@ func (c *Cluster) Start(ctx context.Context) {
 }
 
 // WaitForSync blocks until all caches hold the initial list of objects.
-// Running checks before that would report objects as missing.
+// Running checks before that would report objects as missing. It gives up with
+// an error that names the missing caches after the sync timeout, or when ctx
+// ends first (shutdown).
 func (c *Cluster) WaitForSync(ctx context.Context) error {
+	syncCtx, cancel := context.WithTimeout(ctx, c.syncTimeout)
+	defer cancel()
+
 	var synced []cache.InformerSynced
-	for _, informer := range c.syncedInformers() {
-		synced = append(synced, informer.HasSynced)
+	for _, n := range c.syncedInformers() {
+		synced = append(synced, n.informer.HasSynced)
 	}
-	if !cache.WaitForCacheSync(ctx.Done(), synced...) {
+	if cache.WaitForCacheSync(syncCtx.Done(), synced...) {
+		c.logger.Info("informer caches synced")
+		return nil
+	}
+	if ctx.Err() != nil {
 		return errors.New("informer caches did not sync before shutdown")
 	}
-	c.logger.Info("informer caches synced")
-	return nil
+	return fmt.Errorf("informer caches did not sync within %s: %s; usually the service account may not list them (look for \"forbidden\" in the log)",
+		c.syncTimeout, strings.Join(c.unsyncedNames(), ", "))
 }
 
 // Synced reports whether the caches are filled. It backs /readyz.
 func (c *Cluster) Synced() bool {
-	for _, informer := range c.syncedInformers() {
-		if !informer.HasSynced() {
-			return false
-		}
-	}
-	return true
+	return len(c.unsyncedNames()) == 0
 }
 
 // Ready is the readiness probe for the web server.

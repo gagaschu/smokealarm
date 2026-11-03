@@ -19,7 +19,15 @@ build: ## Build the binary into bin/smokealarm
 	CGO_ENABLED=0 go build -trimpath -o bin/smokealarm ./cmd/smokealarm
 
 .PHONY: test
-test: ## Run go vet and all tests (with the race detector)
+test: ## Run go vet and all tests
+	go vet ./...
+	go test ./...
+
+# On Linux the race detector needs cgo, that is a C compiler ("go: -race requires
+# cgo"). The build itself does not (CGO_ENABLED=0), which is why "make test"
+# works without one.
+.PHONY: test-race
+test-race: ## Run the tests with the race detector (needs a C compiler on Linux)
 	go vet ./...
 	go test -race ./...
 
@@ -58,7 +66,16 @@ image: ## Build the multi-arch image (PUSH=1 to push it)
 image-local: ## Build the image for this machine and load it into Docker
 	docker buildx build --load --build-arg GO_VERSION=$(GO_VERSION) -t $(IMAGE):$(TAG) .
 
+# A made-up hash: lint and template do not check it, they only need a value.
+CHART_HASH := --set-string auth.passwordHash='$$2a$$10$$example'
+CHART      := deploy/helm/smokealarm
+
 .PHONY: chart
-chart: ## Lint the Helm chart and render it with the default and the example values
-	helm lint deploy/helm/smokealarm --set auth.passwordHash='$$2a$$10$$example'
-	helm template smokealarm deploy/helm/smokealarm --set auth.passwordHash='$$2a$$10$$example' > /dev/null
+chart: ## Lint and render the Helm chart with the defaults and with each file in deploy/helm/examples
+	helm lint $(CHART) $(CHART_HASH)
+	helm template smokealarm $(CHART) $(CHART_HASH) > /dev/null
+	@for file in deploy/helm/examples/*.yaml; do \
+	  echo "== $$file"; \
+	  helm lint $(CHART) $(CHART_HASH) -f $$file || exit 1; \
+	  helm template smokealarm $(CHART) $(CHART_HASH) -f $$file > /dev/null || exit 1; \
+	done

@@ -8,9 +8,11 @@ import (
 	"context"
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -23,10 +25,15 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/yaml"
+
+	"github.com/gagaschu/smokealarm/internal/checks"
+	"github.com/gagaschu/smokealarm/internal/config"
 )
 
 // baseValues is the minimum a user must provide: the password hash.
-const baseValues = "auth:\n  passwordHash: '$2a$10$abcdefghijklmnopqrstuuvwxyz0123456789ABCDEFGHIJKLMNOPQR'\n"
+const baseHash = "$2a$10$abcdefghijklmnopqrstuuvwxyz0123456789ABCDEFGHIJKLMNOPQR"
+
+const baseValues = "auth:\n  passwordHash: '" + baseHash + "'\n"
 
 // release is a rendered chart.
 type release struct {
@@ -35,16 +42,35 @@ type release struct {
 	raw     string
 }
 
-// helmTemplate renders the chart with the given values files content, in
-// order. It returns the helm output and its error.
-func helmTemplate(t *testing.T, releaseName string, values ...string) (string, error) {
+// readChartFiles reads every file of the chart. The helm binary reads the chart,
+// not this test, and Go's test cache only watches the files the test itself
+// opens: without this, a changed template would still show an old, cached "ok".
+func readChartFiles(t *testing.T) {
+	t.Helper()
+	err := filepath.WalkDir("smokealarm", func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		_, err = os.ReadFile(path)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("read the chart: %v", err)
+	}
+}
+
+// helmRun runs a helm command on the chart with the given values files
+// content, in order, and returns its output (stderr if it failed) and error.
+// command is "template", or "install" with --dry-run=client.
+func helmRun(t *testing.T, command []string, releaseName string, values ...string) (string, error) {
 	t.Helper()
 	helm, err := exec.LookPath("helm")
 	if err != nil {
 		t.Skip("helm is not installed")
 	}
+	readChartFiles(t)
 
-	args := []string{"template", releaseName, "smokealarm", "--namespace", "monitoring"}
+	args := append(slices.Clone(command), releaseName, "smokealarm", "--namespace", "monitoring")
 	for i, content := range values {
 		file := filepath.Join(t.TempDir(), "values-"+string(rune('a'+i))+".yaml")
 		if err := os.WriteFile(file, []byte(content), 0o600); err != nil {
@@ -62,6 +88,27 @@ func helmTemplate(t *testing.T, releaseName string, values ...string) (string, e
 		return stderr.String(), err
 	}
 	return stdout.String(), nil
+}
+
+// helmTemplate renders the chart. It returns the helm output and its error.
+func helmTemplate(t *testing.T, releaseName string, values ...string) (string, error) {
+	t.Helper()
+	return helmRun(t, []string{"template"}, releaseName, values...)
+}
+
+// helmNotes returns the text that "helm install" prints after the install
+// (NOTES.txt). A dry run on the client side needs no cluster.
+func helmNotes(t *testing.T, values ...string) string {
+	t.Helper()
+	out, err := helmRun(t, []string{"install", "--dry-run=client"}, "smokealarm", append([]string{baseValues}, values...)...)
+	if err != nil {
+		t.Fatalf("helm install --dry-run failed: %v\n%s", err, out)
+	}
+	_, notes, found := strings.Cut(out, "NOTES:\n")
+	if !found {
+		t.Fatalf("helm printed no NOTES:\n%s", out)
+	}
+	return notes
 }
 
 // render renders the chart with the required hash plus extra values and fails
@@ -141,6 +188,21 @@ func (r *release) env() map[string]string {
 	env := map[string]string{}
 	for _, e := range r.deployment().Spec.Template.Spec.Containers[0].Env {
 		env[e.Name] = e.Value
+	}
+	return env
+}
+
+// environment returns what the program sees: the container's variables plus
+// the keys of the Secret that envFrom adds.
+func (r *release) environment() map[string]string {
+	r.t.Helper()
+	env := r.env()
+	if r.has("Secret") {
+		var secret corev1.Secret
+		r.as("Secret", &secret)
+		for k, v := range secret.StringData {
+			env[k] = v
+		}
 	}
 	return env
 }
@@ -231,6 +293,21 @@ func TestResourcesAndProbes(t *testing.T) {
 	}
 	if c.ReadinessProbe == nil || c.ReadinessProbe.HTTPGet.Path != "/readyz" {
 		t.Errorf("readiness probe = %+v, want /readyz", c.ReadinessProbe)
+	}
+
+	// Start-up (database, migrations, cache sync) can be slow on a Raspberry
+	// Pi: a startup probe protects it from the liveness probe, and a timeout
+	// longer than the default 1s keeps a busy moment from counting as a failure.
+	if c.StartupProbe == nil || c.StartupProbe.HTTPGet.Path != "/healthz" {
+		t.Fatalf("startup probe = %+v, want /healthz", c.StartupProbe)
+	}
+	if window := c.StartupProbe.PeriodSeconds * c.StartupProbe.FailureThreshold; window < 120 {
+		t.Errorf("startup probe allows %ds, want at least 120s", window)
+	}
+	for name, probe := range map[string]*corev1.Probe{"startup": c.StartupProbe, "liveness": c.LivenessProbe, "readiness": c.ReadinessProbe} {
+		if probe.TimeoutSeconds < 3 {
+			t.Errorf("%s probe timeout = %ds, want at least 3s", name, probe.TimeoutSeconds)
+		}
 	}
 }
 
@@ -352,6 +429,9 @@ func TestRBACSwitches(t *testing.T) {
 			[]string{"/nodes/proxy:get", "argoproj.io/applications" + readOnly}, "cert-not-ready,cert-expiry"},
 		{"no argocd", "rbac:\n  argocd: false\n",
 			[]string{"/nodes/proxy:get", "cert-manager.io/certificates" + readOnly}, "argocd-health,argocd-sync"},
+		// Switching the check off by name must also drop the permission.
+		{"pvc-usage disabled by the user", "disabledChecks: [pvc-usage]\n",
+			[]string{"argoproj.io/applications" + readOnly, "cert-manager.io/certificates" + readOnly}, "pvc-usage"},
 		{"user list is merged without duplicates", "disabledChecks: [pod-restarts, pvc-usage]\nrbac:\n  nodesProxy: false\n",
 			[]string{"argoproj.io/applications" + readOnly, "cert-manager.io/certificates" + readOnly}, "pod-restarts,pvc-usage"},
 	}
@@ -363,6 +443,107 @@ func TestRBACSwitches(t *testing.T) {
 			}
 			if got := r.env()["SMOKEALARM_DISABLED_CHECKS"]; got != tt.wantDisabled {
 				t.Errorf("SMOKEALARM_DISABLED_CHECKS = %q, want %q", got, tt.wantDisabled)
+			}
+		})
+	}
+}
+
+// rbacSwitches maps each optional permission switch of the chart to the checks
+// that need that permission.
+func rbacSwitches() []struct {
+	value  string
+	covers func(checks.Check) bool
+} {
+	return []struct {
+		value  string
+		covers func(checks.Check) bool
+	}{
+		{"nodesProxy", func(c checks.Check) bool { return c.Name == checks.PVCUsageCheck }},
+		{"certManager", func(c checks.Check) bool { return c.Requires == checks.RequiresCertManager }},
+		{"argocd", func(c checks.Check) bool { return c.Requires == checks.RequiresArgoCD }},
+	}
+}
+
+// The chart lists check names per switch in _helpers.tpl. This test ties that
+// list to checks.All(), so a new check cannot run without its permission.
+func TestRBACSwitchesCoverEveryCheckThatNeedsThem(t *testing.T) {
+	for _, c := range checks.All() {
+		if c.Requires == "" && c.Name != checks.PVCUsageCheck {
+			continue
+		}
+		covered := false
+		for _, sw := range rbacSwitches() {
+			covered = covered || sw.covers(c)
+		}
+		if !covered {
+			t.Errorf("check %s needs an optional permission, but no rbac switch covers it: add one to values.yaml, "+
+				"clusterrole.yaml and smokealarm.disabledChecks in _helpers.tpl, and list it in rbacSwitches", c.Name)
+		}
+	}
+
+	for _, sw := range rbacSwitches() {
+		var want []string
+		for _, c := range checks.All() {
+			if sw.covers(c) {
+				want = append(want, c.Name)
+			}
+		}
+		got := strings.Split(render(t, "rbac:\n  "+sw.value+": false\n").env()["SMOKEALARM_DISABLED_CHECKS"], ",")
+		slices.Sort(got)
+		slices.Sort(want)
+		if !slices.Equal(got, want) {
+			t.Errorf("rbac.%s=false disables %v, want exactly the checks that need it: %v", sw.value, got, want)
+		}
+	}
+}
+
+// The ClusterRole is cluster-wide: its name must not clash when the chart is
+// installed in two namespaces.
+func TestClusterRoleNameIncludesTheNamespace(t *testing.T) {
+	r := render(t, "")
+	var role rbacv1.ClusterRole
+	r.as("ClusterRole", &role)
+	var binding rbacv1.ClusterRoleBinding
+	r.as("ClusterRoleBinding", &binding)
+
+	if role.Name != "monitoring-smokealarm" || binding.Name != role.Name || binding.RoleRef.Name != role.Name {
+		t.Errorf("role %q, binding %q -> %q; want all named monitoring-smokealarm (namespace-release)",
+			role.Name, binding.Name, binding.RoleRef.Name)
+	}
+}
+
+func TestNotes(t *testing.T) {
+	tests := []struct {
+		name    string
+		values  string
+		want    []string
+		notWant []string
+	}{
+		{"port-forward", "",
+			[]string{"port-forward", "config.cookieSecure is true"}, []string{"ingress.tls", "resolved"}},
+		{"port-forward with insecure cookie", "config:\n  cookieSecure: false\n",
+			[]string{"port-forward"}, []string{"cookieSecure"}},
+		{"ingress without tls warns about the cookie", "ingress:\n  enabled: true\n  host: smoke.example.com\n",
+			[]string{"http://smoke.example.com", "ingress.tls.enabled is false", "config.cookieSecure"}, []string{"port-forward"}},
+		{"ingress with tls", "ingress:\n  enabled: true\n  host: smoke.example.com\n  tls:\n    enabled: true\n",
+			[]string{"https://smoke.example.com"}, []string{"cookieSecure", "port-forward"}},
+		{"ingress without tls and insecure cookie", "ingress:\n  enabled: true\n  host: smoke.example.com\nconfig:\n  cookieSecure: false\n",
+			[]string{"http://smoke.example.com"}, []string{"cookieSecure"}},
+		{"disabled checks warn about resolved mails", "disabledChecks: [pod-restarts]\n",
+			[]string{"Disabled checks: pod-restarts", `"resolved"`}, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			notes := helmNotes(t, tt.values)
+			for _, text := range tt.want {
+				if !strings.Contains(notes, text) {
+					t.Errorf("notes do not contain %q:\n%s", text, notes)
+				}
+			}
+			for _, text := range tt.notWant {
+				if strings.Contains(notes, text) {
+					t.Errorf("notes contain %q, which does not apply:\n%s", text, notes)
+				}
 			}
 		})
 	}
@@ -500,25 +681,133 @@ func TestPersistence(t *testing.T) {
 	}
 }
 
-func TestSettingsBecomeEnvironmentVariables(t *testing.T) {
-	env := render(t, `auth:
+// everySetting changes every chart setting that becomes an environment
+// variable (the password hash comes from baseValues).
+const everySetting = `auth:
   adminUser: ops
 config:
+  checkInterval: 45s
   alertAfter: 5m
   retention: 14d
+  logLevel: debug
+  baseUrl: https://alarm.example.org
+  sessionTtl: 3d
   cookieSecure: false
-  restartThreshold: 10
   ignoreNamespaces: [kube-system, monitoring]
-`).env()
+  restartThreshold: 10
+  podPendingAfter: 7m
+  pvcPendingAfter: 8m
+  cronjobGrace: 9m
+disabledChecks: [pod-restarts]
+smtp:
+  host: mail.example.com
+  port: 465
+  tls: tls
+  from: smokealarm@example.com
+  to: [me@example.com, ops@example.com]
+  username: alice
+  password: s3cret
+`
+
+// config.Load ignores variables it does not know, so a typo in a template would
+// silently leave a default in place. This test names every variable the chart
+// can set, with its value, and fails on any other SMOKEALARM_* variable.
+func TestEverySettingBecomesAnEnvironmentVariable(t *testing.T) {
+	got := render(t, everySetting).environment()
 	want := map[string]string{
-		"SMOKEALARM_ADMIN_USER": "ops", "SMOKEALARM_ALERT_AFTER": "5m", "SMOKEALARM_RETENTION": "14d",
-		"SMOKEALARM_COOKIE_SECURE": "false", "SMOKEALARM_RESTART_THRESHOLD": "10",
-		"SMOKEALARM_IGNORE_NAMESPACES": "kube-system,monitoring",
+		"SMOKEALARM_LISTEN_ADDR":         ":8080",
+		"SMOKEALARM_DB_PATH":             "/data/smokealarm.db",
+		"SMOKEALARM_ADMIN_USER":          "ops",
+		"SMOKEALARM_ADMIN_PASSWORD_HASH": baseHash,
+		"SMOKEALARM_CHECK_INTERVAL":      "45s",
+		"SMOKEALARM_ALERT_AFTER":         "5m",
+		"SMOKEALARM_RETENTION":           "14d",
+		"SMOKEALARM_LOG_LEVEL":           "debug",
+		"SMOKEALARM_BASE_URL":            "https://alarm.example.org",
+		"SMOKEALARM_SESSION_TTL":         "3d",
+		"SMOKEALARM_COOKIE_SECURE":       "false",
+		"SMOKEALARM_IGNORE_NAMESPACES":   "kube-system,monitoring",
+		"SMOKEALARM_RESTART_THRESHOLD":   "10",
+		"SMOKEALARM_POD_PENDING_AFTER":   "7m",
+		"SMOKEALARM_PVC_PENDING_AFTER":   "8m",
+		"SMOKEALARM_CRONJOB_GRACE":       "9m",
+		"SMOKEALARM_DISABLED_CHECKS":     "pod-restarts",
+		"SMOKEALARM_SMTP_HOST":           "mail.example.com",
+		"SMOKEALARM_SMTP_PORT":           "465",
+		"SMOKEALARM_SMTP_TLS":            "tls",
+		"SMOKEALARM_SMTP_FROM":           "smokealarm@example.com",
+		"SMOKEALARM_SMTP_TO":             "me@example.com,ops@example.com",
+		"SMOKEALARM_SMTP_USERNAME":       "alice",
+		"SMOKEALARM_SMTP_PASSWORD":       "s3cret",
 	}
-	for k, v := range want {
-		if env[k] != v {
-			t.Errorf("%s = %q, want %q", k, env[k], v)
+	for name, value := range want {
+		if got[name] != value {
+			t.Errorf("%s = %q, want %q", name, got[name], value)
 		}
+	}
+	for name := range got {
+		if _, known := want[name]; strings.HasPrefix(name, "SMOKEALARM_") && !known {
+			t.Errorf("the chart sets %s, which this test does not know: a typo, or a new setting that needs a line in want", name)
+		}
+	}
+}
+
+// The values must not only be present but also be accepted by the program, and
+// the checks the chart switches off must exist.
+func TestRenderedEnvironmentIsAValidConfig(t *testing.T) {
+	allOptionalOff := "rbac:\n  nodesProxy: false\n  certManager: false\n  argocd: false\n"
+	for name, values := range map[string]string{"every setting": everySetting, "all optional permissions off": allOptionalOff} {
+		t.Run(name, func(t *testing.T) {
+			env := render(t, values).environment()
+			cfg, err := config.Load(func(name string) string { return env[name] })
+			if err != nil {
+				t.Fatalf("config.Load rejects what the chart renders: %v", err)
+			}
+			if _, err := checks.Select(cfg.DisabledChecks); err != nil {
+				t.Errorf("the chart disables a check that does not exist: %v", err)
+			}
+			if values != everySetting {
+				return
+			}
+			if cfg.CheckInterval != 45*time.Second || cfg.Retention != 14*24*time.Hour || cfg.SessionTTL != 72*time.Hour ||
+				cfg.PodPendingAfter != 7*time.Minute || cfg.RestartThreshold != 10 || cfg.CookieSecure ||
+				!cfg.SMTP.Enabled() || len(cfg.SMTP.To) != 2 || len(cfg.IgnoreNamespaces) != 2 {
+				t.Errorf("config = %+v, not what the values say", cfg)
+			}
+		})
+	}
+}
+
+// The example files are part of the documentation: each must render, and what
+// it renders must be a configuration the program accepts.
+func TestExamplesRender(t *testing.T) {
+	files, err := filepath.Glob(filepath.Join("examples", "*.yaml"))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no example files found: %v", err)
+	}
+	for _, file := range files {
+		t.Run(filepath.Base(file), func(t *testing.T) {
+			example, err := os.ReadFile(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			r := render(t, string(example))
+			if !r.has("Deployment") {
+				t.Fatalf("rendered %v, want at least a Deployment", r.kinds())
+			}
+
+			env := r.environment()
+			if _, found := env["SMOKEALARM_ADMIN_PASSWORD_HASH"]; !found {
+				env["SMOKEALARM_ADMIN_PASSWORD_HASH"] = baseHash // the example brings its own Secret
+			}
+			cfg, err := config.Load(func(name string) string { return env[name] })
+			if err != nil {
+				t.Fatalf("config.Load rejects what %s renders: %v", file, err)
+			}
+			if _, err := checks.Select(cfg.DisabledChecks); err != nil {
+				t.Errorf("%s disables a check that does not exist: %v", file, err)
+			}
+		})
 	}
 }
 

@@ -109,11 +109,23 @@ spec:
           envFrom:
             - secretRef:
                 name: {{ include "smokealarm.secretName" . }}
+          # Start-up opens the database, runs migrations and fills the informer
+          # caches before the first answer; on a Raspberry Pi with slow storage
+          # that can take a while. Liveness only starts once this has succeeded,
+          # so a slow start is not mistaken for a hang (up to 5s x 30 = 150s).
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 30
           livenessProbe:
             httpGet:
               path: /healthz
               port: http
             periodSeconds: 10
+            timeoutSeconds: 3
             failureThreshold: 3
           # Ready once the informer caches are synced and the database answers.
           readinessProbe:
@@ -121,6 +133,7 @@ spec:
               path: /readyz
               port: http
             periodSeconds: 10
+            timeoutSeconds: 3
             failureThreshold: 3
           resources:
             {{- toYaml .Values.resources | nindent 12 }}

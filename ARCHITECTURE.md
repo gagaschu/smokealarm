@@ -34,7 +34,7 @@ A check is a plain function: *snapshot in, findings out*. It never talks to the 
 |---|---|
 | `cmd/smokealarm` | `main()`: loads the configuration, creates everything, starts the web server and the main loop. Also the `hash-password` subcommand. |
 | `internal/config` | Reads and checks the `SMOKEALARM_*` environment variables. A wrong value stops the start with a clear message. |
-| `internal/kube` | Talks to the Kubernetes API: clients, informers (a local, always-current copy of the objects we watch), detection of optional CRDs, kubelet volume stats, and the snapshot. |
+| `internal/kube` | Talks to the Kubernetes API: clients, informers (a local, always-current copy of the objects we watch), detection of optional CRDs (installed, and may the service account read them?), kubelet volume stats, and the snapshot. |
 | `internal/checks` | **The checks**, one file per area (`pods.go`, `workloads.go`, `nodes.go`, `jobs.go`, `storage.go`, `certs.go`, `argocd.go`), the finding and snapshot types, and the ignore rules. |
 | `internal/engine` | The main loop. Runs the checks, decides what is new/firing/resolved, sends notifications, cleans up old data. |
 | `internal/store` | SQLite: findings and login sessions. The schema lives in numbered SQL files (`migrations/`) that are applied at startup. |
@@ -58,6 +58,7 @@ A finding has a stable **key** (check + object + a fixed word), so smokealarm ca
 - Reporting is remembered in the database *after* a successful send, so a failed mail is retried at the next run, even after a restart.
 - If a firing problem gets worse (warning → critical), it stays the same problem and is reported again as critical.
 - If a check cannot get its data (for example the kubelet does not answer), it is skipped for that run and its open problems are left alone, because "no data" is not "all fine".
+- If a check is switched off (configuration, or an optional CRD or permission is missing at startup), its open problems count as gone and are reported as resolved in the next run. The README says so, because switching a check off can look like a recovery.
 
 ## Go for ops people
 
@@ -111,8 +112,14 @@ That is all the engine needs. The check now runs, can be disabled with `SMOKEALA
 If your check needs **data that is not in the snapshot yet** (a new kind of object), there are a few more steps:
 
 - add a field to `Snapshot` in `internal/checks/types.go`,
-- add an informer for it in `internal/kube/cluster.go` and copy its objects in `internal/kube/snapshot.go`,
+- add an informer for it in `internal/kube/cluster.go` (with its name in `allInformers`, so a cache that never syncs is named in the error) and copy its objects in `internal/kube/snapshot.go`,
 - add the `get`, `list`, `watch` permission in `deploy/helm/smokealarm/templates/clusterrole.yaml` and in the expected rules of `deploy/helm/chart_test.go`,
-- if the object is a CRD that may not exist, set `Requires` on the check and detect the CRD in `internal/kube/features.go`.
+- if the object is a CRD that may not exist, set `Requires` on the check and add the CRD to `optionalResourceFor` in `internal/kube/features.go`. `main` then asks for exactly the CRDs that enabled checks need, skips the check with a reason if the CRD is missing or may not be read, and starts an informer only for CRDs that are in use. `TestEveryCheckRequirementIsKnown` fails if the CRD is not known to `features.go`.
+
+If the permission should be **optional in the Helm chart** (like `nodes/proxy`, cert-manager or Argo CD), the chart has to switch the check off together with the permission, or the check would run without it:
+
+- add an `rbac.<name>` switch to `values.yaml` and the rule behind `{{ if .Values.rbac.<name> }}` in `clusterrole.yaml`,
+- add the check names to `smokealarm.disabledChecks` in `deploy/helm/smokealarm/templates/_helpers.tpl`,
+- add the switch to `rbacSwitches` in `deploy/helm/chart_test.go`. `TestRBACSwitchesCoverEveryCheckThatNeedsThem` fails for a check with `Requires` (or `pvc-usage`) that no switch covers, and for a switch that disables other checks than it should.
 
 Finish with `make test lint`.

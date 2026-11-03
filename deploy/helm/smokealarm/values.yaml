@@ -17,7 +17,9 @@ auth:
   # SMOKEALARM_ADMIN_USER
   adminUser: admin
   # SMOKEALARM_ADMIN_PASSWORD_HASH: a bcrypt hash, NOT the password itself.
-  # Create one with:  printf '%s' "$PW" | docker run -i --rm ghcr.io/gagaschu/smokealarm hash-password
+  # Create one with "make hash-password" in a checkout, or with the image you
+  # built (README, step 2):
+  #   read -s PW; printf '%s' "$PW" | docker run -i --rm <your image>:<tag> hash-password
   # Pass it with --set-string (the hash contains $ characters), or use existingSecret.
   passwordHash: ""
 
@@ -49,6 +51,8 @@ config:
 # Your own list of checks to switch off (SMOKEALARM_DISABLED_CHECKS), e.g.
 # [pod-restarts]. Checks whose permission you switch off under "rbac" are added
 # automatically.
+# Note: when a check is switched off, its open problems are closed and reported
+# as "resolved" in the next mail, although the cause may still exist.
 disabledChecks: []
 
 # --- Mail (switched on by setting smtp.host) --------------------------------------
@@ -65,10 +69,16 @@ smtp:
 
 # --- Permissions ---------------------------------------------------------------
 # smokealarm only reads (get, list, watch). The switches below control the
-# optional permissions; if one is off, the checks that need it are disabled.
+# optional permissions; if one is off, the checks that need it are disabled
+# (and their open problems are reported as "resolved", see disabledChecks).
 rbac:
   create: true
   # nodes/proxy: needed by pvc-usage to read the volume usage from the kubelets.
+  # Think before you keep this on: although the only verb is "get", access to
+  # nodes/proxy reaches the kubelet API of every node, which is more than the
+  # name suggests (see "Kubernetes RBAC good practices" in the Kubernetes docs).
+  # Set it to false, or put pvc-usage in disabledChecks, to leave it out. The
+  # rule is also left out automatically when pvc-usage is in disabledChecks.
   nodesProxy: true
   # certificates.cert-manager.io: needed by cert-not-ready and cert-expiry.
   certManager: true
@@ -132,5 +142,9 @@ nodeSelector: {}
 tolerations: []
 affinity: {}
 
-# Additional environment variables, in the usual Kubernetes format.
+# Additional environment variables, in the usual Kubernetes format. Do not set
+# variables that the chart already sets from the values above (for example
+# SMOKEALARM_DISABLED_CHECKS): the last entry wins in Kubernetes, so your value
+# would silently replace the chart's and can re-enable checks that have no
+# permission.
 extraEnv: []

@@ -77,20 +77,13 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("create clients: %w", err)
 	}
-	features, err := kube.DetectFeatures(clients.Kube)
+	activeChecks, unavailable, features, err := chooseChecks(ctx, logger, clients, enabledChecks)
 	if err != nil {
-		return fmt.Errorf("detect optional features: %w", err)
-	}
-	logger.Info("optional cluster features", "cert-manager", features.CertManager, "argocd", features.ArgoCD)
-
-	// Checks whose CRDs are missing do not run; the status page tells why.
-	activeChecks, unavailable := splitByFeatures(enabledChecks, features)
-	for _, c := range unavailable {
-		logger.Info("check skipped", "check", c.Name, "reason", c.Reason)
+		return err
 	}
 
 	cluster, err := kube.New(clients.Kube, clients.Dynamic, kube.Options{
-		Features:    featuresInUse(activeChecks, features),
+		Features:    features,
 		VolumeStats: hasCheck(activeChecks, checks.PVCUsageCheck),
 	}, logger)
 	if err != nil {
@@ -121,7 +114,7 @@ func run() error {
 
 	cluster.Start(ctx)
 	if err := cluster.WaitForSync(ctx); err != nil {
-		return err
+		return fmt.Errorf("wait for informer caches: %w", err)
 	}
 	go loop.Run(ctx)
 
@@ -140,50 +133,57 @@ func run() error {
 	return nil
 }
 
-// splitByFeatures separates the checks that can run in this cluster from those
-// that need optional CRDs which are not installed. It returns the latter with
-// the reason to show.
-func splitByFeatures(enabled []checks.Check, features kube.Features) ([]checks.Check, []engine.SkippedCheck) {
+// chooseChecks decides which of the enabled checks can run in this cluster.
+// A check that needs an optional CRD runs only if the CRD is installed and the
+// service account may read it; otherwise it is skipped, and the status page
+// shows why. The returned features are exactly the ones the active checks
+// need, so no informer is started for anything else.
+func chooseChecks(ctx context.Context, logger *slog.Logger, clients kube.Clients,
+	enabled []checks.Check) ([]checks.Check, []engine.SkippedCheck, kube.Features, error) {
+	features, notUsable, err := kube.DetectFeatures(ctx, clients.Kube, clients.Dynamic, requirements(enabled))
+	if err != nil {
+		return nil, nil, kube.Features{}, fmt.Errorf("detect optional features: %w", err)
+	}
+	logger.Info("optional cluster features in use", "cert-manager", features.CertManager, "argocd", features.ArgoCD)
+
+	active, unavailable := splitByFeatures(enabled, notUsable)
+	for _, c := range unavailable {
+		logger.Info("check skipped", "check", c.Name, "reason", c.Reason)
+	}
+	return active, unavailable, features, nil
+}
+
+// requirements lists the optional cluster features that the checks need, each
+// once.
+func requirements(enabled []checks.Check) []string {
+	var names []string
+	for _, c := range enabled {
+		if c.Requires != "" && !slices.Contains(names, c.Requires) {
+			names = append(names, c.Requires)
+		}
+	}
+	return names
+}
+
+// splitByFeatures separates the checks that can run from those whose optional
+// feature is not usable. notUsable maps a checks.Requires* name to the reason;
+// the skipped checks get that reason. Without permission we cannot see the
+// objects, so the problems we know of must stay open: they may still exist.
+func splitByFeatures(enabled []checks.Check, notUsable map[string]kube.Unusable) ([]checks.Check, []engine.SkippedCheck) {
 	var active []checks.Check
 	var unavailable []engine.SkippedCheck
 	for _, c := range enabled {
-		if features.Has(c.Requires) {
-			active = append(active, c)
+		if problem, found := notUsable[c.Requires]; found {
+			unavailable = append(unavailable, engine.SkippedCheck{
+				Name:         c.Name,
+				Reason:       problem.Reason,
+				KeepProblems: problem.MissingPermission,
+			})
 			continue
 		}
-		unavailable = append(unavailable, engine.SkippedCheck{Name: c.Name, Reason: missingFeatureReason(c.Requires)})
+		active = append(active, c)
 	}
 	return active, unavailable
-}
-
-// featuresInUse narrows the detected features to those that an active check
-// needs. Without this, installed CRDs would get informers even when all their
-// checks are disabled, and without RBAC permission for them the caches would
-// never sync.
-func featuresInUse(active []checks.Check, detected kube.Features) kube.Features {
-	needs := func(requires string) bool {
-		for _, c := range active {
-			if c.Requires == requires {
-				return true
-			}
-		}
-		return false
-	}
-	return kube.Features{
-		CertManager: detected.CertManager && needs(checks.RequiresCertManager),
-		ArgoCD:      detected.ArgoCD && needs(checks.RequiresArgoCD),
-	}
-}
-
-func missingFeatureReason(requires string) string {
-	switch requires {
-	case checks.RequiresCertManager:
-		return "cert-manager CRDs not installed (certificates.cert-manager.io); checked at startup"
-	case checks.RequiresArgoCD:
-		return "Argo CD CRDs not installed (applications.argoproj.io); checked at startup"
-	default:
-		return "required cluster feature " + requires + " is not available"
-	}
 }
 
 // hasCheck reports whether a check with that name is in the list.

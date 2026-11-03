@@ -37,9 +37,10 @@ type Engine struct {
 	Retention time.Duration
 
 	// SkippedChecks lists checks that never run in this process and why
-	// (disabled by configuration, optional CRDs not installed). They only
-	// appear in the status. Checks that cannot run only temporarily are
-	// reported by the snapshot (see checks.Snapshot.Skipped).
+	// (disabled by configuration, optional CRDs not installed, no permission).
+	// They appear in the status, and their open problems are resolved unless
+	// KeepProblems is set. Checks that cannot run only temporarily are reported
+	// by the snapshot (see checks.Snapshot.Skipped).
 	SkippedChecks []SkippedCheck
 
 	Store    *store.Store
@@ -65,6 +66,10 @@ type Engine struct {
 type SkippedCheck struct {
 	Name   string
 	Reason string
+	// KeepProblems leaves the open problems of the check as they are, because
+	// not running it says nothing about them (a missing permission, for
+	// example). Without it they count as gone.
+	KeepProblems bool
 }
 
 // CheckStatus is one line of the check list on the status page.
@@ -149,6 +154,19 @@ func skippedNames(skipped map[string]string) []string {
 	return names
 }
 
+// checksWithUnknownState names the checks that say nothing about their problems
+// in this run: those the snapshot skipped, and those skipped for the whole
+// process with KeepProblems.
+func (e *Engine) checksWithUnknownState(runSkipped map[string]string) []string {
+	names := skippedNames(runSkipped)
+	for _, c := range e.SkippedChecks {
+		if c.KeepProblems {
+			names = append(names, c.Name)
+		}
+	}
+	return names
+}
+
 // setRunResult remembers when the last run finished, which checks were
 // skipped, and how it went.
 func (e *Engine) setRunResult(finished time.Time, skipped map[string]string, err error) {
@@ -216,7 +234,7 @@ func (e *Engine) RunOnce(ctx context.Context) error {
 	}
 
 	var errs []error
-	if err := e.saveState(ctx, findings, skippedNames(skipped), start); err != nil {
+	if err := e.saveState(ctx, findings, e.checksWithUnknownState(skipped), start); err != nil {
 		errs = append(errs, err)
 	}
 	if err := e.notify(ctx, start); err != nil {
@@ -244,9 +262,9 @@ func (e *Engine) saveState(ctx context.Context, findings []checks.Finding, skipp
 	if err != nil {
 		return fmt.Errorf("load open findings: %w", err)
 	}
-	// Problems of checks that could not run this time stay as they are.
-	// Problems of checks that are disabled (or gone) are not in the skipped
-	// list and are resolved, not left "firing" forever.
+	// Problems of checks whose state is unknown stay as they are. Problems of
+	// checks that are disabled (or gone) are not in the skipped list and are
+	// resolved, not left "firing" forever.
 	changes := e.reconcile(open, findings, skipped, now)
 	if err := e.Store.Apply(ctx, changes); err != nil {
 		return fmt.Errorf("save findings: %w", err)
@@ -256,8 +274,8 @@ func (e *Engine) saveState(ctx context.Context, findings []checks.Finding, skipp
 
 // reconcile decides what changes: it compares the stored open problems with
 // the current findings. It does no I/O, which keeps the rules easy to test.
-// Problems of the skipped checks (checks that could not run this time) are
-// left alone, because "no findings" would just mean "unknown".
+// Problems of the skipped checks (checks whose state is unknown) are left
+// alone, because "no findings" would just mean "unknown".
 func (e *Engine) reconcile(open []store.Record, findings []checks.Finding, skipped []string, now time.Time) store.Changes {
 	var changes store.Changes
 

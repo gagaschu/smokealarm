@@ -1,9 +1,9 @@
 {{- if .Values.rbac.create }}
-# smokealarm only reads: every rule is get, list, watch.
+# smokealarm only reads: every rule is get, list, watch (nodes/proxy: get).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: {{ include "smokealarm.fullname" . }}
+  name: {{ include "smokealarm.clusterRoleName" . }}
   labels:
     {{- include "smokealarm.labels" . | nindent 4 }}
 rules:
@@ -19,8 +19,10 @@ rules:
   - apiGroups: [storage.k8s.io]
     resources: [storageclasses]
     verbs: [get, list, watch]
-  {{- if .Values.rbac.nodesProxy }}
-  # pvc-usage reads the volume usage from the kubelets through the API server.
+  {{- if and .Values.rbac.nodesProxy (not (has "pvc-usage" .Values.disabledChecks)) }}
+  # Only for pvc-usage, which reads the volume usage from the kubelets through
+  # the API server. Although the verb is only "get", nodes/proxy reaches the
+  # kubelet API; leave it out if you do not need the check.
   - apiGroups: [""]
     resources: [nodes/proxy]
     verbs: [get]
@@ -39,13 +41,13 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: {{ include "smokealarm.fullname" . }}
+  name: {{ include "smokealarm.clusterRoleName" . }}
   labels:
     {{- include "smokealarm.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: {{ include "smokealarm.fullname" . }}
+  name: {{ include "smokealarm.clusterRoleName" . }}
 subjects:
   - kind: ServiceAccount
     name: {{ include "smokealarm.serviceAccountName" . }}
