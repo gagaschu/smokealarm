@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Reminders for critical problems**: `SMOKEALARM_CRITICAL_REPEAT_INTERVAL` reports critical problems that are still open again at that interval. Off by default.
+
 ## [0.1.0] - not released yet
 
 First version.

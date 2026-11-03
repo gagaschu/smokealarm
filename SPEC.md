@@ -53,7 +53,7 @@ Finding (guideline):
 Sequence every SMOKEALARM_CHECK_INTERVAL (default 30s):
 1. Build the snapshot, run all enabled checks.
 2. Compare with the state in SQLite: new problem → pending; lasts longer than SMOKEALARM_ALERT_AFTER (default 2m) → firing; gone → resolved (only if it was firing before, otherwise discard silently). This way short flaps are not reported.
-3. Send all changes not yet reported (firing/resolved) as one combined notification. Mark them as reported only after sending succeeded; if sending fails, it is retried in the next run. This also survives restarts.
+3. Send all changes not yet reported (firing/resolved), plus any reminders that are due, as one combined notification. Mark them as reported only after sending succeeded; if sending fails, it is retried in the next run. This also survives restarts.
 4. Delete resolved findings older than SMOKEALARM_RETENTION (default 30d).
 
 ## Checks (v0.1)
@@ -90,9 +90,10 @@ Ignoring:
 
 ## Notifications
 - v0.1: mail via SMTP only (STARTTLS and implicit TLS on port 465, optionally with auth, multiple recipients).
-- At most one mail per run, with all new state changes.
-- The subject summarizes: specific for one change, e.g. "[smokealarm] CRITICAL: CrashLoopBackOff media/jellyfin"; for several, e.g. "[smokealarm] 3 new problems, 1 resolved".
-- Body as plain text: new problems sorted by severity, then resolved ones; each with object, reason, message, since when; link to the web UI (SMOKEALARM_BASE_URL).
+- At most one mail per run, with all new state changes and due reminders.
+- Reminders are optional: SMOKEALARM_CRITICAL_REPEAT_INTERVAL (default 0, off; otherwise at least SMOKEALARM_CHECK_INTERVAL) reports a critical problem that is still firing again once its last report is that old. Each problem has its own clock. Warnings are not repeated. No reminders for checks whose state is unknown in this run. A failed reminder is retried in the next run.
+- The subject summarizes: specific for one change, e.g. "[smokealarm] CRITICAL: CrashLoopBackOff media/jellyfin" or, for a reminder, "[smokealarm] STILL CRITICAL: CrashLoopBackOff media/jellyfin"; for several, e.g. "[smokealarm] 3 new problems, 1 still critical, 1 resolved".
+- Body as plain text: new problems sorted by severity, then reminders, then resolved ones; each with object, reason, message, since when; link to the web UI (SMOKEALARM_BASE_URL).
 - Design the Notifier interface so that Telegram and a generic webhook can be added later as separate files without changing the engine. Do not implement them yet.
 
 ## Web UI
