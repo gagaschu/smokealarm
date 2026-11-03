@@ -1,53 +1,504 @@
 package web
 
 import (
+	"context"
 	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"golang.org/x/crypto/bcrypt"
+
+	"github.com/gagaschu/smokealarm/internal/auth"
+	"github.com/gagaschu/smokealarm/internal/checks"
+	"github.com/gagaschu/smokealarm/internal/engine"
+	"github.com/gagaschu/smokealarm/internal/store"
 )
 
-func newTestServer(ready func() error) *Server {
-	return &Server{Ready: ready, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+var testNow = time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
+
+// testEnv is a server with a real SQLite file and real sessions; only the
+// engine status and readiness are faked.
+type testEnv struct {
+	t       *testing.T
+	store   *store.Store
+	handler http.Handler
+	status  engine.Status
+	ready   error
 }
 
-func get(t *testing.T, s *Server, path string) *httptest.ResponseRecorder {
+func newTestEnv(t *testing.T) *testEnv {
 	t.Helper()
+	e := &testEnv{t: t}
+	now := func() time.Time { return testNow }
+
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"), now)
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	e.store = db
+
+	hash, err := bcrypt.GenerateFromPassword([]byte("secret"), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{
+		Ready:    func(context.Context) error { return e.ready },
+		Store:    db,
+		Login:    auth.PasswordLogin{Username: "admin", Hash: hash},
+		Sessions: &auth.Sessions{Store: db, TTL: time.Hour, SecureCookie: true, Now: now},
+		Limiter:  &auth.RateLimiter{Now: now},
+		Status:   func() engine.Status { return e.status },
+		Now:      now,
+		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	e.handler, err = server.Handler()
+	if err != nil {
+		t.Fatalf("Handler: %v", err)
+	}
+	return e
+}
+
+// do sends a request through the handler.
+func (e *testEnv) do(method, path string, form url.Values, cookie *http.Cookie) *httptest.ResponseRecorder {
+	e.t.Helper()
+	var body io.Reader
+	if form != nil {
+		body = strings.NewReader(form.Encode())
+	}
+	req := httptest.NewRequest(method, path, body)
+	if form != nil {
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	}
+	if cookie != nil {
+		req.AddCookie(cookie)
+	}
 	rec := httptest.NewRecorder()
-	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+	e.handler.ServeHTTP(rec, req)
 	return rec
 }
 
+func loginForm(user, password string) url.Values {
+	return url.Values{"username": {user}, "password": {password}}
+}
+
+// login logs in as the admin and returns the session cookie.
+func (e *testEnv) login() *http.Cookie {
+	e.t.Helper()
+	rec := e.do(http.MethodPost, "/login", loginForm("admin", "secret"), nil)
+	if rec.Code != http.StatusSeeOther {
+		e.t.Fatalf("login status = %d, want 303", rec.Code)
+	}
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "smokealarm_session" {
+			return c
+		}
+	}
+	e.t.Fatal("login did not set a session cookie")
+	return nil
+}
+
+func (e *testEnv) insert(records ...store.Record) {
+	e.t.Helper()
+	if err := e.store.Apply(context.Background(), store.Changes{Insert: records}); err != nil {
+		e.t.Fatalf("insert: %v", err)
+	}
+}
+
+func problem(key, namespace string, severity checks.Severity, state store.State, firstSeen time.Time, message string) store.Record {
+	return store.Record{
+		Finding: checks.Finding{
+			Key: key, Check: "test", Severity: severity,
+			Object:  checks.ObjectRef{Kind: "Pod", Namespace: namespace, Name: key},
+			Reason:  "Broken",
+			Message: message,
+		},
+		State:     state,
+		FirstSeen: firstSeen,
+		LastSeen:  testNow,
+	}
+}
+
+func resolvedProblem(key, namespace string, firstSeen, resolvedAt time.Time) store.Record {
+	r := problem(key, namespace, checks.Warning, store.StateResolved, firstSeen, "was broken")
+	r.ResolvedAt = &resolvedAt
+	return r
+}
+
 func TestHealthz(t *testing.T) {
-	// Liveness must not depend on readiness.
-	rec := get(t, newTestServer(func() error { return errors.New("not ready") }), "/healthz")
-	if rec.Code != http.StatusOK {
+	e := newTestEnv(t)
+	e.ready = errors.New("not ready") // liveness must not depend on readiness
+	if rec := e.do(http.MethodGet, "/healthz", nil, nil); rec.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200", rec.Code)
 	}
 }
 
 func TestReadyz(t *testing.T) {
+	e := newTestEnv(t)
+	if rec := e.do(http.MethodGet, "/readyz", nil, nil); rec.Code != http.StatusOK {
+		t.Errorf("ready: status = %d, want 200", rec.Code)
+	}
+
+	e.ready = errors.New("caches not synced")
+	rec := e.do(http.MethodGet, "/readyz", nil, nil)
+	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "caches not synced") {
+		t.Errorf("not ready: status = %d, body %q; want 503 with the reason", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPagesRequireLogin(t *testing.T) {
+	e := newTestEnv(t)
+	for _, tt := range []struct{ method, path string }{
+		{http.MethodGet, "/"},
+		{http.MethodGet, "/history"},
+		{http.MethodGet, "/status"},
+		{http.MethodPost, "/logout"},
+	} {
+		rec := e.do(tt.method, tt.path, nil, nil)
+		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/login" {
+			t.Errorf("%s %s: status %d, location %q; want a redirect to /login",
+				tt.method, tt.path, rec.Code, rec.Header().Get("Location"))
+		}
+	}
+}
+
+func TestStaticFilesAndProbesNeedNoLogin(t *testing.T) {
+	e := newTestEnv(t)
+	rec := e.do(http.MethodGet, "/static/style.css", nil, nil)
+	if rec.Code != http.StatusOK || !strings.HasPrefix(rec.Header().Get("Content-Type"), "text/css") {
+		t.Errorf("style.css: status %d, type %q", rec.Code, rec.Header().Get("Content-Type"))
+	}
+	if rec := e.do(http.MethodGet, "/static/missing.css", nil, nil); rec.Code != http.StatusNotFound {
+		t.Errorf("missing file: status %d, want 404", rec.Code)
+	}
+}
+
+func TestUnknownPathIs404(t *testing.T) {
+	e := newTestEnv(t)
+	if rec := e.do(http.MethodGet, "/nope", nil, e.login()); rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", rec.Code)
+	}
+}
+
+func TestLoginPage(t *testing.T) {
+	e := newTestEnv(t)
+	rec := e.do(http.MethodGet, "/login", nil, nil)
+	body := rec.Body.String()
+
+	if rec.Code != http.StatusOK || !strings.Contains(body, `name="password"`) {
+		t.Fatalf("status %d, body %q; want the login form", rec.Code, body)
+	}
+	if strings.Contains(body, `http-equiv="refresh"`) {
+		t.Error("the login page must not refresh itself: it would wipe what the user typed")
+	}
+	if strings.Contains(body, "Log out") {
+		t.Error("the login page must not show the navigation")
+	}
+}
+
+func TestLoginWithWrongCredentials(t *testing.T) {
+	e := newTestEnv(t)
+	for _, form := range []url.Values{
+		loginForm("admin", "wrong"),
+		loginForm("root", "secret"),
+		loginForm("", ""),
+	} {
+		rec := e.do(http.MethodPost, "/login", form, nil)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("%v: status = %d, want 401", form, rec.Code)
+		}
+		if !strings.Contains(rec.Body.String(), "Invalid username or password.") {
+			t.Errorf("%v: body does not show the generic error", form)
+		}
+		if len(rec.Result().Cookies()) != 0 {
+			t.Errorf("%v: a session cookie was set", form)
+		}
+	}
+}
+
+func TestLoginSuccessAndSession(t *testing.T) {
+	e := newTestEnv(t)
+	rec := e.do(http.MethodPost, "/login", loginForm("admin", "secret"), nil)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/" {
+		t.Fatalf("status %d, location %q; want a redirect to /", rec.Code, rec.Header().Get("Location"))
+	}
+
+	cookie := e.login()
+	if rec := e.do(http.MethodGet, "/", nil, cookie); rec.Code != http.StatusOK {
+		t.Errorf("overview with a session: status %d, want 200", rec.Code)
+	}
+	if rec := e.do(http.MethodGet, "/login", nil, cookie); rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/" {
+		t.Errorf("login page with a session: status %d, want a redirect to /", rec.Code)
+	}
+}
+
+func TestLoginIgnoresRedirectTargets(t *testing.T) {
+	e := newTestEnv(t)
+	form := loginForm("admin", "secret")
+	form.Set("next", "https://evil.example.com")
+	rec := e.do(http.MethodPost, "/login?next=https://evil.example.com", form, nil)
+	if got := rec.Header().Get("Location"); got != "/" {
+		t.Errorf("Location = %q, want always /", got)
+	}
+}
+
+func TestLoginIsRateLimited(t *testing.T) {
+	e := newTestEnv(t)
+	for i := 0; i < 5; i++ {
+		if rec := e.do(http.MethodPost, "/login", loginForm("admin", "wrong"), nil); rec.Code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d: status %d, want 401", i+1, rec.Code)
+		}
+	}
+	// Even the right password is refused now, without being checked.
+	rec := e.do(http.MethodPost, "/login", loginForm("admin", "secret"), nil)
+	if rec.Code != http.StatusTooManyRequests || len(rec.Result().Cookies()) != 0 {
+		t.Errorf("status %d, cookies %v; want 429 and no session", rec.Code, rec.Result().Cookies())
+	}
+}
+
+func TestLoginBodyIsLimited(t *testing.T) {
+	e := newTestEnv(t)
+	rec := e.do(http.MethodPost, "/login", url.Values{"password": {strings.Repeat("x", 10_000)}}, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400 for an oversized form", rec.Code)
+	}
+}
+
+func TestLogout(t *testing.T) {
+	e := newTestEnv(t)
+	cookie := e.login()
+
+	rec := e.do(http.MethodPost, "/logout", nil, cookie)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/login" {
+		t.Fatalf("status %d, location %q; want a redirect to /login", rec.Code, rec.Header().Get("Location"))
+	}
+	// The browser would drop the cookie, but a copy of it must be useless too.
+	if rec := e.do(http.MethodGet, "/", nil, cookie); rec.Code != http.StatusSeeOther {
+		t.Errorf("old session still works after logout: status %d", rec.Code)
+	}
+	// Logging out is a POST: a link or image on another site cannot trigger it.
+	if rec := e.do(http.MethodGet, "/logout", nil, e.login()); rec.Code == http.StatusSeeOther && rec.Header().Get("Location") == "/login" {
+		t.Error("GET /logout must not log out")
+	}
+}
+
+func TestOverviewWaitingForFirstRun(t *testing.T) {
+	e := newTestEnv(t)
+	body := e.do(http.MethodGet, "/", nil, e.login()).Body.String()
+	if !strings.Contains(body, "Waiting for the first check run") || strings.Contains(body, "All good") {
+		t.Errorf("body = %q; before the first run nothing is known, so it must not say all good", body)
+	}
+}
+
+func TestOverviewAllGood(t *testing.T) {
+	e := newTestEnv(t)
+	e.status.LastRun = testNow.Add(-5 * time.Minute)
+	e.insert(problem("pending-one", "media", checks.Critical, store.StatePending, testNow, "not yet"))
+
+	body := e.do(http.MethodGet, "/", nil, e.login()).Body.String()
+	for _, want := range []string{"All good", "Last check:", "5m ago", "2026-11-03 11:55:00 UTC"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body does not contain %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "pending-one") {
+		t.Error("a pending problem is not reported yet and must not be listed")
+	}
+}
+
+func TestOverviewListsFiringProblemsWorstFirst(t *testing.T) {
+	e := newTestEnv(t)
+	e.status.LastRun = testNow
+	e.insert(
+		problem("warn-old", "media", checks.Warning, store.StateFiring, testNow.Add(-5*time.Hour), "w"),
+		problem("crit-new", "media", checks.Critical, store.StateFiring, testNow.Add(-1*time.Hour), "c1"),
+		problem("crit-old", "infra", checks.Critical, store.StateFiring, testNow.Add(-2*time.Hour), "c2"),
+	)
+
+	body := e.do(http.MethodGet, "/", nil, e.login()).Body.String()
+
+	order := []string{"crit-old", "crit-new", "warn-old"}
+	last := -1
+	for _, key := range order {
+		i := strings.Index(body, key)
+		if i < 0 || i < last {
+			t.Fatalf("%s is missing or out of order (want %v: critical first, longest-lasting first):\n%s", key, order, body)
+		}
+		last = i
+	}
+	for _, want := range []string{"3 current problems", "Pod infra/crit-old", "2h 0m ago", `class="badge critical"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body does not contain %q", want)
+		}
+	}
+}
+
+func TestOverviewEscapesMessages(t *testing.T) {
+	e := newTestEnv(t)
+	e.status.LastRun = testNow
+	e.insert(problem("evil", "media", checks.Warning, store.StateFiring, testNow, `<script>alert(1)</script>`))
+
+	body := e.do(http.MethodGet, "/", nil, e.login()).Body.String()
+	if strings.Contains(body, "<script>alert(1)") || !strings.Contains(body, "&lt;script&gt;alert(1)") {
+		t.Errorf("a message from the cluster must be escaped:\n%s", body)
+	}
+}
+
+func TestOverviewSingularProblem(t *testing.T) {
+	e := newTestEnv(t)
+	e.status.LastRun = testNow
+	e.insert(problem("one", "media", checks.Warning, store.StateFiring, testNow, "m"))
+	if body := e.do(http.MethodGet, "/", nil, e.login()).Body.String(); !strings.Contains(body, "1 current problem<") {
+		t.Errorf("want the singular heading:\n%s", body)
+	}
+}
+
+func TestHistoryAndNamespaceFilter(t *testing.T) {
+	e := newTestEnv(t)
+	e.insert(
+		resolvedProblem("in-media", "media", testNow.Add(-3*time.Hour), testNow.Add(-2*time.Hour)),
+		resolvedProblem("in-infra", "infra", testNow.Add(-5*time.Hour), testNow.Add(-4*time.Hour)),
+		problem("still-open", "media", checks.Warning, store.StateFiring, testNow, "open"),
+	)
+	cookie := e.login()
+
+	all := e.do(http.MethodGet, "/history", nil, cookie).Body.String()
+	for _, want := range []string{"in-media", "in-infra", `<option value="infra">`, `<option value="media">`, "1h 0m"} {
+		if !strings.Contains(all, want) {
+			t.Errorf("unfiltered history does not contain %q:\n%s", want, all)
+		}
+	}
+	if strings.Contains(all, "still-open") {
+		t.Error("an open problem is not history")
+	}
+	if strings.Index(all, "in-media") > strings.Index(all, "in-infra") {
+		t.Error("history must show the most recently resolved problem first")
+	}
+
+	filtered := e.do(http.MethodGet, "/history?namespace=media", nil, cookie).Body.String()
+	if !strings.Contains(filtered, "in-media") || strings.Contains(filtered, "in-infra") {
+		t.Errorf("filter by namespace failed:\n%s", filtered)
+	}
+	if !strings.Contains(filtered, `<option value="media" selected>`) {
+		t.Error("the chosen namespace must stay selected")
+	}
+
+	empty := e.do(http.MethodGet, "/history?namespace=nothing", nil, cookie).Body.String()
+	if !strings.Contains(empty, "No resolved problems in this namespace") {
+		t.Errorf("want the empty message:\n%s", empty)
+	}
+}
+
+func TestHistoryNamespaceIsEscaped(t *testing.T) {
+	e := newTestEnv(t)
+	body := e.do(http.MethodGet, `/history?namespace="><script>alert(1)</script>`, nil, e.login()).Body.String()
+	if strings.Contains(body, "<script>alert(1)") {
+		t.Errorf("the namespace parameter must not reach the page unescaped:\n%s", body)
+	}
+}
+
+func TestStatusPage(t *testing.T) {
+	e := newTestEnv(t)
+	e.status = engine.Status{
+		LastRun:           testNow.Add(-time.Minute),
+		LastRunError:      "save findings: disk full",
+		NotifierName:      "mail",
+		LastNotifyError:   "mail: connect to smtp.example.com:587: timeout",
+		LastNotifyErrorAt: testNow.Add(-2 * time.Minute),
+		Checks: []engine.CheckStatus{
+			{Name: "pod-crashloop", Active: true},
+			{Name: "argocd-health", Active: false, Reason: "Argo CD CRDs not installed"},
+		},
+	}
+
+	body := e.do(http.MethodGet, "/status", nil, e.login()).Body.String()
+	for _, want := range []string{
+		"2026-11-03 11:59:00 UTC", "save findings: disk full", "mail is configured",
+		"mail: connect to smtp.example.com:587: timeout", "2026-11-03 11:58:00 UTC",
+		"pod-crashloop", "active", "argocd-health", "skipped", "Argo CD CRDs not installed",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("status page does not contain %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestStatusPageWithoutMailAndErrors(t *testing.T) {
+	e := newTestEnv(t)
+	e.status = engine.Status{NotifierName: "log"}
+
+	body := e.do(http.MethodGet, "/status", nil, e.login()).Body.String()
+	if !strings.Contains(body, "mail is not configured") || !strings.Contains(body, "not yet") {
+		t.Errorf("unexpected status page:\n%s", body)
+	}
+	if strings.Contains(body, "Last sending error") || strings.Contains(body, "Last run error") {
+		t.Error("error rows must only appear when there is an error")
+	}
+}
+
+func TestAutoRefreshOnlyOnPages(t *testing.T) {
+	e := newTestEnv(t)
+	cookie := e.login()
+	for _, path := range []string{"/", "/history", "/status"} {
+		if body := e.do(http.MethodGet, path, nil, cookie).Body.String(); !strings.Contains(body, `<meta http-equiv="refresh" content="30">`) {
+			t.Errorf("%s has no 30 second refresh", path)
+		}
+	}
+}
+
+func TestSecurityHeaders(t *testing.T) {
+	e := newTestEnv(t)
+	cookie := e.login()
+	for _, path := range []string{"/login", "/", "/healthz", "/static/style.css"} {
+		h := e.do(http.MethodGet, path, nil, cookie).Header()
+		if !strings.Contains(h.Get("Content-Security-Policy"), "default-src 'self'") ||
+			h.Get("X-Content-Type-Options") != "nosniff" || h.Get("X-Frame-Options") != "DENY" ||
+			h.Get("Referrer-Policy") != "same-origin" {
+			t.Errorf("%s: missing security headers: %v", path, h)
+		}
+	}
+	if got := e.do(http.MethodGet, "/login", nil, nil).Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("/login: Cache-Control = %q, want no-store", got)
+	}
+	for _, path := range []string{"/", "/history", "/status"} {
+		if got := e.do(http.MethodGet, path, nil, cookie).Header().Get("Cache-Control"); got != "no-store" {
+			t.Errorf("%s: Cache-Control = %q, want no-store", path, got)
+		}
+	}
+}
+
+func TestSessionCookieIsHardened(t *testing.T) {
+	e := newTestEnv(t)
+	cookie := e.login()
+	if !cookie.HttpOnly || !cookie.Secure || cookie.SameSite != http.SameSiteLaxMode {
+		t.Errorf("cookie = %+v, want HttpOnly, Secure and SameSite=Lax", cookie)
+	}
+}
+
+func TestFormatAge(t *testing.T) {
 	tests := []struct {
-		name       string
-		ready      func() error
-		wantStatus int
-		wantBody   string
+		d    time.Duration
+		want string
 	}{
-		{"ready", func() error { return nil }, http.StatusOK, "ok"},
-		{"not ready", func() error { return errors.New("caches not synced") }, http.StatusServiceUnavailable, "caches not synced"},
+		{30 * time.Second, "less than a minute"},
+		{time.Minute, "1m"},
+		{59*time.Minute + 59*time.Second, "59m"},
+		{time.Hour, "1h 0m"},
+		{2*time.Hour + 10*time.Minute, "2h 10m"},
+		{24 * time.Hour, "1d 0h"},
+		{3*24*time.Hour + 4*time.Hour + 30*time.Minute, "3d 4h"},
+		{-time.Minute, "less than a minute"},
 	}
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			rec := get(t, newTestServer(tt.ready), "/readyz")
-			if rec.Code != tt.wantStatus {
-				t.Errorf("status = %d, want %d", rec.Code, tt.wantStatus)
-			}
-			if !strings.Contains(rec.Body.String(), tt.wantBody) {
-				t.Errorf("body = %q, want it to contain %q", rec.Body.String(), tt.wantBody)
-			}
-		})
+		if got := formatAge(tt.d); got != tt.want {
+			t.Errorf("formatAge(%v) = %q, want %q", tt.d, got, tt.want)
+		}
 	}
 }

@@ -1,0 +1,25 @@
+{{define "layout"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{{if .Refresh}}<meta http-equiv="refresh" content="30">
+{{end}}<title>{{.Title}} – smokealarm</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <a class="brand" href="/">smokealarm</a>
+  {{if .ShowNav}}<nav>
+    <a href="/"{{if eq .Active "overview"}} aria-current="page"{{end}}>Overview</a>
+    <a href="/history"{{if eq .Active "history"}} aria-current="page"{{end}}>History</a>
+    <a href="/status"{{if eq .Active "status"}} aria-current="page"{{end}}>Status</a>
+    <form method="post" action="/logout"><button type="submit">Log out</button></form>
+  </nav>{{end}}
+</header>
+<main>
+{{template "content" .}}
+</main>
+</body>
+</html>
+{{end}}

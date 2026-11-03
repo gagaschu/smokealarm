@@ -1,0 +1,31 @@
+{{define "content"}}
+<h1>Status</h1>
+<dl>
+  <dt>Last check run</dt>
+  <dd>{{if .Status.LastRun}}{{.Status.LastRun}}{{else}}not yet{{end}}</dd>
+  {{if .Status.LastRunError}}
+  <dt>Last run error</dt>
+  <dd class="error">{{.Status.LastRunError}}</dd>
+  {{end}}
+  <dt>Notifications</dt>
+  <dd>{{if .Status.MailConfigured}}mail is configured{{else}}mail is not configured (notifications go to the log only){{end}}</dd>
+  {{if .Status.LastNotifyError}}
+  <dt>Last sending error</dt>
+  <dd class="error">{{.Status.LastNotifyError}} <span class="footnote">({{.Status.LastNotifyErrorAt}})</span></dd>
+  {{end}}
+</dl>
+
+<h2>Checks</h2>
+<table>
+  <thead><tr><th>Check</th><th>State</th><th>Reason</th></tr></thead>
+  <tbody>
+    {{range .Status.Checks}}
+    <tr>
+      <td data-label="Check">{{.Name}}</td>
+      <td data-label="State">{{if .Active}}active{{else}}skipped{{end}}</td>
+      <td data-label="Reason">{{.Reason}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{end}}
