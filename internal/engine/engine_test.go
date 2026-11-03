@@ -739,3 +739,186 @@ func TestRunChecksSortsByKey(t *testing.T) {
 		t.Errorf("keys = %v, want %s", keys, want)
 	}
 }
+
+// firingCritical returns a harness with reminders every hour and problem "a"
+// reported once, so the reminder clock starts at the current time.
+func firingCritical(t *testing.T) *harness {
+	t.Helper()
+	h := newHarness(t)
+	h.engine.CriticalRepeatInterval = time.Hour
+	h.findings = []checks.Finding{finding("a", checks.Critical)}
+	h.mustRun(0)
+	h.mustRun(2 * time.Minute)
+	if len(h.notifier.sent) != 1 || alertKeys(h.notifier.sent[0].New) != "a" {
+		t.Fatalf("sent %+v, want the first report of a", h.notifier.sent)
+	}
+	return h
+}
+
+func TestRemindersAreOffByDefault(t *testing.T) {
+	h := newHarness(t)
+	h.findings = []checks.Finding{finding("a", checks.Critical)}
+	h.mustRun(0)
+	h.mustRun(2 * time.Minute)
+	h.mustRun(24 * time.Hour)
+	if len(h.notifier.sent) != 1 {
+		t.Fatalf("got %d notifications, want only the first report", len(h.notifier.sent))
+	}
+}
+
+func TestReminderRepeatsAtTheInterval(t *testing.T) {
+	h := firingCritical(t)
+
+	for round := 1; round <= 2; round++ {
+		h.mustRun(59 * time.Minute)
+		if len(h.notifier.sent) != round {
+			t.Fatalf("round %d: got %d notifications before the interval is over", round, len(h.notifier.sent))
+		}
+		h.mustRun(time.Minute)
+		if len(h.notifier.sent) != round+1 {
+			t.Fatalf("round %d: got %d notifications, want a reminder at the interval", round, len(h.notifier.sent))
+		}
+		got := h.notifier.sent[round]
+		if alertKeys(got.Reminders) != "a" || len(got.New) != 0 || len(got.Resolved) != 0 {
+			t.Fatalf("round %d: sent %+v, want only a reminder for a", round, got)
+		}
+		if since := got.Reminders[0].Since; !since.Equal(testStart) {
+			t.Errorf("Since = %v, want first seen %v", since, testStart)
+		}
+	}
+}
+
+func TestWarningsGetNoReminder(t *testing.T) {
+	h := newHarness(t)
+	h.engine.CriticalRepeatInterval = time.Hour
+	h.findings = []checks.Finding{finding("a", checks.Warning)}
+	h.mustRun(0)
+	h.mustRun(2 * time.Minute)
+	h.mustRun(24 * time.Hour)
+	if len(h.notifier.sent) != 1 {
+		t.Fatalf("got %d notifications, want the warning reported once", len(h.notifier.sent))
+	}
+}
+
+func TestFailedReminderIsRetriedAlsoAfterRestart(t *testing.T) {
+	h := firingCritical(t)
+
+	h.notifier.fail = true
+	if err := h.run(time.Hour); err == nil {
+		t.Fatal("RunOnce returned no error for a failed send")
+	}
+	attempts := h.notifier.attempts
+	if err := h.run(30 * time.Second); err == nil {
+		t.Fatal("RunOnce returned no error for the failed retry")
+	}
+	if h.notifier.attempts != attempts+1 {
+		t.Fatalf("attempts = %d, want a retry in the next run", h.notifier.attempts)
+	}
+
+	h.restart()
+	h.engine.CriticalRepeatInterval = time.Hour
+	h.notifier.fail = false
+	h.mustRun(30 * time.Second)
+	if len(h.notifier.sent) != 2 || alertKeys(h.notifier.sent[1].Reminders) != "a" {
+		t.Fatalf("sent %+v, want the reminder delivered after the restart", h.notifier.sent)
+	}
+
+	// The clock starts again at the successful send, not at the first attempt.
+	h.mustRun(59 * time.Minute)
+	if len(h.notifier.sent) != 2 {
+		t.Fatalf("got %d notifications, want no reminder before the interval is over", len(h.notifier.sent))
+	}
+}
+
+func TestReminderAndNewProblemShareOneMail(t *testing.T) {
+	h := firingCritical(t)
+
+	h.mustRun(58 * time.Minute)
+	h.findings = []checks.Finding{finding("a", checks.Critical), finding("b", checks.Warning)}
+	h.mustRun(0) // b is pending now
+	h.mustRun(2 * time.Minute)
+
+	if len(h.notifier.sent) != 2 {
+		t.Fatalf("got %d notifications, want one combined mail after the first", len(h.notifier.sent))
+	}
+	got := h.notifier.sent[1]
+	if alertKeys(got.New) != "b" || alertKeys(got.Reminders) != "a" {
+		t.Fatalf("sent %+v, want b as new and a as reminder", got)
+	}
+}
+
+func TestResolvedProblemGetsNoReminder(t *testing.T) {
+	h := firingCritical(t)
+
+	h.findings = nil
+	h.mustRun(time.Hour)
+	if len(h.notifier.sent) != 2 {
+		t.Fatalf("got %d notifications, want the resolution", len(h.notifier.sent))
+	}
+	got := h.notifier.sent[1]
+	if alertKeys(got.Resolved) != "a" || len(got.Reminders) != 0 {
+		t.Fatalf("sent %+v, want only a resolved", got)
+	}
+
+	h.mustRun(2 * time.Hour)
+	if len(h.notifier.sent) != 2 {
+		t.Fatalf("got %d notifications, want nothing after the resolution", len(h.notifier.sent))
+	}
+}
+
+func TestEscalationRestartsTheReminderClock(t *testing.T) {
+	h := newHarness(t)
+	h.engine.CriticalRepeatInterval = time.Hour
+	h.findings = []checks.Finding{escalating(checks.Warning)}
+	h.mustRun(0)
+	h.mustRun(2 * time.Minute) // reported as a warning
+
+	h.findings = []checks.Finding{escalating(checks.Critical)}
+	h.mustRun(2 * time.Hour) // long past the interval, but this is a new report
+	if len(h.notifier.sent) != 2 {
+		t.Fatalf("got %d notifications, want the warning and the escalation", len(h.notifier.sent))
+	}
+	if got := h.notifier.sent[1]; alertKeys(got.New) != "vol" || len(got.Reminders) != 0 {
+		t.Fatalf("sent %+v, want the escalation as new and no reminder", got)
+	}
+
+	h.mustRun(59 * time.Minute)
+	if len(h.notifier.sent) != 2 {
+		t.Fatalf("got %d notifications, want no reminder before the interval is over", len(h.notifier.sent))
+	}
+	h.mustRun(time.Minute)
+	if len(h.notifier.sent) != 3 || alertKeys(h.notifier.sent[2].Reminders) != "vol" {
+		t.Fatalf("sent %+v, want a reminder one interval after the escalation", h.notifier.sent)
+	}
+}
+
+func TestDeEscalationStopsReminders(t *testing.T) {
+	h := newHarness(t)
+	h.engine.CriticalRepeatInterval = time.Hour
+	h.findings = []checks.Finding{escalating(checks.Critical)}
+	h.mustRun(0)
+	h.mustRun(2 * time.Minute)
+
+	h.findings = []checks.Finding{escalating(checks.Warning)}
+	h.mustRun(2 * time.Hour)
+	h.mustRun(2 * time.Hour)
+	if len(h.notifier.sent) != 1 {
+		t.Fatalf("got %d notifications, want no reminder for a warning", len(h.notifier.sent))
+	}
+}
+
+func TestSkippedCheckGetsNoReminderUntilItRunsAgain(t *testing.T) {
+	h := firingCritical(t)
+
+	h.skipped = map[string]string{"fake": "kubelet stats unavailable"}
+	h.mustRun(2 * time.Hour)
+	if len(h.notifier.sent) != 1 {
+		t.Fatalf("got %d notifications, want no reminder while the state is unknown", len(h.notifier.sent))
+	}
+
+	h.skipped = nil
+	h.mustRun(30 * time.Second)
+	if len(h.notifier.sent) != 2 || alertKeys(h.notifier.sent[1].Reminders) != "a" {
+		t.Fatalf("sent %+v, want the reminder once the check runs again", h.notifier.sent)
+	}
+}

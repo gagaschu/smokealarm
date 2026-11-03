@@ -101,6 +101,25 @@ func TestSubjectAndBodyGolden(t *testing.T) {
 			wantSubject: "[smokealarm] 1 new problem, 1 resolved",
 		},
 		{
+			name:        "single_reminder",
+			n:           Notification{Reminders: []Alert{crashLoop()}, BaseURL: "https://smokealarm.example.com"},
+			wantSubject: "[smokealarm] STILL CRITICAL: CrashLoopBackOff media/jellyfin",
+		},
+		{
+			name:        "one_new_and_one_reminder",
+			n:           Notification{New: []Alert{replicasUnavailable()}, Reminders: []Alert{crashLoop()}},
+			wantSubject: "[smokealarm] 1 new problem, 1 still critical",
+		},
+		{
+			name: "new_reminders_and_resolved",
+			n: Notification{
+				New:       []Alert{replicasUnavailable()},
+				Reminders: []Alert{crashLoop(), nodeNotReady()},
+				Resolved:  []Alert{resolved(replicasUnavailable())},
+			},
+			wantSubject: "[smokealarm] 1 new problem, 2 still critical, 1 resolved",
+		},
+		{
 			name:        "several_resolved",
 			n:           Notification{Resolved: []Alert{resolved(crashLoop()), resolved(nodeNotReady())}},
 			wantSubject: "[smokealarm] 2 resolved",

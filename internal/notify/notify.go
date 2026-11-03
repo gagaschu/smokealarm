@@ -17,12 +17,13 @@ type Notifier interface {
 	Send(ctx context.Context, n Notification) error
 }
 
-// Notification bundles everything that changed since the last successful
+// Notification bundles everything to report since the last successful
 // notification: one message per run, not one per problem.
 type Notification struct {
-	New      []Alert // problems that started firing, critical first
-	Resolved []Alert // problems that went away
-	BaseURL  string  // link to the web UI, empty if not configured
+	New       []Alert // problems that started firing, critical first
+	Reminders []Alert // critical problems reported before that are still open
+	Resolved  []Alert // problems that went away
+	BaseURL   string  // link to the web UI, empty if not configured
 }
 
 // Alert is a finding plus the times a reader wants to see.

@@ -57,7 +57,8 @@ A finding has a stable **key** (check + object + a fixed word), so smokealarm ca
 - A problem that appears and disappears within `ALERT_AFTER` is never reported.
 - Reporting is remembered in the database *after* a successful send, so a failed mail is retried at the next run, even after a restart.
 - If a firing problem gets worse (warning → critical), it stays the same problem and is reported again as critical.
-- If a check cannot get its data (for example the kubelet does not answer), it is skipped for that run and its open problems are left alone, because "no data" is not "all fine".
+- With `CRITICAL_REPEAT_INTERVAL` set, a critical problem that is still firing is reported again once its last report is that old. Warnings are not repeated.
+- If a check cannot get its data (for example the kubelet does not answer), it is skipped for that run and its open problems are left alone, because "no data" is not "all fine". They get no reminders either, until the check runs again.
 - If a check is switched off (configuration, or an optional CRD or permission is missing at startup), its open problems count as gone and are reported as resolved in the next run. The README says so, because switching a check off can look like a recovery.
 
 ## Go for ops people

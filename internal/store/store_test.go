@@ -406,3 +406,60 @@ func TestUpdateWritesReasonAndNotifiedMarker(t *testing.T) {
 		t.Errorf("%d unreported records, want the changed one to be reported again", len(unnotified))
 	}
 }
+
+func TestCriticalDueForReminder(t *testing.T) {
+	s, _ := openTemp(t)
+	ctx := context.Background()
+
+	firingAt := testNow
+	firing := func(key string, severity checks.Severity) Record {
+		r := newRecord(key, StateFiring, testNow)
+		r.Severity = severity
+		r.FiringAt = &firingAt
+		return r
+	}
+	resolvedAt := testNow.Add(time.Minute)
+	resolved := newRecord("resolved", StateResolved, testNow)
+	resolved.FiringAt, resolved.ResolvedAt = &firingAt, &resolvedAt
+	records := []Record{
+		firing("old", checks.Critical),
+		firing("boundary", checks.Critical),
+		firing("recent", checks.Critical),
+		firing("warning", checks.Warning),
+		firing("never-reported", checks.Critical),
+		resolved,
+	}
+	if err := s.Apply(ctx, Changes{Insert: records}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	stored, err := s.query(ctx, `SELECT `+selectColumns+` FROM findings`)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	ids := map[string]int64{}
+	for _, r := range stored {
+		ids[r.Key] = r.ID
+	}
+
+	before := testNow.Add(time.Hour)
+	marks := map[string]time.Time{
+		"old":      before.Add(-time.Minute),
+		"boundary": before,
+		"recent":   before.Add(time.Second),
+		"warning":  before.Add(-time.Minute),
+		"resolved": before.Add(-time.Minute),
+	}
+	for key, at := range marks {
+		if err := s.MarkFiringNotified(ctx, []int64{ids[key]}, at); err != nil {
+			t.Fatalf("MarkFiringNotified(%s): %v", key, err)
+		}
+	}
+
+	got, err := s.CriticalDueForReminder(ctx, before)
+	if err != nil {
+		t.Fatalf("CriticalDueForReminder: %v", err)
+	}
+	if keys := recordKeys(got); keys != "old,boundary" {
+		t.Errorf("got %s, want old,boundary", keys)
+	}
+}

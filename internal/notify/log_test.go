@@ -20,15 +20,16 @@ func TestLogSend(t *testing.T) {
 		Reason: "CrashLoopBackOff", Message: "container app keeps crashing",
 	}
 	err := n.Send(context.Background(), Notification{
-		New:      []Alert{{Finding: finding, Since: time.Now()}},
-		Resolved: []Alert{{Finding: finding, Since: time.Now(), ResolvedAt: time.Now()}},
+		New:       []Alert{{Finding: finding, Since: time.Now()}},
+		Reminders: []Alert{{Finding: finding, Since: time.Now()}},
+		Resolved:  []Alert{{Finding: finding, Since: time.Now(), ResolvedAt: time.Now()}},
 	})
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 
 	log := out.String()
-	for _, want := range []string{"notification: problem", "notification: resolved", "pod-crashloop/Pod/media/jellyfin", "severity=critical"} {
+	for _, want := range []string{"notification: problem", "notification: still critical", "notification: resolved", "pod-crashloop/Pod/media/jellyfin", "severity=critical"} {
 		if !strings.Contains(log, want) {
 			t.Errorf("log does not contain %q:\n%s", want, log)
 		}

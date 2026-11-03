@@ -25,6 +25,15 @@ func (l *Log) Send(_ context.Context, n Notification) error {
 			"since", a.Since,
 		)
 	}
+	for _, a := range n.Reminders {
+		l.Logger.Warn("notification: still critical",
+			"key", a.Key,
+			"severity", a.Severity,
+			"reason", a.Reason,
+			"message", a.Message,
+			"since", a.Since,
+		)
+	}
 	for _, a := range n.Resolved {
 		l.Logger.Info("notification: resolved",
 			"key", a.Key,
