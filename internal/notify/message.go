@@ -21,15 +21,19 @@ const timeFormat = "2006-01-02 15:04:05 UTC"
 // ("CRITICAL: CrashLoopBackOff media/jellyfin"); several changes are counted
 // ("3 new problems, 1 resolved").
 func Subject(n Notification) string {
+	if len(n.New)+len(n.Reminders)+len(n.Resolved) != 1 {
+		return subjectPrefix + summary(n)
+	}
 	switch {
-	case len(n.New) == 1 && len(n.Resolved) == 0:
+	case len(n.New) == 1:
 		a := n.New[0]
 		return fmt.Sprintf("%s%s: %s %s", subjectPrefix, strings.ToUpper(string(a.Severity)), a.Reason, objectName(a.Object))
-	case len(n.New) == 0 && len(n.Resolved) == 1:
+	case len(n.Reminders) == 1:
+		a := n.Reminders[0]
+		return fmt.Sprintf("%sSTILL CRITICAL: %s %s", subjectPrefix, a.Reason, objectName(a.Object))
+	default:
 		a := n.Resolved[0]
 		return fmt.Sprintf("%sRESOLVED: %s %s", subjectPrefix, a.Reason, objectName(a.Object))
-	default:
-		return subjectPrefix + summary(n)
 	}
 }
 
@@ -42,6 +46,9 @@ func summary(n Notification) string {
 		parts = append(parts, "1 new problem")
 	default:
 		parts = append(parts, fmt.Sprintf("%d new problems", len(n.New)))
+	}
+	if len(n.Reminders) > 0 {
+		parts = append(parts, fmt.Sprintf("%d still critical", len(n.Reminders)))
 	}
 	if len(n.Resolved) > 0 {
 		parts = append(parts, fmt.Sprintf("%d resolved", len(n.Resolved)))
@@ -62,11 +69,18 @@ func objectName(ref checks.ObjectRef) string {
 }
 
 // bodyTemplate is the plaintext mail body. New problems come first, then
-// resolved ones; the engine has already sorted each list.
+// reminders, then resolved ones; the engine has already sorted each list.
 const bodyTemplate = `{{.Summary}}
 {{if .New}}
 NEW PROBLEMS
 {{range .New}}
+[{{.Severity}}] {{.Reason}}
+  Object:  {{.Object}}
+  Message: {{.Message}}
+  Since:   {{.Since}}
+{{end}}{{end}}{{if .Reminders}}
+STILL CRITICAL
+{{range .Reminders}}
 [{{.Severity}}] {{.Reason}}
   Object:  {{.Object}}
   Message: {{.Message}}
@@ -86,10 +100,11 @@ Details: {{.BaseURL}}
 // bodyData and bodyEntry hold the already formatted values, so the template
 // stays free of logic.
 type bodyData struct {
-	Summary  string
-	New      []bodyEntry
-	Resolved []bodyEntry
-	BaseURL  string
+	Summary   string
+	New       []bodyEntry
+	Reminders []bodyEntry
+	Resolved  []bodyEntry
+	BaseURL   string
 }
 
 type bodyEntry struct {
@@ -108,10 +123,11 @@ func Body(n Notification) (string, error) {
 		return "", fmt.Errorf("parse body template: %w", err)
 	}
 	data := bodyData{
-		Summary:  summary(n),
-		New:      entries(n.New),
-		Resolved: entries(n.Resolved),
-		BaseURL:  n.BaseURL,
+		Summary:   summary(n),
+		New:       entries(n.New),
+		Reminders: entries(n.Reminders),
+		Resolved:  entries(n.Resolved),
+		BaseURL:   n.BaseURL,
 	}
 
 	var out bytes.Buffer

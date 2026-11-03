@@ -12,16 +12,19 @@ import (
 
 // Config holds all settings.
 type Config struct {
-	CheckInterval    time.Duration
-	AlertAfter       time.Duration // how long a problem must persist before it fires
-	Retention        time.Duration // how long resolved findings are kept
-	DBPath           string
-	ListenAddr       string
-	LogFormat        string // "json", "text" or "auto"
-	LogLevel         string // "debug", "info", "warn" or "error"
-	IgnoreNamespaces []string
-	DisabledChecks   []string
-	BaseURL          string // public URL of the web UI, linked in mails
+	CheckInterval time.Duration
+	AlertAfter    time.Duration // how long a problem must persist before it fires
+	// CriticalRepeatInterval is how often a critical problem that is still
+	// open is reported again. Zero means never.
+	CriticalRepeatInterval time.Duration
+	Retention              time.Duration // how long resolved findings are kept
+	DBPath                 string
+	ListenAddr             string
+	LogFormat              string // "json", "text" or "auto"
+	LogLevel               string // "debug", "info", "warn" or "error"
+	IgnoreNamespaces       []string
+	DisabledChecks         []string
+	BaseURL                string // public URL of the web UI, linked in mails
 
 	SMTP SMTPConfig
 
@@ -43,17 +46,18 @@ func Load(getenv func(string) string) (Config, error) {
 	r := reader{getenv: getenv}
 
 	cfg := Config{
-		CheckInterval:    r.duration("SMOKEALARM_CHECK_INTERVAL", 30*time.Second),
-		AlertAfter:       r.duration("SMOKEALARM_ALERT_AFTER", 2*time.Minute),
-		Retention:        r.duration("SMOKEALARM_RETENTION", 30*24*time.Hour),
-		DBPath:           r.text("SMOKEALARM_DB_PATH", "smokealarm.db"),
-		ListenAddr:       r.text("SMOKEALARM_LISTEN_ADDR", ":8080"),
-		LogFormat:        r.choice("SMOKEALARM_LOG_FORMAT", "auto", "json", "text", "auto"),
-		LogLevel:         r.choice("SMOKEALARM_LOG_LEVEL", "info", "debug", "info", "warn", "error"),
-		IgnoreNamespaces: r.list("SMOKEALARM_IGNORE_NAMESPACES"),
-		DisabledChecks:   r.list("SMOKEALARM_DISABLED_CHECKS"),
-		BaseURL:          r.text("SMOKEALARM_BASE_URL", ""),
-		SMTP:             loadSMTP(&r),
+		CheckInterval:          r.duration("SMOKEALARM_CHECK_INTERVAL", 30*time.Second),
+		AlertAfter:             r.duration("SMOKEALARM_ALERT_AFTER", 2*time.Minute),
+		CriticalRepeatInterval: r.duration("SMOKEALARM_CRITICAL_REPEAT_INTERVAL", 0),
+		Retention:              r.duration("SMOKEALARM_RETENTION", 30*24*time.Hour),
+		DBPath:                 r.text("SMOKEALARM_DB_PATH", "smokealarm.db"),
+		ListenAddr:             r.text("SMOKEALARM_LISTEN_ADDR", ":8080"),
+		LogFormat:              r.choice("SMOKEALARM_LOG_FORMAT", "auto", "json", "text", "auto"),
+		LogLevel:               r.choice("SMOKEALARM_LOG_LEVEL", "info", "debug", "info", "warn", "error"),
+		IgnoreNamespaces:       r.list("SMOKEALARM_IGNORE_NAMESPACES"),
+		DisabledChecks:         r.list("SMOKEALARM_DISABLED_CHECKS"),
+		BaseURL:                r.text("SMOKEALARM_BASE_URL", ""),
+		SMTP:                   loadSMTP(&r),
 
 		AdminUser:         r.required("SMOKEALARM_ADMIN_USER"),
 		AdminPasswordHash: r.required("SMOKEALARM_ADMIN_PASSWORD_HASH"),
@@ -70,6 +74,13 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	if cfg.AlertAfter < 0 {
 		r.fail("SMOKEALARM_ALERT_AFTER: must not be negative")
+	}
+	// Shorter than a check run would mean a mail per run, which is almost
+	// certainly a typo (30s instead of 30m).
+	if cfg.CriticalRepeatInterval < 0 {
+		r.fail("SMOKEALARM_CRITICAL_REPEAT_INTERVAL: must not be negative")
+	} else if cfg.CriticalRepeatInterval > 0 && cfg.CriticalRepeatInterval < cfg.CheckInterval {
+		r.fail("SMOKEALARM_CRITICAL_REPEAT_INTERVAL: must be 0 (off) or at least SMOKEALARM_CHECK_INTERVAL")
 	}
 	if cfg.Retention <= 0 {
 		r.fail("SMOKEALARM_RETENTION: must be greater than zero")

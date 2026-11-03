@@ -60,19 +60,20 @@ func TestLoadDefaults(t *testing.T) {
 
 func TestLoadValues(t *testing.T) {
 	cfg, err := Load(env(map[string]string{
-		"SMOKEALARM_CHECK_INTERVAL":    "1m",
-		"SMOKEALARM_ALERT_AFTER":       "0s",
-		"SMOKEALARM_RETENTION":         "7d",
-		"SMOKEALARM_DB_PATH":           "/data/smokealarm.db",
-		"SMOKEALARM_LISTEN_ADDR":       "127.0.0.1:9000",
-		"SMOKEALARM_LOG_FORMAT":        "text",
-		"SMOKEALARM_LOG_LEVEL":         "debug",
-		"SMOKEALARM_IGNORE_NAMESPACES": "kube-system, test ,,",
-		"SMOKEALARM_RESTART_THRESHOLD": "10",
-		"SMOKEALARM_POD_PENDING_AFTER": "2d",
-		"SMOKEALARM_PVC_PENDING_AFTER": "10m",
-		"SMOKEALARM_CRONJOB_GRACE":     "90s",
-		"SMOKEALARM_DISABLED_CHECKS":   "pod-restarts, pvc-pending",
+		"SMOKEALARM_CHECK_INTERVAL":           "1m",
+		"SMOKEALARM_ALERT_AFTER":              "0s",
+		"SMOKEALARM_CRITICAL_REPEAT_INTERVAL": "4h",
+		"SMOKEALARM_RETENTION":                "7d",
+		"SMOKEALARM_DB_PATH":                  "/data/smokealarm.db",
+		"SMOKEALARM_LISTEN_ADDR":              "127.0.0.1:9000",
+		"SMOKEALARM_LOG_FORMAT":               "text",
+		"SMOKEALARM_LOG_LEVEL":                "debug",
+		"SMOKEALARM_IGNORE_NAMESPACES":        "kube-system, test ,,",
+		"SMOKEALARM_RESTART_THRESHOLD":        "10",
+		"SMOKEALARM_POD_PENDING_AFTER":        "2d",
+		"SMOKEALARM_PVC_PENDING_AFTER":        "10m",
+		"SMOKEALARM_CRONJOB_GRACE":            "90s",
+		"SMOKEALARM_DISABLED_CHECKS":          "pod-restarts, pvc-pending",
 	}))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -88,6 +89,9 @@ func TestLoadValues(t *testing.T) {
 	}
 	if cfg.AlertAfter != 0 || cfg.Retention != 7*24*time.Hour || cfg.DBPath != "/data/smokealarm.db" {
 		t.Errorf("AlertAfter = %v, Retention = %v, DBPath = %q", cfg.AlertAfter, cfg.Retention, cfg.DBPath)
+	}
+	if cfg.CriticalRepeatInterval != 4*time.Hour {
+		t.Errorf("CriticalRepeatInterval = %v, want 4h", cfg.CriticalRepeatInterval)
 	}
 	if cfg.PodPendingAfter != 48*time.Hour {
 		t.Errorf("PodPendingAfter = %v, want 48h", cfg.PodPendingAfter)
@@ -136,6 +140,8 @@ func TestLoadRejectsBadAlertAndRetention(t *testing.T) {
 		want string
 	}{
 		{"negative alert after", map[string]string{"SMOKEALARM_ALERT_AFTER": "-1m"}, "SMOKEALARM_ALERT_AFTER"},
+		{"negative repeat interval", map[string]string{"SMOKEALARM_CRITICAL_REPEAT_INTERVAL": "-1h"}, "SMOKEALARM_CRITICAL_REPEAT_INTERVAL"},
+		{"repeat interval below check interval", map[string]string{"SMOKEALARM_CRITICAL_REPEAT_INTERVAL": "10s"}, "SMOKEALARM_CRITICAL_REPEAT_INTERVAL"},
 		{"zero retention", map[string]string{"SMOKEALARM_RETENTION": "0s"}, "SMOKEALARM_RETENTION"},
 	}
 	for _, tt := range tests {

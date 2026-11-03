@@ -33,6 +33,9 @@ type Engine struct {
 
 	// AlertAfter is how long a problem must last before it is reported.
 	AlertAfter time.Duration
+	// CriticalRepeatInterval is how often a critical problem that is still
+	// open is reported again. Zero means never.
+	CriticalRepeatInterval time.Duration
 	// Retention is how long resolved problems are kept as history.
 	Retention time.Duration
 
@@ -233,11 +236,12 @@ func (e *Engine) RunOnce(ctx context.Context) error {
 		)
 	}
 
+	unknown := e.checksWithUnknownState(skipped)
 	var errs []error
-	if err := e.saveState(ctx, findings, e.checksWithUnknownState(skipped), start); err != nil {
+	if err := e.saveState(ctx, findings, unknown, start); err != nil {
 		errs = append(errs, err)
 	}
-	if err := e.notify(ctx, start); err != nil {
+	if err := e.notify(ctx, unknown, start); err != nil {
 		errs = append(errs, err)
 	}
 	if err := e.cleanup(ctx, start); err != nil {
@@ -358,11 +362,16 @@ func (e *Engine) refresh(record store.Record, f checks.Finding, now time.Time) s
 // notify sends one combined notification for everything that has not been
 // reported yet. Records are marked as reported only after the notifier
 // succeeded, so a failed send is simply tried again at the next run, also
-// after a restart.
-func (e *Engine) notify(ctx context.Context, now time.Time) error {
+// after a restart. Reminders for critical problems that are due go into the
+// same notification, except for checks whose state is unknown.
+func (e *Engine) notify(ctx context.Context, unknown []string, now time.Time) error {
 	records, err := e.Store.Unnotified(ctx)
 	if err != nil {
 		return fmt.Errorf("load unreported findings: %w", err)
+	}
+	due, err := e.dueReminders(ctx, unknown, now)
+	if err != nil {
+		return fmt.Errorf("load findings due for a reminder: %w", err)
 	}
 
 	n := notify.Notification{BaseURL: e.BaseURL}
@@ -382,21 +391,27 @@ func (e *Engine) notify(ctx context.Context, now time.Time) error {
 		}
 	}
 
+	for _, r := range due {
+		n.Reminders = append(n.Reminders, alertFor(r))
+		firingIDs = append(firingIDs, r.ID)
+	}
+
 	if err := e.Store.MarkResolvedNotified(ctx, silentIDs, now); err != nil {
 		return fmt.Errorf("mark silently resolved findings: %w", err)
 	}
-	if len(n.New) == 0 && len(n.Resolved) == 0 {
+	if len(n.New) == 0 && len(n.Reminders) == 0 && len(n.Resolved) == 0 {
 		return nil
 	}
 
 	sortAlerts(n.New)
+	sortAlerts(n.Reminders)
 	sortAlerts(n.Resolved)
 	err = e.Notifier.Send(ctx, n)
 	e.setNotifyResult(err, now)
 	if err != nil {
 		return fmt.Errorf("send notification via %s: %w", e.Notifier.Name(), err)
 	}
-	e.Logger.Info("notification sent", "notifier", e.Notifier.Name(), "new", len(n.New), "resolved", len(n.Resolved))
+	e.Logger.Info("notification sent", "notifier", e.Notifier.Name(), "new", len(n.New), "reminders", len(n.Reminders), "resolved", len(n.Resolved))
 
 	if err := e.Store.MarkFiringNotified(ctx, firingIDs, now); err != nil {
 		return fmt.Errorf("mark new findings as reported: %w", err)
@@ -405,6 +420,23 @@ func (e *Engine) notify(ctx context.Context, now time.Time) error {
 		return fmt.Errorf("mark resolved findings as reported: %w", err)
 	}
 	return nil
+}
+
+// dueReminders returns the critical problems whose last report is at least
+// one repeat interval old. Problems of checks whose state is unknown are left
+// out, because a reminder would claim they still exist; they are reminded of
+// as soon as the check runs again.
+func (e *Engine) dueReminders(ctx context.Context, unknown []string, now time.Time) ([]store.Record, error) {
+	if e.CriticalRepeatInterval <= 0 {
+		return nil, nil
+	}
+	records, err := e.Store.CriticalDueForReminder(ctx, now.Add(-e.CriticalRepeatInterval))
+	if err != nil {
+		return nil, err
+	}
+	return slices.DeleteFunc(records, func(r store.Record) bool {
+		return slices.Contains(unknown, r.Check)
+	}), nil
 }
 
 func alertFor(r store.Record) notify.Alert {

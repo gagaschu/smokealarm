@@ -22,7 +22,8 @@ const (
 
 // Record is a finding as stored in the database, with its life cycle times.
 // The *NotifiedAt fields remember what has already been reported, so nothing
-// is sent twice and failed notifications are retried.
+// is sent twice by accident and failed notifications are retried.
+// FiringNotifiedAt holds the latest report, which may be a reminder.
 type Record struct {
 	ID int64
 	checks.Finding
@@ -60,6 +61,16 @@ func (s *Store) Unnotified(ctx context.Context) ([]Record, error) {
 		WHERE (state = 'firing' AND firing_notified_at IS NULL)
 		   OR (state = 'resolved' AND resolved_notified_at IS NULL)
 		ORDER BY id`)
+}
+
+// CriticalDueForReminder returns critical problems that are still firing and
+// were last reported at or before the given time. Problems not reported yet
+// are left out; Unnotified returns those.
+func (s *Store) CriticalDueForReminder(ctx context.Context, before time.Time) ([]Record, error) {
+	return s.query(ctx, `SELECT `+selectColumns+` FROM findings
+		WHERE state = 'firing' AND severity = 'critical'
+		  AND firing_notified_at IS NOT NULL AND firing_notified_at <= ?
+		ORDER BY id`, unix(before))
 }
 
 // Resolved returns resolved problems, newest first, for the history page. An
@@ -140,7 +151,8 @@ func (s *Store) Apply(ctx context.Context, changes Changes) error {
 	return nil
 }
 
-// MarkFiringNotified remembers that the start of these problems was reported.
+// MarkFiringNotified remembers that these firing problems were just reported,
+// for the first time or as a reminder.
 func (s *Store) MarkFiringNotified(ctx context.Context, ids []int64, at time.Time) error {
 	return s.markNotified(ctx, `UPDATE findings SET firing_notified_at = ? WHERE id = ?`, ids, at)
 }
