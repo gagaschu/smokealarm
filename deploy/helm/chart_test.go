@@ -778,6 +778,39 @@ func TestRenderedEnvironmentIsAValidConfig(t *testing.T) {
 	}
 }
 
+// The example files are part of the documentation: each must render, and what
+// it renders must be a configuration the program accepts.
+func TestExamplesRender(t *testing.T) {
+	files, err := filepath.Glob(filepath.Join("examples", "*.yaml"))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no example files found: %v", err)
+	}
+	for _, file := range files {
+		t.Run(filepath.Base(file), func(t *testing.T) {
+			example, err := os.ReadFile(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			r := render(t, string(example))
+			if !r.has("Deployment") {
+				t.Fatalf("rendered %v, want at least a Deployment", r.kinds())
+			}
+
+			env := r.environment()
+			if _, found := env["SMOKEALARM_ADMIN_PASSWORD_HASH"]; !found {
+				env["SMOKEALARM_ADMIN_PASSWORD_HASH"] = baseHash // the example brings its own Secret
+			}
+			cfg, err := config.Load(func(name string) string { return env[name] })
+			if err != nil {
+				t.Fatalf("config.Load rejects what %s renders: %v", file, err)
+			}
+			if _, err := checks.Select(cfg.DisabledChecks); err != nil {
+				t.Errorf("%s disables a check that does not exist: %v", file, err)
+			}
+		})
+	}
+}
+
 func TestNamingFollowsTheReleaseName(t *testing.T) {
 	out, err := helmTemplate(t, "alarm", baseValues)
 	if err != nil {

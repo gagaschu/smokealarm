@@ -1,0 +1,10 @@
+# The smallest set of permissions: no nodes/proxy (kubelet API), no cert-manager
+# and no Argo CD access. The checks that need them (pvc-usage, cert-not-ready,
+# cert-expiry, argocd-health, argocd-sync) are switched off automatically.
+#
+#   helm install smokealarm ./deploy/helm/smokealarm -n smokealarm --create-namespace \
+#     -f deploy/helm/examples/minimal-permissions.yaml --set-string auth.passwordHash="$HASH"
+rbac:
+  nodesProxy: false
+  certManager: false
+  argocd: false
