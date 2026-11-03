@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"slices"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/gagaschu/smokealarm/internal/checks"
@@ -37,10 +38,47 @@ type Engine struct {
 
 	Store    *store.Store
 	Notifier notify.Notifier
+	// BaseURL is the link to the web UI that notifications point to. It may
+	// be empty.
+	BaseURL string
 
 	// Now is injectable so tests control the time.
 	Now    func() time.Time
 	Logger *slog.Logger
+
+	mu     sync.Mutex // protects status, which the web server reads
+	status Status
+}
+
+// Status is what the engine reports about itself, for the status page.
+type Status struct {
+	NotifierName      string
+	LastNotifyError   string    // empty if the last send worked
+	LastNotifyErrorAt time.Time // zero if there is no error
+}
+
+// Status returns a copy of the current status.
+func (e *Engine) Status() Status {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	s := e.status
+	s.NotifierName = e.Notifier.Name()
+	return s
+}
+
+// setNotifyResult remembers whether the last send worked. The error is
+// cleared by the next success, so the status shows the current situation and
+// not an old incident.
+func (e *Engine) setNotifyResult(err error, now time.Time) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if err == nil {
+		e.status.LastNotifyError = ""
+		e.status.LastNotifyErrorAt = time.Time{}
+		return
+	}
+	e.status.LastNotifyError = err.Error()
+	e.status.LastNotifyErrorAt = now
 }
 
 // Run executes one pass immediately and then one per interval until the
@@ -197,7 +235,7 @@ func (e *Engine) notify(ctx context.Context, now time.Time) error {
 		return fmt.Errorf("load unreported findings: %w", err)
 	}
 
-	var n notify.Notification
+	n := notify.Notification{BaseURL: e.BaseURL}
 	var firingIDs, resolvedIDs, silentIDs []int64
 	for _, r := range records {
 		switch {
@@ -223,7 +261,9 @@ func (e *Engine) notify(ctx context.Context, now time.Time) error {
 
 	sortAlerts(n.New)
 	sortAlerts(n.Resolved)
-	if err := e.Notifier.Send(ctx, n); err != nil {
+	err = e.Notifier.Send(ctx, n)
+	e.setNotifyResult(err, now)
+	if err != nil {
 		return fmt.Errorf("send notification via %s: %w", e.Notifier.Name(), err)
 	}
 	e.Logger.Info("notification sent", "notifier", e.Notifier.Name(), "new", len(n.New), "resolved", len(n.Resolved))
