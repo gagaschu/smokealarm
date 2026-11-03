@@ -24,11 +24,11 @@
     <p class="message">{{.Message}}</p>
     <p class="since">since <time title="{{.Since}}">{{.Age}} ago</time>{{if .AcknowledgedAt}}, acknowledged {{.AcknowledgedAt}}{{end}}</p>
     {{if .DowntimeUntil}}<p class="since">No mails during the downtime until {{.DowntimeUntil}}.</p>{{end}}
-    {{if .CanAcknowledge}}<form class="acknowledge" method="post" action="/problems/{{.ID}}/acknowledge">
-      <button type="submit">Acknowledge</button>
-      <span class="since">No more reminders. You still get a mail when it is resolved.</span>
-    </form>{{end}}
-    <p class="since"><a href="/downtimes/new?finding={{.ID}}">{{if .DowntimeUntil}}Change downtime{{else}}Set downtime{{end}}</a></p>
+    <div class="actions">
+      {{if .CanAcknowledge}}<form method="post" action="/problems/{{.ID}}/acknowledge"><button type="submit">Acknowledge</button></form>{{end}}
+      <a class="button" href="/downtimes/new?finding={{.ID}}">{{if .DowntimeUntil}}Change downtime{{else}}Set downtime{{end}}</a>
+    </div>
+    {{if .CanAcknowledge}}<p class="since">Acknowledge stops the reminders. You still get a mail when it is resolved.</p>{{end}}
   </li>
   {{end}}
 </ul>
