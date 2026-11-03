@@ -18,6 +18,8 @@ Every 30 seconds smokealarm runs all checks against its in-memory copy of the cl
 
 If you already know about a critical problem, press **Acknowledge** on the overview. It stays on the page with a mark and sends no more reminders. You still get a mail when it is resolved. See [Acknowledging a problem](#acknowledging-a-problem) for the details.
 
+To silence one problem until a fixed time, for example during planned work or while it flaps, set a [downtime](#downtimes).
+
 [ARCHITECTURE.md](ARCHITECTURE.md) has the details.
 
 ## Installation
@@ -131,6 +133,18 @@ Only firing critical problems can be acknowledged. Warnings are not repeated any
 
 An acknowledgement covers one problem, identified by its key: check, object and reason. Only `pvc-usage`, `cert-expiry` and `workload-replicas` keep their key when the reason changes. For the other checks a new reason counts as a new problem, and so does a new object name, such as a pod that was recreated by its Deployment. The new problem gets its own mail and is not acknowledged.
 
+## Downtimes
+
+A downtime silences one problem, warning or critical, until a fixed date and time. Set it from the overview or, if the problem is resolved right now, from the history. The **Downtimes** page lists the running ones, and you can end them early there. Times are entered and shown in UTC, like in the mails, and the end must be in the future. A new downtime for the same problem replaces the old one.
+
+- While it runs, the problem sends no mail: not when it is new, no reminder and no "resolved". It stays visible in the web UI, with a mark.
+- If the problem is still active when the downtime ends, you get a mail in the next run, and the reminder interval runs from that mail. Ending a downtime early works the same way.
+- If the problem went away during the downtime, nothing is sent, not even after it ends. If it returns after the end, it is a new alarm with a new mail.
+- A downtime wins over an acknowledgement while it runs: an acknowledged problem that goes away during a downtime sends no "resolved". An acknowledgement outlasts a downtime: if the problem is still active when the downtime ends, no mail is sent, and "resolved" is reported later.
+- If a check cannot run when the downtime ends, for example because the kubelet does not answer, the mail waits until the check runs again.
+
+A downtime covers exactly one problem, like an acknowledgement: the same check, object and reason. A new reason is a new problem, except for `pvc-usage`, `cert-expiry` and `workload-replicas`. A new object name is a new problem too. **A pod recreated by its Deployment gets a new name, so a downtime on its `pod-crashloop` problem no longer covers it, and it sends mail as usual.** A downtime on the Deployment's `workload-replicas` problem keeps working, but it does not silence the problems of the pods themselves.
+
 ## Configuration
 
 All configuration is done through environment variables starting with `SMOKEALARM_`. The Helm chart sets them from its [values.yaml](deploy/helm/smokealarm/values.yaml). Invalid values stop the program at startup with an error message. Durations use Go syntax (`30s`, `5m`, `2h`) plus `d` for days (`30d`).
@@ -213,7 +227,7 @@ The container runs as non-root with a read-only root filesystem, all capabilitie
 
 There is one local admin, with the password stored as a bcrypt hash. Sessions are kept in the database, which stores only a hash of the session id. The cookie is `HttpOnly` and `SameSite=Lax`, and `Secure` unless you turn that off. Failed logins are limited to 5 per 15 minutes per client address; behind a proxy, all clients share one limit.
 
-Actions that change state, such as acknowledging a problem, need a valid session and refuse requests that come from another site or another host of the same domain (Go's `http.CrossOriginProtection`). Your proxy has to pass on the original `Host` header if you use plain HTTP, otherwise these actions fail with 403. Over HTTPS, browsers send a `Sec-Fetch-Site` header and the `Host` does not matter.
+Actions that change state, such as acknowledging a problem or setting a downtime, need a valid session and refuse requests that come from another site or another host of the same domain (Go's `http.CrossOriginProtection`). Your proxy has to pass on the original `Host` header if you use plain HTTP, otherwise these actions fail with 403. Over HTTPS, browsers send a `Sec-Fetch-Site` header and the `Host` does not matter.
 
 Passwords, hashes and session ids are never logged.
 

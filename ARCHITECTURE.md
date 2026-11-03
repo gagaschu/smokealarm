@@ -37,10 +37,10 @@ A check is a plain function: *snapshot in, findings out*. It never talks to the 
 | `internal/kube` | Talks to the Kubernetes API: clients, informers (a local, always-current copy of the objects we watch), detection of optional CRDs (installed, and may the service account read them?), kubelet volume stats, and the snapshot. |
 | `internal/checks` | **The checks**, one file per area (`pods.go`, `workloads.go`, `nodes.go`, `jobs.go`, `storage.go`, `certs.go`, `argocd.go`), the finding and snapshot types, and the ignore rules. |
 | `internal/engine` | The main loop. Runs the checks, decides what is new/firing/resolved, sends notifications, cleans up old data. |
-| `internal/store` | SQLite: findings and login sessions. The schema lives in numbered SQL files (`migrations/`) that are applied at startup. |
+| `internal/store` | SQLite: findings, downtimes and login sessions. The schema lives in numbered SQL files (`migrations/`) that are applied at startup. |
 | `internal/notify` | Sends notifications. `Notifier` is an interface with two implementations: mail and log. A Telegram or webhook notifier would be one more file. |
 | `internal/auth` | Password check, sessions, the login rate limit. The middleware only asks "is there a valid session?", so another login method (OIDC) can be added without touching it. |
-| `internal/web` | The pages (overview, history, status, login) and the acknowledge action, as HTML templates and one CSS file, all embedded in the binary. |
+| `internal/web` | The pages (overview, history, downtimes, status, login) and the actions (acknowledge, downtimes), as HTML templates and one CSS file, all embedded in the binary. |
 | `deploy/helm/smokealarm` | The Helm chart. |
 
 ## The life of a finding
@@ -59,6 +59,7 @@ A finding has a stable **key** (check + object + a fixed word), so smokealarm ca
 - If a firing problem gets worse (warning → critical), it stays the same problem and is reported again as critical.
 - With `CRITICAL_REPEAT_INTERVAL` set, a critical problem that is still firing is reported again once its last report is that old. Warnings are not repeated.
 - A firing critical problem can be acknowledged in the web UI. From then on only its end is reported: no reminders, no mail if it goes from warning back to critical, and a first mail that has not gone out yet is dropped. The mark belongs to this one alarm, so a problem that returns after "resolved" is new again.
+- A downtime silences one key until a fixed time, whether the problem is there or not. While it runs, nothing is sent; a problem that goes away is marked as reported without a mail. At the start of each run the engine finishes the downtimes that have ended. If the problem is still firing and not acknowledged, its "reported" marker is cleared, so the normal path reports it as new. If a check's state is unknown, this waits until the check runs again.
 - If a check cannot get its data (for example the kubelet does not answer), it is skipped for that run and its open problems are left alone, because "no data" is not "all fine". They get no reminders either, until the check runs again.
 - If a check is switched off (configuration, or an optional CRD or permission is missing at startup), its open problems count as gone and are reported as resolved in the next run. The README says so, because switching a check off can look like a recovery.
 

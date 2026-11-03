@@ -53,7 +53,7 @@ Finding (guideline):
 Sequence every SMOKEALARM_CHECK_INTERVAL (default 30s):
 1. Build the snapshot, run all enabled checks.
 2. Compare with the state in SQLite: new problem → pending; lasts longer than SMOKEALARM_ALERT_AFTER (default 2m) → firing; gone → resolved (only if it was firing before, otherwise discard silently). This way short flaps are not reported.
-3. Send all changes not yet reported (firing/resolved), plus any reminders that are due, as one combined notification. An acknowledged problem only reports its end (see Notifications). Mark them as reported only after sending succeeded; if sending fails, it is retried in the next run. This also survives restarts.
+3. Send all changes not yet reported (firing/resolved), plus any reminders that are due, as one combined notification. An acknowledged problem only reports its end, and a problem in a downtime reports nothing (see Notifications). Mark them as reported only after sending succeeded; if sending fails, it is retried in the next run. This also survives restarts.
 4. Delete resolved findings older than SMOKEALARM_RETENTION (default 30d).
 
 ## Checks (v0.1)
@@ -93,6 +93,12 @@ Ignoring:
 - At most one mail per run, with all new state changes and due reminders.
 - Reminders are optional: SMOKEALARM_CRITICAL_REPEAT_INTERVAL (default 0, off; otherwise at least SMOKEALARM_CHECK_INTERVAL) reports a critical problem that is still firing again once its last report is that old. Each problem has its own clock. Warnings are not repeated. No reminders for checks whose state is unknown in this run. A failed reminder is retried in the next run.
 - A firing critical problem can be acknowledged in the web UI. Warnings cannot, because they are not repeated anyway. An acknowledged problem sends no reminders. The acknowledgement lasts until the problem is resolved, and "resolved" is still reported. If its first mail has not gone out yet (for example because sending failed), that mail is dropped, but "resolved" is reported anyway. If it becomes a warning and then critical again, it stays acknowledged and no mail is sent. If the problem returns after "resolved", it is a new alarm with a new mail.
+- A downtime silences one problem (one finding key, warning or critical) until a fixed date and time in the future. It can be set for firing problems and from the history, because a flapping problem is often "resolved" right now.
+  - While it runs, the problem sends no mail at all: no new problem, no reminder, no "resolved". This also applies to an acknowledged problem.
+  - If the problem is still active when the downtime ends, it is reported again as new in the next run, and the reminder interval runs from that mail. An acknowledged problem stays silent and only reports its end.
+  - If the problem went away during the downtime, nothing is sent, not even after it ends. A problem that goes away in the run in which the downtime ends counts as gone during the downtime, unless it is acknowledged.
+  - Ending a downtime early works like reaching its end at that moment. Ended downtimes are removed. A downtime of a check whose state is unknown waits until the check runs again, and stays silent until then.
+  - A new reason or a new object name is a new key and is not covered. The UI and the README say so.
 - The subject summarizes: specific for one change, e.g. "[smokealarm] CRITICAL: CrashLoopBackOff media/jellyfin" or, for a reminder, "[smokealarm] STILL CRITICAL: CrashLoopBackOff media/jellyfin"; for several, e.g. "[smokealarm] 3 new problems, 1 still critical, 1 resolved".
 - Body as plain text: new problems sorted by severity, then reminders, then resolved ones; each with object, reason, message, since when; link to the web UI (SMOKEALARM_BASE_URL).
 - Design the Notifier interface so that Telegram and a generic webhook can be added later as separate files without changing the engine. Do not implement them yet.
@@ -101,8 +107,10 @@ Ignoring:
 - Server-rendered HTML, no JavaScript framework, no build step. Auto-refresh via meta tag (30s). Plain custom CSS, light/dark via prefers-color-scheme, works well on a phone.
 - Pages:
   - Login
-  - Overview: current problems by severity with object, reason, message, since when. Empty state "All good" with the time of the last run. Firing critical problems have an acknowledge button (plain POST form); acknowledged problems stay on the page and are marked, with the time in UTC.
-  - History: resolved findings, filterable by namespace
+  - Overview: current problems by severity with object, reason, message, since when. Empty state "All good" with the time of the last run. Firing critical problems have an acknowledge button (plain POST form); acknowledged problems stay on the page and are marked, with the time in UTC. Every problem links to the downtime form; problems in a downtime stay on the page and are marked.
+  - History: resolved findings, filterable by namespace, with a link to the downtime form and a mark for a running downtime
+  - Downtimes: running downtimes, each with its end and a button to end it now
+  - Downtime form: an own page without auto-refresh, so a reload cannot discard the input. A POST form with `datetime-local`; the time is entered and shown in UTC. Times that are not in the future are refused.
   - Status: last run, active/skipped checks with reason, whether mail is configured, last sending error
 - Actions that change state need a valid session and are protected against cross-site requests (http.CrossOriginProtection from the standard library), in addition to the SameSite=Lax cookie.
 - /healthz (liveness) and /readyz (informer caches synced, DB reachable), both without auth.
@@ -137,7 +145,7 @@ Ignoring:
 
 ## Tests
 - Table-driven tests for every check with hand-built objects (no real API), including edge cases: just below/above the threshold, ignored via annotation, optional CRDs missing.
-- Tests for the engine's state logic against a temporary SQLite file: pending → firing → resolved, flap is suppressed, failed sending is retried, combined mail for several changes, acknowledged problems.
+- Tests for the engine's state logic against a temporary SQLite file: pending → firing → resolved, flap is suppressed, failed sending is retried, combined mail for several changes, acknowledged problems, downtimes.
 - Golden test for the subject and body of the mail.
 
 ## Procedure

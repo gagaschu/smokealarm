@@ -196,6 +196,8 @@ func Open(path string, now func() time.Time) (*Store, error) // runs migrations
 func (s *Store) OpenRecords(ctx) ([]Record, error)
 func (s *Store) Insert/Update/Delete... ; Unnotified(ctx); MarkNotified(ctx, ids...)
 func (s *Store) Acknowledge(ctx, id, at) (key string, changed bool, err error) // firing critical only
+func (s *Store) Record(ctx, id) (Record, bool, error)                    // any state, for the downtime form
+func (s *Store) SetDowntime / ActiveDowntimes / ExpiredDowntimes / EndDowntime / FinishDowntime / DowntimeKeys
 func (s *Store) Resolved(ctx, namespace string, limit int) ([]Record, error) // history
 func (s *Store) Namespaces(ctx) ([]string, error)                         // history filter
 func (s *Store) Cleanup(ctx, olderThan time.Time) error
@@ -242,7 +244,7 @@ Session ID: 32 random bytes (crypto/rand), base64url in the cookie; **only the S
 
 ### web
 Routes (`net/http` 1.22 patterns):
-`GET /login`, `POST /login`, `POST /logout`, `GET /` (overview), `POST /problems/{id}/acknowledge`, `GET /history?namespace=`, `GET /status`, `GET /static/style.css`, `GET /healthz`, `GET /readyz` (no auth for the last two and login/static). Templates: `layout.html` (meta refresh 30s, except on login), `login.html`, `overview.html`, `history.html`, `status.html`. CSS with `prefers-color-scheme`, mobile-friendly.
+`GET /login`, `POST /login`, `POST /logout`, `GET /` (overview), `POST /problems/{id}/acknowledge`, `GET /history?namespace=`, `GET /downtimes`, `GET /downtimes/new?finding=`, `POST /downtimes`, `POST /downtimes/{id}/end`, `GET /status`, `GET /static/style.css`, `GET /healthz`, `GET /readyz` (no auth for the last two and login/static). Templates: `layout.html` (meta refresh 30s, except on login), `login.html`, `overview.html`, `history.html`, `status.html`. CSS with `prefers-color-scheme`, mobile-friendly.
 
 ## 4. Database schema (`internal/store/migrations/001_init.sql`)
 All timestamps are INTEGER (Unix seconds, UTC).
@@ -283,7 +285,7 @@ CREATE TABLE sessions (
 );
 CREATE INDEX sessions_expires ON sessions(expires_at);
 ```
-Implementation note (phase 3): `001_findings.sql` contains only the `findings` table; `schema_migrations` is created by the migration code itself; the `sessions` table arrives with phase 5 as `002_sessions.sql`. Phase 9 adds the column `findings.acknowledged_at` (INTEGER, nullable) in `003_acknowledge.sql`.
+Implementation note (phase 3): `001_findings.sql` contains only the `findings` table; `schema_migrations` is created by the migration code itself; the `sessions` table arrives with phase 5 as `002_sessions.sql`. Phase 9 adds the column `findings.acknowledged_at` (INTEGER, nullable) in `003_acknowledge.sql`. Phase 10 adds the table `downtimes` in `004_downtimes.sql`.
 Migrations: files `NNN_name.sql` are embedded, applied in order, each in a transaction; the version goes into `schema_migrations`.
 
 ## 5. Environment variables
@@ -332,8 +334,16 @@ Every phase: own branch from main, unit tests with fake objects, `go build`/`go 
 7. **phase-7-packaging** – Dockerfile (multi-stage, distroless/static:nonroot, buildx amd64/arm64), Makefile (build, test, lint, run, image), Helm chart (RBAC read access: namespaces, pods, events, nodes, deployments, statefulsets, daemonsets, jobs, cronjobs, persistentvolumeclaims, storageclasses; Recreate, PVC, RBAC switches, Secret/existingSecret, probes, resources, securityContext, optional Ingress), README, ARCHITECTURE.md, LICENSE (Apache-2.0), CHANGELOG.md.
 8. **phase-8-critical-reminders** – `SMOKEALARM_CRITICAL_REPEAT_INTERVAL` (default off): critical problems that stay open are reported again. No migration; tests for engine, store, config, chart and golden mails.
 9. **phase-9-acknowledge** – acknowledge firing critical problems in the web UI: no more reminders, "resolved" is still reported. Migration `003_acknowledge.sql`; cross-origin protection for the new action; tests for engine, store and handlers.
+10. **phase-10-downtime** – silence one problem (one key) until a fixed time, set for firing problems and from the history. List and early end in the web UI. Migration `004_downtimes.sql`; tests for engine, store and handlers.
 
 ## 7. Deliberate deviations / decisions
+- **Downtimes (phase 10), own table:** a downtime belongs to a key, not to a row in `findings`, because it must outlive a "resolved" and cover the problem when it returns. Object and reason are copied, because the row can reach its retention while the downtime runs. One downtime per key; a new one replaces it. `AUTOINCREMENT`, so a button on an old page cannot hit a later downtime.
+- **Downtimes (phase 10), the end:** `Unnotified` cannot find a problem that was reported before the downtime. `RunOnce` therefore runs `finishDowntimes` first: in one transaction it removes the ended downtime and clears `firing_notified_at` of a firing, unacknowledged problem. That reuses the path of an escalation (reported as new; a failed mail is retried, also after a restart), and the reminder clock runs from that mail. It has to happen before `saveState`, which writes back the markers it read. Ending early only sets `expires_at = now`, so there is one path for both.
+- **Downtimes (phase 10), silent while it exists:** `notify` treats every row in the table as a downtime, whether its end has passed or not. That closes the gap between finishing and notifying. A downtime of a check whose state is unknown is not finished, so it can stay in the table past its end (hidden in the UI) until the check runs again; a mail would otherwise claim a problem that may be gone. For a check skipped with `KeepProblems` that lasts until the permission is back.
+- **Downtimes (phase 10), together with acknowledge:** while it runs, the downtime wins: an acknowledged problem that goes away sends no "resolved". When it ends, the acknowledgement still counts: no mail, and "resolved" is reported later (decided by the maintainer).
+- **Downtimes (phase 10), the last run:** a problem that goes away in the run in which the downtime ends counts as gone during the downtime and stays silent, because nobody can tell which came first. An acknowledged problem sends its "resolved" here, because it keeps its marker.
+- **Downtimes (phase 10), the form has its own page:** the overview and the history reload every 30 seconds, which would discard the input. No upper limit for the end.
+- **Downtimes (phase 10), changing keys:** a new reason or a new object name is a new key and is not covered. That includes pods recreated by a Deployment, which get a new name. A downtime on the `workload-replicas` problem keeps working, but does not silence the problems of the pods themselves. The form, the list and the README say so.
 - **Acknowledge (phase 9):** the mark belongs to the row in `findings`, not to the key, so a problem that returns after "resolved" is automatically a new, unacknowledged alarm. The store leaves acknowledged problems out of `Unnotified` (while firing) and `CriticalDueForReminder`. `Apply` never writes `acknowledged_at`, so a run that works on an older copy cannot undo an acknowledgement. There is no undo, and it is not recorded who acknowledged (one admin).
 - **Acknowledged before the first mail (phase 9, decided by the maintainer):** the first mail is dropped, because somebody already knows; a late "CRITICAL" after a mail outage would only be noise. "Resolved" is still reported, so the silent branch in `notify` applies only to unacknowledged problems. Other recipients therefore learn about such a problem from the "resolved" mail.
 - **An escalation does not clear the marker of an acknowledged problem (phase 9):** `Unnotified` would already keep the mail back, but `firing_notified_at` should keep saying when the problem was last reported, and the log should not claim an escalation is being reported.
