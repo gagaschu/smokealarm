@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -500,5 +501,156 @@ func TestFormatAge(t *testing.T) {
 		if got := formatAge(tt.d); got != tt.want {
 			t.Errorf("formatAge(%v) = %q, want %q", tt.d, got, tt.want)
 		}
+	}
+}
+
+// firingID stores a firing problem and returns its id.
+func (e *testEnv) firingID(key string, severity checks.Severity) int64 {
+	e.t.Helper()
+	e.insert(problem(key, "media", severity, store.StateFiring, testNow.Add(-time.Hour), "it is broken"))
+	return e.openRecord(key).ID
+}
+
+// openRecord returns the open problem with this key.
+func (e *testEnv) openRecord(key string) store.Record {
+	e.t.Helper()
+	records, err := e.store.OpenRecords(context.Background())
+	if err != nil {
+		e.t.Fatalf("OpenRecords: %v", err)
+	}
+	for _, r := range records {
+		if r.Key == key {
+			return r
+		}
+	}
+	e.t.Fatalf("no open problem with key %s", key)
+	return store.Record{}
+}
+
+func acknowledgePath(id int64) string {
+	return "/problems/" + strconv.FormatInt(id, 10) + "/acknowledge"
+}
+
+func TestAcknowledgeFromOverview(t *testing.T) {
+	e := newTestEnv(t)
+	cookie := e.login()
+	e.status.LastRun = testNow
+	id := e.firingID("a", checks.Critical)
+
+	before := e.do(http.MethodGet, "/", nil, cookie).Body.String()
+	if !strings.Contains(before, `action="`+acknowledgePath(id)+`"`) {
+		t.Errorf("overview has no acknowledge form:\n%s", before)
+	}
+	if strings.Contains(before, `badge acknowledged`) {
+		t.Errorf("overview marks a problem nobody acknowledged:\n%s", before)
+	}
+
+	rec := e.do(http.MethodPost, acknowledgePath(id), url.Values{}, cookie)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/" {
+		t.Fatalf("status = %d, location = %q, want 303 to /", rec.Code, rec.Header().Get("Location"))
+	}
+	if at := e.openRecord("a").AcknowledgedAt; at == nil || !at.Equal(testNow) {
+		t.Errorf("AcknowledgedAt = %v, want %v", at, testNow)
+	}
+
+	after := e.do(http.MethodGet, "/", nil, cookie).Body.String()
+	if !strings.Contains(after, `badge acknowledged`) || !strings.Contains(after, "2026-11-03 12:00:00 UTC") {
+		t.Errorf("overview does not show the acknowledgement with its time:\n%s", after)
+	}
+	if !strings.Contains(after, "1 current problem") {
+		t.Errorf("an acknowledged problem must stay on the overview:\n%s", after)
+	}
+	if strings.Contains(after, acknowledgePath(id)) {
+		t.Errorf("overview still offers to acknowledge:\n%s", after)
+	}
+}
+
+func TestWarningCannotBeAcknowledged(t *testing.T) {
+	e := newTestEnv(t)
+	cookie := e.login()
+	e.status.LastRun = testNow
+	id := e.firingID("a", checks.Warning)
+
+	body := e.do(http.MethodGet, "/", nil, cookie).Body.String()
+	if strings.Contains(body, acknowledgePath(id)) {
+		t.Errorf("overview offers to acknowledge a warning:\n%s", body)
+	}
+
+	rec := e.do(http.MethodPost, acknowledgePath(id), url.Values{}, cookie)
+	if rec.Code != http.StatusSeeOther {
+		t.Errorf("status = %d, want 303", rec.Code)
+	}
+	if at := e.openRecord("a").AcknowledgedAt; at != nil {
+		t.Errorf("AcknowledgedAt = %v, want nil for a warning", at)
+	}
+}
+
+func TestAcknowledgeUnknownProblemReturnsToOverview(t *testing.T) {
+	e := newTestEnv(t)
+	cookie := e.login()
+	if rec := e.do(http.MethodPost, acknowledgePath(42), url.Values{}, cookie); rec.Code != http.StatusSeeOther {
+		t.Errorf("status = %d, want 303", rec.Code)
+	}
+}
+
+func TestAcknowledgeInvalidID(t *testing.T) {
+	e := newTestEnv(t)
+	cookie := e.login()
+	if rec := e.do(http.MethodPost, "/problems/abc/acknowledge", url.Values{}, cookie); rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestAcknowledgeNeedsLoginAndPost(t *testing.T) {
+	e := newTestEnv(t)
+	id := e.firingID("a", checks.Critical)
+
+	rec := e.do(http.MethodPost, acknowledgePath(id), url.Values{}, nil)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/login" {
+		t.Errorf("without login: status = %d, location = %q, want 303 to /login", rec.Code, rec.Header().Get("Location"))
+	}
+	if rec := e.do(http.MethodGet, acknowledgePath(id), nil, e.login()); rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("GET: status = %d, want 405", rec.Code)
+	}
+	if at := e.openRecord("a").AcknowledgedAt; at != nil {
+		t.Errorf("AcknowledgedAt = %v, want nil", at)
+	}
+}
+
+func TestAcknowledgeCrossOriginProtection(t *testing.T) {
+	tests := []struct {
+		name   string
+		header string
+		value  string
+		want   int
+	}{
+		{"same origin", "Sec-Fetch-Site", "same-origin", http.StatusSeeOther},
+		{"other site", "Sec-Fetch-Site", "cross-site", http.StatusForbidden},
+		// SameSite=Lax would let this one through with the cookie.
+		{"other host of the same site", "Sec-Fetch-Site", "same-site", http.StatusForbidden},
+		// Browsers on plain HTTP send no Sec-Fetch-Site, only Origin.
+		{"origin matches host", "Origin", "http://example.com", http.StatusSeeOther},
+		{"origin is another host", "Origin", "https://evil.example", http.StatusForbidden},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newTestEnv(t)
+			cookie := e.login()
+			id := e.firingID("a", checks.Critical)
+
+			req := httptest.NewRequest(http.MethodPost, acknowledgePath(id), nil) // Host is example.com
+			req.Header.Set(tt.header, tt.value)
+			req.AddCookie(cookie)
+			rec := httptest.NewRecorder()
+			e.handler.ServeHTTP(rec, req)
+
+			if rec.Code != tt.want {
+				t.Errorf("status = %d, want %d", rec.Code, tt.want)
+			}
+			acknowledged := e.openRecord("a").AcknowledgedAt != nil
+			if acknowledged != (tt.want == http.StatusSeeOther) {
+				t.Errorf("acknowledged = %v after status %d", acknowledged, rec.Code)
+			}
+		})
 	}
 }
