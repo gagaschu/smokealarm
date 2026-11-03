@@ -57,6 +57,19 @@ func (s *Store) OpenRecords(ctx context.Context) ([]Record, error) {
 		WHERE state IN ('pending', 'firing') ORDER BY id`)
 }
 
+// Record returns one problem by its id, in any state. The second result says
+// whether it exists.
+func (s *Store) Record(ctx context.Context, id int64) (Record, bool, error) {
+	records, err := s.query(ctx, `SELECT `+selectColumns+` FROM findings WHERE id = ?`, id)
+	if err != nil {
+		return Record{}, false, err
+	}
+	if len(records) == 0 {
+		return Record{}, false, nil
+	}
+	return records[0], true, nil
+}
+
 // Unnotified returns what still has to be reported: firing problems whose
 // start was not reported yet, and resolved problems whose end was not
 // reported yet. An acknowledged problem is left out while it fires, because

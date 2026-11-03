@@ -1,3 +1,5 @@
+{{define "downtimeHint"}}<p class="footnote">During a downtime this problem sends no mail, not even "resolved". If it is still active when the downtime ends, you get a mail. If it is gone by then, nothing is sent.</p>
+<p class="footnote">A downtime covers exactly one problem: the same check, object and reason. A new reason or a new object name, such as a recreated pod, is a new problem and sends mail as usual. Only <code>pvc-usage</code>, <code>cert-expiry</code> and <code>workload-replicas</code> stay the same problem when the reason changes.</p>{{end}}
 {{define "layout"}}<!doctype html>
 <html lang="en">
 <head>
@@ -13,6 +15,7 @@
   {{if .ShowNav}}<nav>
     <a href="/"{{if eq .Active "overview"}} aria-current="page"{{end}}>Overview</a>
     <a href="/history"{{if eq .Active "history"}} aria-current="page"{{end}}>History</a>
+    <a href="/downtimes"{{if eq .Active "downtimes"}} aria-current="page"{{end}}>Downtimes</a>
     <a href="/status"{{if eq .Active "status"}} aria-current="page"{{end}}>Status</a>
     <form method="post" action="/logout"><button type="submit">Log out</button></form>
   </nav>{{end}}

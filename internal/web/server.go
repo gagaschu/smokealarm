@@ -49,7 +49,7 @@ type Server struct {
 // template is broken, so that shows up at startup and not on the first visit.
 func (s *Server) Handler() (http.Handler, error) {
 	s.pages = map[string]*template.Template{}
-	for _, name := range []string{"login", "overview", "history", "status"} {
+	for _, name := range []string{"login", "overview", "history", "status", "downtimes", "downtime_form"} {
 		page, err := template.ParseFS(assets, "templates/layout.html", "templates/"+name+".html")
 		if err != nil {
 			return nil, fmt.Errorf("parse template %s: %w", name, err)
@@ -78,6 +78,8 @@ func (s *Server) Handler() (http.Handler, error) {
 	mux.Handle("GET /{$}", protected(s.overview))
 	mux.Handle("GET /history", protected(s.history))
 	mux.Handle("GET /status", protected(s.status))
+	mux.Handle("GET /downtimes", protected(s.downtimes))
+	mux.Handle("GET /downtimes/new", protected(s.newDowntime))
 
 	// Actions change state, so they also refuse requests that a browser
 	// reports as coming from another site. SameSite=Lax alone would still let
@@ -87,6 +89,8 @@ func (s *Server) Handler() (http.Handler, error) {
 		return crossOrigin.Handler(s.Sessions.Require(handler))
 	}
 	mux.Handle("POST /problems/{id}/acknowledge", action(s.acknowledge))
+	mux.Handle("POST /downtimes", action(s.createDowntime))
+	mux.Handle("POST /downtimes/{id}/end", action(s.endDowntime))
 
 	return securityHeaders(mux), nil
 }

@@ -654,3 +654,21 @@ func TestAcknowledgeCrossOriginProtection(t *testing.T) {
 		})
 	}
 }
+
+func TestAcknowledgeIsExplainedOnceAndOnlyIfItCanBeUsed(t *testing.T) {
+	const hint = "Acknowledge stops the reminders"
+
+	e := newTestEnv(t)
+	cookie := e.login()
+	e.status.LastRun = testNow
+	e.firingID("warning", checks.Warning)
+	if body := e.do(http.MethodGet, "/", nil, cookie).Body.String(); strings.Contains(body, hint) {
+		t.Errorf("hint shown although nothing can be acknowledged:\n%s", body)
+	}
+
+	e.firingID("one", checks.Critical)
+	e.firingID("two", checks.Critical)
+	if body := e.do(http.MethodGet, "/", nil, cookie).Body.String(); strings.Count(body, hint) != 1 {
+		t.Errorf("hint shown %d times, want once:\n%s", strings.Count(body, hint), body)
+	}
+}
