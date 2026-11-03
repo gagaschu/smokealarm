@@ -18,7 +18,7 @@ First version.
 - **Web UI** with overview, history (filter by namespace) and status page; light and dark mode; usable on a phone. No JavaScript.
 - **Login** for one local admin (bcrypt hash), server-side sessions, rate limit for failed logins, and the `hash-password` subcommand.
 - **Ignore rules**: an annotation on an object or its namespace, a list of namespaces, and switching single checks off.
-- Optional CRDs (cert-manager, Argo CD) are looked at only if an enabled check needs them. At startup smokealarm detects whether the CRD is installed and whether the service account may list it; checks that cannot run are skipped and shown with the reason.
+- Optional CRDs (cert-manager, Argo CD) are looked at only if an enabled check needs them. At startup smokealarm detects whether the CRD is installed and whether the service account may list it; checks that cannot run are skipped and shown with the reason. Without the permission their open problems stay open, because they may still exist.
 - If the informer caches do not sync within two minutes (usually a missing permission), smokealarm exits with an error that names the resources, instead of staying unready forever.
 - `/healthz` and `/readyz` endpoints.
 - **Packaging**: a multi-arch container image (amd64, arm64) on a distroless base, a Makefile, and documentation (README, ARCHITECTURE).

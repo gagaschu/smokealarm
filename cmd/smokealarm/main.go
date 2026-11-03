@@ -167,13 +167,18 @@ func requirements(enabled []checks.Check) []string {
 
 // splitByFeatures separates the checks that can run from those whose optional
 // feature is not usable. notUsable maps a checks.Requires* name to the reason;
-// the skipped checks get that reason.
-func splitByFeatures(enabled []checks.Check, notUsable map[string]string) ([]checks.Check, []engine.SkippedCheck) {
+// the skipped checks get that reason. Without permission we cannot see the
+// objects, so the problems we know of must stay open: they may still exist.
+func splitByFeatures(enabled []checks.Check, notUsable map[string]kube.Unusable) ([]checks.Check, []engine.SkippedCheck) {
 	var active []checks.Check
 	var unavailable []engine.SkippedCheck
 	for _, c := range enabled {
-		if reason, found := notUsable[c.Requires]; found {
-			unavailable = append(unavailable, engine.SkippedCheck{Name: c.Name, Reason: reason})
+		if problem, found := notUsable[c.Requires]; found {
+			unavailable = append(unavailable, engine.SkippedCheck{
+				Name:         c.Name,
+				Reason:       problem.Reason,
+				KeepProblems: problem.MissingPermission,
+			})
 			continue
 		}
 		active = append(active, c)

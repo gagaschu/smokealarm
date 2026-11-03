@@ -499,6 +499,46 @@ func TestStatusShowsTemporarilySkippedCheck(t *testing.T) {
 	}
 }
 
+// A check that cannot run for the whole process, for example after a restart
+// with a missing permission: its problems stay open with KeepProblems, and count
+// as gone without it (disabled check, CRD not installed).
+func TestProcessWideSkippedCheck(t *testing.T) {
+	tests := []struct {
+		name         string
+		keepProblems bool
+		wantFiring   int
+		wantResolved int
+		wantMails    int
+	}{
+		{"missing permission keeps the problem", true, 1, 0, 1},
+		{"otherwise the problem is resolved", false, 0, 1, 2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newHarness(t)
+			h.findings = []checks.Finding{finding("a", checks.Critical)}
+			h.mustRun(0)
+			h.mustRun(2 * time.Minute)
+			if h.countRows("firing") != 1 || len(h.notifier.sent) != 1 {
+				t.Fatalf("%d firing, %d mails; want the problem reported once", h.countRows("firing"), len(h.notifier.sent))
+			}
+
+			h.restart()
+			h.engine.Checks = nil
+			h.engine.SkippedChecks = []SkippedCheck{{Name: "fake", Reason: "cannot run", KeepProblems: tt.keepProblems}}
+			h.mustRun(time.Minute)
+
+			if h.countRows("firing") != tt.wantFiring || h.countRows("resolved") != tt.wantResolved {
+				t.Errorf("%d firing, %d resolved; want %d, %d",
+					h.countRows("firing"), h.countRows("resolved"), tt.wantFiring, tt.wantResolved)
+			}
+			if len(h.notifier.sent) != tt.wantMails {
+				t.Errorf("%d mails, want %d", len(h.notifier.sent), tt.wantMails)
+			}
+		})
+	}
+}
+
 func TestStatusAfterRun(t *testing.T) {
 	h := newHarness(t)
 	h.engine.SkippedChecks = []SkippedCheck{{Name: "argocd-health", Reason: "Argo CD CRDs not installed"}}

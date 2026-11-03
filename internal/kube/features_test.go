@@ -97,8 +97,12 @@ func TestDetectFeatures(t *testing.T) {
 				t.Errorf("unavailable = %v, want %d entries", unavailable, len(tt.wantUnavailable))
 			}
 			for requires, text := range tt.wantUnavailable {
-				if !strings.Contains(unavailable[requires], text) {
-					t.Errorf("reason for %s = %q, want it to contain %q", requires, unavailable[requires], text)
+				if !strings.Contains(unavailable[requires].Reason, text) {
+					t.Errorf("reason for %s = %q, want it to contain %q", requires, unavailable[requires].Reason, text)
+				}
+				wantPermission := strings.Contains(tt.name, "not allowed")
+				if unavailable[requires].MissingPermission != wantPermission {
+					t.Errorf("MissingPermission for %s = %v, want %v", requires, unavailable[requires].MissingPermission, wantPermission)
 				}
 			}
 		})
@@ -132,8 +136,36 @@ func (c failingClient) Discovery() discovery.DiscoveryInterfaces {
 
 type failingDiscovery struct{ discovery.DiscoveryInterfaces }
 
-func (failingDiscovery) ServerResourcesForGroupVersion(string) (*metav1.APIResourceList, error) {
+func (failingDiscovery) ServerResourcesForGroupVersionWithContext(context.Context, string) (*metav1.APIResourceList, error) {
 	return nil, errors.New("connection refused")
+}
+
+// hangingClient is a client whose discovery does not answer until its context
+// ends, like an API server that hangs.
+type hangingClient struct{ kubernetes.Interface }
+
+func (c hangingClient) Discovery() discovery.DiscoveryInterfaces {
+	return hangingDiscovery{c.Interface.Discovery()}
+}
+
+type hangingDiscovery struct{ discovery.DiscoveryInterfaces }
+
+func (hangingDiscovery) ServerResourcesForGroupVersionWithContext(ctx context.Context, _ string) (*metav1.APIResourceList, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// Discovery must stop with the context, so a hanging API server ends in a clear
+// error instead of blocking the startup until the probe kills the pod.
+func TestDetectFeaturesStopsWaitingForDiscovery(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	_, dyn := clusterWith(nil)
+
+	_, _, err := DetectFeatures(ctx, hangingClient{fake.NewClientset()}, dyn, []string{checks.RequiresArgoCD})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("got %v, want the deadline error", err)
+	}
 }
 
 func TestDetectFeaturesFailsOnOtherErrors(t *testing.T) {
@@ -172,7 +204,7 @@ func TestDetectFeaturesNeedsADynamicClient(t *testing.T) {
 }
 
 // Adding a check with a new Requires name must not be forgotten here: every
-// name used by a check has to be known and has to switch a feature on.
+// name used by a check has to be known and has to switch its own feature on.
 func TestEveryCheckRequirementIsKnown(t *testing.T) {
 	client, dyn := clusterWith([]*metav1.APIResourceList{
 		apiResources("cert-manager.io/v1", "certificates"),
@@ -186,7 +218,7 @@ func TestEveryCheckRequirementIsKnown(t *testing.T) {
 		if err != nil {
 			t.Errorf("%s requires %q: %v (add it to optionalResourceFor)", c.Name, c.Requires, err)
 		} else if features == (Features{}) || len(unavailable) != 0 {
-			t.Errorf("%s requires %q, but DetectFeatures does not switch a feature on (add it to the switch)", c.Name, c.Requires)
+			t.Errorf("%s requires %q, but DetectFeatures does not switch a feature on (check optionalResourceFor)", c.Name, c.Requires)
 		}
 	}
 }

@@ -20,9 +20,9 @@ import (
 	"github.com/gagaschu/smokealarm/internal/kube"
 )
 
-const (
-	certManagerReason = "cert-manager CRDs not installed (certificates.cert-manager.io); checked at startup"
-	argoReason        = "missing RBAC permission to list applications.argoproj.io"
+var (
+	certManagerMissing = kube.Unusable{Reason: "cert-manager CRDs not installed (certificates.cert-manager.io); checked at startup"}
+	argoForbidden      = kube.Unusable{Reason: "missing RBAC permission to list applications.argoproj.io", MissingPermission: true}
 )
 
 func TestSplitByFeatures(t *testing.T) {
@@ -30,15 +30,15 @@ func TestSplitByFeatures(t *testing.T) {
 
 	tests := []struct {
 		name            string
-		notUsable       map[string]string
+		notUsable       map[string]kube.Unusable
 		wantUnavailable []string
 	}{
 		{"everything usable", nil, nil},
-		{"cert-manager missing", map[string]string{checks.RequiresCertManager: certManagerReason},
+		{"cert-manager missing", map[string]kube.Unusable{checks.RequiresCertManager: certManagerMissing},
 			[]string{"cert-not-ready", "cert-expiry"}},
-		{"argo missing", map[string]string{checks.RequiresArgoCD: argoReason},
+		{"argo missing", map[string]kube.Unusable{checks.RequiresArgoCD: argoForbidden},
 			[]string{"argocd-health", "argocd-sync"}},
-		{"both missing", map[string]string{checks.RequiresCertManager: certManagerReason, checks.RequiresArgoCD: argoReason},
+		{"both missing", map[string]kube.Unusable{checks.RequiresCertManager: certManagerMissing, checks.RequiresArgoCD: argoForbidden},
 			[]string{"cert-not-ready", "cert-expiry", "argocd-health", "argocd-sync"}},
 	}
 	for _, tt := range tests {
@@ -50,8 +50,12 @@ func TestSplitByFeatures(t *testing.T) {
 				names = append(names, c.Name)
 				// Each skipped check shows the reason of its own feature.
 				check := findCheck(t, c.Name)
-				if c.Reason != tt.notUsable[check.Requires] {
-					t.Errorf("%s: reason %q, want %q", c.Name, c.Reason, tt.notUsable[check.Requires])
+				want := tt.notUsable[check.Requires]
+				if c.Reason != want.Reason {
+					t.Errorf("%s: reason %q, want %q", c.Name, c.Reason, want.Reason)
+				}
+				if c.KeepProblems != want.MissingPermission {
+					t.Errorf("%s: KeepProblems = %v, want %v", c.Name, c.KeepProblems, want.MissingPermission)
 				}
 			}
 			if strings.Join(names, ",") != strings.Join(tt.wantUnavailable, ",") {
@@ -84,7 +88,7 @@ func TestSplitByFeaturesKeepsDisabledChecksOut(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	active, unavailable := splitByFeatures(enabled, map[string]string{checks.RequiresArgoCD: argoReason})
+	active, unavailable := splitByFeatures(enabled, map[string]kube.Unusable{checks.RequiresArgoCD: argoForbidden})
 	if hasCheck(active, checks.PVCUsageCheck) || hasCheck(active, "cert-expiry") {
 		t.Error("checks disabled by configuration must not come back")
 	}
@@ -157,6 +161,9 @@ func TestChooseChecksSkipsChecksWithoutPermission(t *testing.T) {
 	for _, c := range unavailable {
 		if !strings.Contains(c.Reason, "missing RBAC permission") || !strings.Contains(c.Reason, "rbac.argocd") {
 			t.Errorf("%s: reason %q should name the missing permission and the chart switch", c.Name, c.Reason)
+		}
+		if !c.KeepProblems {
+			t.Errorf("%s: without permission its open problems must stay open", c.Name)
 		}
 	}
 }

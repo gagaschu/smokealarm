@@ -15,7 +15,8 @@ import (
 	"github.com/gagaschu/smokealarm/internal/checks"
 )
 
-// detectTimeout limits the whole feature detection at startup.
+// detectTimeout limits the whole feature detection at startup, discovery and
+// the permission check together.
 const detectTimeout = 30 * time.Second
 
 // Features tells which optional parts of the cluster are usable. They are
@@ -35,6 +36,16 @@ type optionalResource struct {
 	// helmSwitch is the chart value that grants the permission, for the hint
 	// in the skip reason.
 	helmSwitch string
+	// enable switches the feature on once the resource turned out to be usable.
+	enable func(*Features)
+}
+
+// Unusable says why an optional feature cannot be used.
+type Unusable struct {
+	Reason string
+	// MissingPermission is true if the CRD is installed but may not be listed.
+	// Its objects still exist and may still be broken; we just cannot see them.
+	MissingPermission bool
 }
 
 // optionalResourceFor returns the resource that a checks.Requires* name stands
@@ -42,9 +53,11 @@ type optionalResource struct {
 func optionalResourceFor(requires string) (optionalResource, bool) {
 	switch requires {
 	case checks.RequiresCertManager:
-		return optionalResource{certificateGVR(), "cert-manager", "certificates.cert-manager.io", "rbac.certManager"}, true
+		return optionalResource{certificateGVR(), "cert-manager", "certificates.cert-manager.io", "rbac.certManager",
+			func(f *Features) { f.CertManager = true }}, true
 	case checks.RequiresArgoCD:
-		return optionalResource{applicationGVR(), "Argo CD", "applications.argoproj.io", "rbac.argocd"}, true
+		return optionalResource{applicationGVR(), "Argo CD", "applications.argoproj.io", "rbac.argocd",
+			func(f *Features) { f.ArgoCD = true }}, true
 	default:
 		return optionalResource{}, false
 	}
@@ -70,55 +83,53 @@ func applicationGVR() schema.GroupVersionResource {
 // (a flaky API, for example) is returned, because it must not silently switch
 // checks off.
 func DetectFeatures(ctx context.Context, client kubernetes.Interface, dynamicClient dynamic.Interface,
-	needed []string) (Features, map[string]string, error) {
+	needed []string) (Features, map[string]Unusable, error) {
 	ctx, cancel := context.WithTimeout(ctx, detectTimeout)
 	defer cancel()
 
 	var features Features
-	unavailable := map[string]string{}
+	unavailable := map[string]Unusable{}
 	for _, requires := range needed {
 		resource, known := optionalResourceFor(requires)
 		if !known {
 			return Features{}, nil, fmt.Errorf("unknown cluster feature %q required by a check", requires)
 		}
-		reason, err := unusableReason(ctx, client.Discovery(), dynamicClient, resource)
+		problem, err := findProblem(ctx, client.Discovery(), dynamicClient, resource)
 		if err != nil {
 			return Features{}, nil, fmt.Errorf("detect %s: %w", resource.name, err)
 		}
-		if reason != "" {
-			unavailable[requires] = reason
+		if problem != nil {
+			unavailable[requires] = *problem
 			continue
 		}
-		switch requires {
-		case checks.RequiresCertManager:
-			features.CertManager = true
-		case checks.RequiresArgoCD:
-			features.ArgoCD = true
-		}
+		resource.enable(&features)
 	}
 	return features, unavailable, nil
 }
 
-// unusableReason returns why a resource cannot be used, or "" if it can.
-func unusableReason(ctx context.Context, d discovery.DiscoveryInterface, dynamicClient dynamic.Interface,
-	resource optionalResource) (string, error) {
-	installed, err := hasResource(d, resource.gvr)
+// findProblem returns why a resource cannot be used, or nil if it can.
+func findProblem(ctx context.Context, d discovery.DiscoveryInterfaces, dynamicClient dynamic.Interface,
+	resource optionalResource) (*Unusable, error) {
+	installed, err := hasResource(ctx, d, resource.gvr)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if !installed {
-		return fmt.Sprintf("%s CRDs not installed (%s); checked at startup", resource.label, resource.name), nil
+		return &Unusable{Reason: fmt.Sprintf("%s CRDs not installed (%s); checked at startup", resource.label, resource.name)}, nil
 	}
 
 	allowed, err := canList(ctx, dynamicClient, resource.gvr)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if !allowed {
-		return fmt.Sprintf("missing RBAC permission to list %s: grant it (Helm: %s=true) or disable the checks with SMOKEALARM_DISABLED_CHECKS",
-			resource.name, resource.helmSwitch), nil
+		return &Unusable{
+			Reason: fmt.Sprintf("missing RBAC permission to list %s: grant it (Helm: %s=true) or disable the checks with SMOKEALARM_DISABLED_CHECKS",
+				resource.name, resource.helmSwitch),
+			MissingPermission: true,
+		}, nil
 	}
-	return "", nil
+	return nil, nil
 }
 
 // canList tries to list one object of the resource. It is the only way to
@@ -138,8 +149,8 @@ func canList(ctx context.Context, dynamicClient dynamic.Interface, gvr schema.Gr
 	return true, nil
 }
 
-func hasResource(d discovery.DiscoveryInterface, gvr schema.GroupVersionResource) (bool, error) {
-	list, err := d.ServerResourcesForGroupVersion(gvr.GroupVersion().String())
+func hasResource(ctx context.Context, d discovery.DiscoveryInterfaces, gvr schema.GroupVersionResource) (bool, error) {
+	list, err := d.ServerResourcesForGroupVersionWithContext(ctx, gvr.GroupVersion().String())
 	if apierrors.IsNotFound(err) {
 		return false, nil
 	}

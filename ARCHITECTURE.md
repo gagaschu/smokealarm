@@ -114,7 +114,7 @@ If your check needs **data that is not in the snapshot yet** (a new kind of obje
 - add a field to `Snapshot` in `internal/checks/types.go`,
 - add an informer for it in `internal/kube/cluster.go` (with its name in `allInformers`, so a cache that never syncs is named in the error) and copy its objects in `internal/kube/snapshot.go`,
 - add the `get`, `list`, `watch` permission in `deploy/helm/smokealarm/templates/clusterrole.yaml` and in the expected rules of `deploy/helm/chart_test.go`,
-- if the object is a CRD that may not exist, set `Requires` on the check and add the CRD to `optionalResourceFor` (and to the `switch` in `DetectFeatures`) in `internal/kube/features.go`. `main` then asks for exactly the CRDs that enabled checks need, skips the check with a reason if the CRD is missing or may not be read, and starts an informer only for CRDs that are in use. `TestEveryCheckRequirementIsKnown` fails if the CRD is not known to `features.go`.
+- if the object is a CRD that may not exist, set `Requires` on the check and add the CRD to `optionalResourceFor` in `internal/kube/features.go`. `main` then asks for exactly the CRDs that enabled checks need, skips the check with a reason if the CRD is missing or may not be read, and starts an informer only for CRDs that are in use. `TestEveryCheckRequirementIsKnown` fails if the CRD is not known to `features.go`.
 
 If the permission should be **optional in the Helm chart** (like `nodes/proxy`, cert-manager or Argo CD), the chart has to switch the check off together with the permission, or the check would run without it:
 
