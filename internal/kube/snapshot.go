@@ -7,6 +7,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/gagaschu/smokealarm/internal/checks"
 )
@@ -74,5 +75,25 @@ func (c *Cluster) BuildSnapshot(now time.Time) *checks.Snapshot {
 			snap.StorageClasses = append(snap.StorageClasses, class)
 		}
 	}
+	c.addCustomResourcesToSnapshot(snap)
 	return snap
+}
+
+// addCustomResourcesToSnapshot converts the cert-manager and Argo CD objects,
+// if those informers exist.
+func (c *Cluster) addCustomResourcesToSnapshot(snap *checks.Snapshot) {
+	if c.certificates != nil {
+		for _, obj := range c.certificates.GetStore().List() {
+			if u, ok := obj.(*unstructured.Unstructured); ok {
+				snap.Certificates = append(snap.Certificates, certificateFrom(u))
+			}
+		}
+	}
+	if c.applications != nil {
+		for _, obj := range c.applications.GetStore().List() {
+			if u, ok := obj.(*unstructured.Unstructured); ok {
+				snap.Applications = append(snap.Applications, applicationFrom(u))
+			}
+		}
+	}
 }

@@ -72,11 +72,16 @@ func run() error {
 		}
 	}()
 
-	client, err := kube.NewClient()
+	clients, err := kube.NewClients()
 	if err != nil {
-		return fmt.Errorf("create client: %w", err)
+		return fmt.Errorf("create clients: %w", err)
 	}
-	cluster, err := kube.New(client, logger)
+	features, err := kube.DetectFeatures(clients.Kube)
+	if err != nil {
+		return fmt.Errorf("detect optional features: %w", err)
+	}
+	logger.Info("optional cluster features", "cert-manager", features.CertManager, "argocd", features.ArgoCD)
+	cluster, err := kube.New(clients.Kube, clients.Dynamic, kube.Options{Features: features}, logger)
 	if err != nil {
 		return fmt.Errorf("create cluster: %w", err)
 	}
