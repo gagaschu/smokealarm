@@ -508,6 +508,12 @@ td.wrap { overflow-wrap: break-word; }
 td.message-cell { overflow-wrap: anywhere; min-width: 14rem; }
 td.mono { font-size: 0.8125rem; }
 td.end { text-align: right; }
+
+/* A second line in a cell, such as the duration below the time and the reason
+   below the severity. Two values share a column, so the history table still
+   fits on a small laptop screen. */
+.below { display: block; margin-top: 0.25rem; }
+.below:not(.strong) { color: var(--muted); font-size: 0.8125rem; }
 td.end form { margin: 0; }
 
 /* The downtime column: mark, end and button, wrapped where needed. */

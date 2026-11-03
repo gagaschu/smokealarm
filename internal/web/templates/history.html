@@ -16,16 +16,14 @@
 <div class="table-wrap">
 <table>
   <thead>
-    <tr><th>Resolved (UTC)</th><th>Lasted</th><th>Severity</th><th>Object</th><th>Reason</th><th>Message</th><th>Downtime</th></tr>
+    <tr><th>Resolved (UTC)</th><th>Problem</th><th>Object</th><th>Message</th><th>Downtime</th></tr>
   </thead>
   <tbody>
     {{range .History}}
     <tr>
-      <td class="nowrap time" data-label="Resolved (UTC)">{{.ResolvedAt}}</td>
-      <td class="nowrap time" data-label="Lasted">{{.Lasted}}</td>
-      <td class="nowrap" data-label="Severity"><span class="badge {{.Severity}}">{{.Severity}}</span></td>
+      <td class="nowrap time" data-label="Resolved (UTC)">{{.ResolvedAt}}<span class="below">lasted {{.Lasted}}</span></td>
+      <td class="nowrap" data-label="Problem"><span class="badge {{.Severity}}">{{.Severity}}</span><span class="below strong">{{.Reason}}</span></td>
       <td class="wrap mono" data-label="Object">{{.Object}}</td>
-      <td class="nowrap strong" data-label="Reason">{{.Reason}}</td>
       <td class="message-cell" data-label="Message">{{.Message}}</td>
       <td class="downtime-cell" data-label="Downtime"><div class="cell-actions">{{if .DowntimeUntil}}<span class="badge downtime">downtime</span> <span class="until">until {{.DowntimeUntil}}</span> <a class="button small" href="/downtimes/new?finding={{.ID}}">{{template "icon-bell-off"}}Change downtime</a>{{else}}<a class="button small" href="/downtimes/new?finding={{.ID}}">{{template "icon-bell-off"}}Set downtime</a>{{end}}</div></td>
     </tr>
