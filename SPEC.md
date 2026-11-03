@@ -53,7 +53,7 @@ Finding (guideline):
 Sequence every SMOKEALARM_CHECK_INTERVAL (default 30s):
 1. Build the snapshot, run all enabled checks.
 2. Compare with the state in SQLite: new problem → pending; lasts longer than SMOKEALARM_ALERT_AFTER (default 2m) → firing; gone → resolved (only if it was firing before, otherwise discard silently). This way short flaps are not reported.
-3. Send all changes not yet reported (firing/resolved), plus any reminders that are due, as one combined notification. Mark them as reported only after sending succeeded; if sending fails, it is retried in the next run. This also survives restarts.
+3. Send all changes not yet reported (firing/resolved), plus any reminders that are due, as one combined notification. An acknowledged problem only reports its end (see Notifications). Mark them as reported only after sending succeeded; if sending fails, it is retried in the next run. This also survives restarts.
 4. Delete resolved findings older than SMOKEALARM_RETENTION (default 30d).
 
 ## Checks (v0.1)
@@ -92,6 +92,7 @@ Ignoring:
 - v0.1: mail via SMTP only (STARTTLS and implicit TLS on port 465, optionally with auth, multiple recipients).
 - At most one mail per run, with all new state changes and due reminders.
 - Reminders are optional: SMOKEALARM_CRITICAL_REPEAT_INTERVAL (default 0, off; otherwise at least SMOKEALARM_CHECK_INTERVAL) reports a critical problem that is still firing again once its last report is that old. Each problem has its own clock. Warnings are not repeated. No reminders for checks whose state is unknown in this run. A failed reminder is retried in the next run.
+- A firing critical problem can be acknowledged in the web UI. Warnings cannot, because they are not repeated anyway. An acknowledged problem sends no reminders. The acknowledgement lasts until the problem is resolved, and "resolved" is still reported. If its first mail has not gone out yet (for example because sending failed), that mail is dropped, but "resolved" is reported anyway. If it becomes a warning and then critical again, it stays acknowledged and no mail is sent. If the problem returns after "resolved", it is a new alarm with a new mail.
 - The subject summarizes: specific for one change, e.g. "[smokealarm] CRITICAL: CrashLoopBackOff media/jellyfin" or, for a reminder, "[smokealarm] STILL CRITICAL: CrashLoopBackOff media/jellyfin"; for several, e.g. "[smokealarm] 3 new problems, 1 still critical, 1 resolved".
 - Body as plain text: new problems sorted by severity, then reminders, then resolved ones; each with object, reason, message, since when; link to the web UI (SMOKEALARM_BASE_URL).
 - Design the Notifier interface so that Telegram and a generic webhook can be added later as separate files without changing the engine. Do not implement them yet.
@@ -100,9 +101,10 @@ Ignoring:
 - Server-rendered HTML, no JavaScript framework, no build step. Auto-refresh via meta tag (30s). Plain custom CSS, light/dark via prefers-color-scheme, works well on a phone.
 - Pages:
   - Login
-  - Overview: current problems by severity with object, reason, message, since when. Empty state "All good" with the time of the last run.
+  - Overview: current problems by severity with object, reason, message, since when. Empty state "All good" with the time of the last run. Firing critical problems have an acknowledge button (plain POST form); acknowledged problems stay on the page and are marked, with the time in UTC.
   - History: resolved findings, filterable by namespace
   - Status: last run, active/skipped checks with reason, whether mail is configured, last sending error
+- Actions that change state need a valid session and are protected against cross-site requests (http.CrossOriginProtection from the standard library), in addition to the SameSite=Lax cookie.
 - /healthz (liveness) and /readyz (informer caches synced, DB reachable), both without auth.
 
 ## Authentication
@@ -135,7 +137,7 @@ Ignoring:
 
 ## Tests
 - Table-driven tests for every check with hand-built objects (no real API), including edge cases: just below/above the threshold, ignored via annotation, optional CRDs missing.
-- Tests for the engine's state logic against a temporary SQLite file: pending → firing → resolved, flap is suppressed, failed sending is retried, combined mail for several changes.
+- Tests for the engine's state logic against a temporary SQLite file: pending → firing → resolved, flap is suppressed, failed sending is retried, combined mail for several changes, acknowledged problems.
 - Golden test for the subject and body of the mail.
 
 ## Procedure

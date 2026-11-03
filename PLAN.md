@@ -190,10 +190,12 @@ type Record struct {
     FirstSeen, LastSeen time.Time
     FiringAt, ResolvedAt               *time.Time
     FiringNotifiedAt, ResolvedNotifiedAt *time.Time
+    AcknowledgedAt                       *time.Time // set from the web UI; never written by Apply
 }
 func Open(path string, now func() time.Time) (*Store, error) // runs migrations
 func (s *Store) OpenRecords(ctx) ([]Record, error)
 func (s *Store) Insert/Update/Delete... ; Unnotified(ctx); MarkNotified(ctx, ids...)
+func (s *Store) Acknowledge(ctx, id, at) (key string, changed bool, err error) // firing critical only
 func (s *Store) Resolved(ctx, namespace string, limit int) ([]Record, error) // history
 func (s *Store) Namespaces(ctx) ([]string, error)                         // history filter
 func (s *Store) Cleanup(ctx, olderThan time.Time) error
@@ -240,7 +242,7 @@ Session ID: 32 random bytes (crypto/rand), base64url in the cookie; **only the S
 
 ### web
 Routes (`net/http` 1.22 patterns):
-`GET /login`, `POST /login`, `POST /logout`, `GET /` (overview), `GET /history?namespace=`, `GET /status`, `GET /static/style.css`, `GET /healthz`, `GET /readyz` (no auth for the last two and login/static). Templates: `layout.html` (meta refresh 30s, except on login), `login.html`, `overview.html`, `history.html`, `status.html`. CSS with `prefers-color-scheme`, mobile-friendly.
+`GET /login`, `POST /login`, `POST /logout`, `GET /` (overview), `POST /problems/{id}/acknowledge`, `GET /history?namespace=`, `GET /status`, `GET /static/style.css`, `GET /healthz`, `GET /readyz` (no auth for the last two and login/static). Templates: `layout.html` (meta refresh 30s, except on login), `login.html`, `overview.html`, `history.html`, `status.html`. CSS with `prefers-color-scheme`, mobile-friendly.
 
 ## 4. Database schema (`internal/store/migrations/001_init.sql`)
 All timestamps are INTEGER (Unix seconds, UTC).
@@ -281,7 +283,7 @@ CREATE TABLE sessions (
 );
 CREATE INDEX sessions_expires ON sessions(expires_at);
 ```
-Implementation note (phase 3): `001_findings.sql` contains only the `findings` table; `schema_migrations` is created by the migration code itself; the `sessions` table arrives with phase 5 as `002_sessions.sql`.
+Implementation note (phase 3): `001_findings.sql` contains only the `findings` table; `schema_migrations` is created by the migration code itself; the `sessions` table arrives with phase 5 as `002_sessions.sql`. Phase 9 adds the column `findings.acknowledged_at` (INTEGER, nullable) in `003_acknowledge.sql`.
 Migrations: files `NNN_name.sql` are embedded, applied in order, each in a transaction; the version goes into `schema_migrations`.
 
 ## 5. Environment variables
@@ -329,8 +331,13 @@ Every phase: own branch from main, unit tests with fake objects, `go build`/`go 
 6. **phase-6-optional-checks** – discovery of cert-manager/Argo CD, dynamic informers + conversion to `Certificate`/`Application`, `certs.go`, `argocd.go`, kubelet stats + `pvc-usage`, skip reasons on the status page. Tests incl. "CRD missing".
 7. **phase-7-packaging** – Dockerfile (multi-stage, distroless/static:nonroot, buildx amd64/arm64), Makefile (build, test, lint, run, image), Helm chart (RBAC read access: namespaces, pods, events, nodes, deployments, statefulsets, daemonsets, jobs, cronjobs, persistentvolumeclaims, storageclasses; Recreate, PVC, RBAC switches, Secret/existingSecret, probes, resources, securityContext, optional Ingress), README, ARCHITECTURE.md, LICENSE (Apache-2.0), CHANGELOG.md.
 8. **phase-8-critical-reminders** – `SMOKEALARM_CRITICAL_REPEAT_INTERVAL` (default off): critical problems that stay open are reported again. No migration; tests for engine, store, config, chart and golden mails.
+9. **phase-9-acknowledge** – acknowledge firing critical problems in the web UI: no more reminders, "resolved" is still reported. Migration `003_acknowledge.sql`; cross-origin protection for the new action; tests for engine, store and handlers.
 
 ## 7. Deliberate deviations / decisions
+- **Acknowledge (phase 9):** the mark belongs to the row in `findings`, not to the key, so a problem that returns after "resolved" is automatically a new, unacknowledged alarm. The store leaves acknowledged problems out of `Unnotified` (while firing) and `CriticalDueForReminder`. `Apply` never writes `acknowledged_at`, so a run that works on an older copy cannot undo an acknowledgement. There is no undo, and it is not recorded who acknowledged (one admin).
+- **Acknowledged before the first mail (phase 9, decided by the maintainer):** the first mail is dropped, because somebody already knows; a late "CRITICAL" after a mail outage would only be noise. "Resolved" is still reported, so the silent branch in `notify` applies only to unacknowledged problems. Other recipients therefore learn about such a problem from the "resolved" mail.
+- **An escalation does not clear the marker of an acknowledged problem (phase 9):** `Unnotified` would already keep the mail back, but `firing_notified_at` should keep saying when the problem was last reported, and the log should not claim an escalation is being reported.
+- **Changing keys and acknowledge (phase 9):** only `pvc-usage`, `cert-expiry` and `workload-replicas` keep their key when the reason changes. For the other checks a new reason is a new alarm, which is not acknowledged and gets its own mail. Accepted and documented, not worked around.
 - **Reminders (phase 8):** only for critical problems, with one clock per problem. `firing_notified_at` now means "last reported", so no new column is needed and a failed reminder is retried like any other send. Checks whose state is unknown get no reminder, because the mail would claim the problem still exists. The interval must be at least `CHECK_INTERVAL`, so a typo cannot cause a mail per run.
 - **`KUBECONFIG` without prefix:** it is the standard variable used by kubectl/client-go; a separate `SMOKEALARM_KUBECONFIG` would only add confusion.
 - **`notify.Log` as a second notifier:** a real second implementation (used when mail is off, and in phases 1–3), so the interface is not built "just in case".
@@ -339,7 +346,7 @@ Every phase: own branch from main, unit tests with fake objects, `go build`/`go 
 - **Only check-specific thresholds marked "Default" in the spec are configurable**; all other values are constants (spec: "no configuration effort").
 - **Rate limiting per client IP, in memory:** behind an ingress this effectively becomes one shared limit for everyone — acceptable for a single admin user.
 - **Engine status in memory** (mutex-protected); after a restart, "last send error" is empty until the next attempt.
-- **CSRF:** no token; SameSite=Lax plus POST-only for login/logout is enough for v0.1.
+- **CSRF:** no token; SameSite=Lax plus POST-only for login/logout is enough for v0.1. *(Phase 9: SameSite=Lax treats every host of the same site as "same site", so another application under the same domain could submit a form with the session cookie. Actions that change state therefore also go through `http.CrossOriginProtection`, which checks `Sec-Fetch-Site` and falls back to comparing `Origin` with `Host`. It needs no token, no state, no JavaScript and no new dependency. Limit: on plain HTTP behind a proxy that rewrites `Host`, actions are refused with 403. Login and logout are unchanged.)*
 - **Store persists, engine decides (phase 3):** `store.Apply(Changes)` writes inserts, updates and deletes in one transaction; the pending/firing/resolved rules live in the pure function `engine.reconcile`.
 - **`skipped` instead of `ranChecks` (phase 3):** `reconcile` gets the checks that could not run this time. Problems of checks that were disabled (or removed) are resolved normally instead of staying "firing" forever.
 - **Per-run finding log line is Debug (phase 3):** state transitions are logged at Info, so the log does not repeat every 30 s.
