@@ -1,10 +1,23 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"io"
+	"log/slog"
 	"strings"
 	"testing"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	dynamicfake "k8s.io/client-go/dynamic/fake"
+	"k8s.io/client-go/kubernetes/fake"
+	clienttesting "k8s.io/client-go/testing"
+
 	"github.com/gagaschu/smokealarm/internal/checks"
+	"github.com/gagaschu/smokealarm/internal/kube"
 )
 
 const (
@@ -104,5 +117,46 @@ func TestRequirements(t *testing.T) {
 				t.Errorf("requirements = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// chooseChecks ties the detection to the check list: Argo CD is installed but
+// the service account may not list Applications, so its checks are skipped with
+// the permission as the reason, and no informer would be started for it.
+func TestChooseChecksSkipsChecksWithoutPermission(t *testing.T) {
+	client := fake.NewClientset()
+	client.Resources = []*metav1.APIResourceList{
+		{GroupVersion: "cert-manager.io/v1", APIResources: []metav1.APIResource{{Name: "certificates"}}},
+		{GroupVersion: "argoproj.io/v1alpha1", APIResources: []metav1.APIResource{{Name: "applications"}}},
+	}
+	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
+		map[schema.GroupVersionResource]string{
+			{Group: "cert-manager.io", Version: "v1", Resource: "certificates"}:   "CertificateList",
+			{Group: "argoproj.io", Version: "v1alpha1", Resource: "applications"}: "ApplicationList",
+		})
+	dyn.PrependReactor("list", "applications", func(clienttesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: "applications"}, "", errors.New("RBAC: access denied"))
+	})
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	active, unavailable, features, err := chooseChecks(context.Background(), logger,
+		kube.Clients{Kube: client, Dynamic: dyn}, checks.All())
+	if err != nil {
+		t.Fatalf("chooseChecks: %v", err)
+	}
+
+	if features != (kube.Features{CertManager: true}) {
+		t.Errorf("features = %+v, want only cert-manager (Argo CD cannot be read)", features)
+	}
+	if !hasCheck(active, "cert-expiry") || hasCheck(active, "argocd-health") || hasCheck(active, "argocd-sync") {
+		t.Errorf("active checks do not match: cert-expiry must stay, the Argo CD checks must go")
+	}
+	if len(unavailable) != 2 {
+		t.Fatalf("unavailable = %+v, want the two Argo CD checks", unavailable)
+	}
+	for _, c := range unavailable {
+		if !strings.Contains(c.Reason, "missing RBAC permission") || !strings.Contains(c.Reason, "rbac.argocd") {
+			t.Errorf("%s: reason %q should name the missing permission and the chart switch", c.Name, c.Reason)
+		}
 	}
 }

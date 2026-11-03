@@ -63,6 +63,8 @@ helm install smokealarm ./deploy/helm/smokealarm -n smokealarm \
 
 (The same Secret may also hold `SMOKEALARM_SMTP_USERNAME` and `SMOKEALARM_SMTP_PASSWORD`.)
 
+Ready-made values files for typical setups are in [`deploy/helm/examples/`](deploy/helm/examples): an ingress with TLS, mail, minimal permissions and your own Secret. Use one with `-f deploy/helm/examples/<file>`; each file starts with a comment that shows the full command.
+
 ### 4. Open it
 
 ```sh
@@ -132,7 +134,7 @@ Everything is configured with environment variables that start with `SMOKEALARM_
 | `SMOKEALARM_BASE_URL` | – | Public URL of the web UI, used for the link in mails. |
 | `SMOKEALARM_LOG_FORMAT` | `auto` | `json`, `text` or `auto` (JSON inside a cluster, text otherwise). |
 | `SMOKEALARM_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. |
-| `SMOKEALARM_DISABLED_CHECKS` | – | Comma-separated check names to switch off, for example `pod-restarts,pvc-usage`. An unknown name is an error. |
+| `SMOKEALARM_DISABLED_CHECKS` | – | Comma-separated check names to switch off, for example `pod-restarts,pvc-usage`. An unknown name is an error. Open problems of a switched-off check are closed and reported as resolved, see [The checks](#the-checks). |
 | `SMOKEALARM_IGNORE_NAMESPACES` | – | Comma-separated namespaces that never produce findings. |
 | `SMOKEALARM_RESTART_THRESHOLD` | `5` | `pod-restarts` reports containers with more restarts than this. |
 | `SMOKEALARM_POD_PENDING_AFTER` | `5m` | `pod-pending` reports pods that are pending longer than this. |
@@ -175,7 +177,8 @@ Every check has a fixed purpose and severity. A **critical** problem needs actio
 
 Notes:
 
-- **Optional CRDs** (cert-manager, Argo CD) are detected once at startup. If they are missing, the matching checks are skipped and the status page says so. Install the CRDs later and restart smokealarm.
+- **Optional CRDs** (cert-manager, Argo CD) are detected once at startup, and only if an enabled check needs them. If a CRD is missing, or the service account may not list it, the matching checks are skipped and the status page says why. Install the CRD or grant the permission later and restart smokealarm.
+- **Switching a check off closes its problems.** If you disable a check (`SMOKEALARM_DISABLED_CHECKS`, or an `rbac.*` switch of the chart, which disables the checks that need the permission), its open problems count as gone: they are reported as *resolved* in the next mail, although the cause may still exist. A check that is skipped only for a moment (for example the kubelet does not answer) leaves its problems alone.
 - **A problem that gets worse** (`pvc-usage`, `cert-expiry` and `workload-replicas` can go from warning to critical) stays the same problem: it is not reported as resolved, and you get a new mail saying it is critical now.
 - **`pvc-usage` and `local-path`:** the kubelet reports the usage of the filesystem the volume lives on. For k3s `local-path` volumes that is the node's disk (the requested size is not enforced), so the check only alarms when the node disk is nearly full. It is most useful for volumes with their own filesystem (Longhorn, Ceph, block volumes).
 - **If the volume stats cannot be read** (no permission, a node does not answer), `pvc-usage` is skipped for that run instead of guessing; its open problems stay as they are, and the status page shows the reason.
@@ -188,7 +191,8 @@ Notes:
 
 ## Security
 
-- **Read-only access.** smokealarm only needs `get`, `list` and `watch`, on a short list of resources. The Helm chart creates a `ClusterRole` with exactly that. The optional permissions (`nodes/proxy` for `pvc-usage`, cert-manager Certificates, Argo CD Applications) each have a switch (`rbac.nodesProxy`, `rbac.certManager`, `rbac.argocd`); a switch that is off disables the checks that need it. smokealarm never reads Secrets.
+- **Read access.** smokealarm only needs `get`, `list` and `watch`, on a short list of resources. The Helm chart creates a `ClusterRole` with exactly that (the one exception is `get` on `nodes/proxy`, see the next point). The optional permissions (`nodes/proxy` for `pvc-usage`, cert-manager Certificates, Argo CD Applications) each have a switch (`rbac.nodesProxy`, `rbac.certManager`, `rbac.argocd`); a switch that is off disables the checks that need it. smokealarm never reads Secrets. The ClusterRole is named `<namespace>-<release>`, so the chart can be installed in several namespaces.
+- **`nodes/proxy` is more than read access.** `pvc-usage` reads the volume usage from the kubelets, which needs `get` on `nodes/proxy`. The Kubernetes documentation ([RBAC good practices](https://kubernetes.io/docs/concepts/security/rbac-good-practices/#access-to-proxy-subresource-of-nodes)) warns that this permission reaches the kubelet API, including container logs and command execution in pods, and bypasses audit logging and admission control; it says that `get` on `nodes/proxy` "is not a read-only permission". smokealarm only calls `stats/summary`, but anyone who steals its service account token gets the same reach. The rule is created only while `pvc-usage` is active. If you do not need the check, set `rbac.nodesProxy=false` or add `pvc-usage` to `disabledChecks`, and the permission is gone.
 - **Locked-down container.** It runs as a non-root user, with a read-only root filesystem, all capabilities dropped, no privilege escalation and the default seccomp profile. The only writable place is the data volume.
 - **Login.** One local admin; the password is stored as a bcrypt hash. Sessions live in the database (only a hash of the session id is stored), the cookie is `HttpOnly` and `SameSite=Lax`, and `Secure` unless you switch that off. Failed logins are rate-limited (5 per 15 minutes per client address; behind a proxy all clients share one limit).
 - **Nothing sensitive in logs:** no passwords, hashes or session ids.
@@ -201,8 +205,10 @@ You need Go (the version in [go.mod](go.mod)), `golangci-lint`, and for the imag
 
 ```sh
 make test        # go vet and all tests, including the chart tests (skipped without helm)
+make test-race   # the same with the race detector (on Linux this needs a C compiler)
 make lint        # golangci-lint
 make build       # bin/smokealarm
+make chart       # lint and render the Helm chart: the defaults and every file in deploy/helm/examples
 
 export SMOKEALARM_ADMIN_PASSWORD_HASH="$(make -s hash-password)"
 make run         # runs against the cluster from KUBECONFIG, UI on http://localhost:8080
@@ -214,7 +220,7 @@ Run `make help` for all tasks. The code is written to be read by people who do n
 
 ## Troubleshooting
 
-- **The pod never becomes ready; the log shows `forbidden` from a reflector.** smokealarm cannot read a resource. With the Helm chart this means the ClusterRole does not match what is enabled; with your own RBAC, compare it with `deploy/helm/smokealarm/templates/clusterrole.yaml`.
+- **The pod restarts about two minutes after it starts; the log says `informer caches did not sync within 2m0s: <resources>` and, before that, `forbidden`.** smokealarm cannot read the listed resources. The Helm chart grants them, so this happens with `rbac.create=false` and your own RBAC: compare it with `deploy/helm/smokealarm/templates/clusterrole.yaml`. Missing permissions for cert-manager or Argo CD do not cause this; the matching checks are skipped and the status page shows the reason.
 - **Nothing is reported although something is broken.** A problem is reported only after `SMOKEALARM_ALERT_AFTER` (2 minutes). Look at the overview page and the log (`finding pending`, `finding firing`). Without `SMOKEALARM_SMTP_HOST` the notifications only go to the log.
 - **I see a skipped check on the status page.** The reason is shown next to it: disabled by configuration, a CRD that is not installed, or missing permission.
 - **Login works but I am logged out again at once.** The cookie is `Secure` but you use plain HTTP. Use HTTPS or set `SMOKEALARM_COOKIE_SECURE=false` for local use.
