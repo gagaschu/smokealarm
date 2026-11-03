@@ -1,0 +1,136 @@
+# Default values for smokealarm.
+# Every setting that maps to an environment variable names it in a comment;
+# the full description of each variable is in the README.
+
+image:
+  repository: ghcr.io/gagaschu/smokealarm
+  # Defaults to the chart's appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+# --- Login -------------------------------------------------------------------
+auth:
+  # SMOKEALARM_ADMIN_USER
+  adminUser: admin
+  # SMOKEALARM_ADMIN_PASSWORD_HASH: a bcrypt hash, NOT the password itself.
+  # Create one with:  printf '%s' "$PW" | docker run -i --rm ghcr.io/gagaschu/smokealarm hash-password
+  # Pass it with --set-string (the hash contains $ characters), or use existingSecret.
+  passwordHash: ""
+
+# Name of a Secret that you created yourself. If set, the chart creates no
+# Secret and reads these keys from it:
+#   SMOKEALARM_ADMIN_PASSWORD_HASH            (required)
+#   SMOKEALARM_SMTP_USERNAME, SMOKEALARM_SMTP_PASSWORD   (only if the mail server needs a login)
+existingSecret: ""
+
+# --- Behavior ------------------------------------------------------------------
+config:
+  checkInterval: 30s        # SMOKEALARM_CHECK_INTERVAL
+  alertAfter: 2m            # SMOKEALARM_ALERT_AFTER: how long a problem must last before it is reported
+  retention: 30d            # SMOKEALARM_RETENTION: how long resolved problems stay in the history
+  logLevel: info            # SMOKEALARM_LOG_LEVEL: debug, info, warn, error
+  # SMOKEALARM_BASE_URL: link to the web UI in mails. If empty and the ingress
+  # is enabled, it is built from the ingress host.
+  baseUrl: ""
+  sessionTtl: 7d            # SMOKEALARM_SESSION_TTL
+  # SMOKEALARM_COOKIE_SECURE: the login cookie is only sent over HTTPS. Set to
+  # false only if you reach the UI over plain HTTP (for example kubectl port-forward).
+  cookieSecure: true
+  ignoreNamespaces: []      # SMOKEALARM_IGNORE_NAMESPACES, e.g. [kube-system]
+  restartThreshold: 5       # SMOKEALARM_RESTART_THRESHOLD
+  podPendingAfter: 5m       # SMOKEALARM_POD_PENDING_AFTER
+  pvcPendingAfter: 5m       # SMOKEALARM_PVC_PENDING_AFTER
+  cronjobGrace: 5m          # SMOKEALARM_CRONJOB_GRACE
+
+# Your own list of checks to switch off (SMOKEALARM_DISABLED_CHECKS), e.g.
+# [pod-restarts]. Checks whose permission you switch off under "rbac" are added
+# automatically.
+disabledChecks: []
+
+# --- Mail (switched on by setting smtp.host) --------------------------------------
+smtp:
+  host: ""                  # SMOKEALARM_SMTP_HOST
+  port: 587                 # SMOKEALARM_SMTP_PORT
+  tls: starttls             # SMOKEALARM_SMTP_TLS: starttls, tls (port 465) or none
+  from: ""                  # SMOKEALARM_SMTP_FROM
+  to: []                    # SMOKEALARM_SMTP_TO: list of recipients
+  # Login, if the server needs one. Stored in the chart's Secret (or read from
+  # existingSecret, see above).
+  username: ""
+  password: ""
+
+# --- Permissions ---------------------------------------------------------------
+# smokealarm only reads (get, list, watch). The switches below control the
+# optional permissions; if one is off, the checks that need it are disabled.
+rbac:
+  create: true
+  # nodes/proxy: needed by pvc-usage to read the volume usage from the kubelets.
+  nodesProxy: true
+  # certificates.cert-manager.io: needed by cert-not-ready and cert-expiry.
+  certManager: true
+  # applications.argoproj.io: needed by argocd-health and argocd-sync.
+  argocd: true
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# --- Storage ---------------------------------------------------------------------
+# The history and the login sessions live in a SQLite database on this volume.
+persistence:
+  enabled: true
+  size: 1Gi
+  storageClass: ""          # "" = the cluster's default storage class
+  existingClaim: ""         # use a PersistentVolumeClaim you created yourself
+  annotations: {}
+
+# --- Network ---------------------------------------------------------------------
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: smokealarm.example.com
+  tls:
+    enabled: false
+    secretName: ""
+
+# --- Pod ---------------------------------------------------------------------------
+resources:
+  requests:
+    cpu: 10m
+    memory: 64Mi
+  limits:
+    memory: 128Mi
+# GOMEMLIMIT: makes the Go garbage collector work harder before the container
+# hits its memory limit. Keep it a bit below limits.memory.
+goMemLimit: 100MiB
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Additional environment variables, in the usual Kubernetes format.
+extraEnv: []
