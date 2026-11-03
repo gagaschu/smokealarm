@@ -13,11 +13,16 @@ All notable changes to this project are documented here. The format is based on
 - An acknowledgement can be removed again. The problem then behaves like any other, so a mail can go out in the next run.
 - **Downtimes** in the web UI: silence one problem until a fixed time, from the overview or the history. While it runs, the problem sends no mail, including "resolved". If it is still active when the downtime ends, it is reported again; if it went away, nothing is sent. The **Downtimes** page lists running downtimes and can end them early.
 - Actions in the web UI that change state are protected against cross-site requests.
+- **More notification targets** besides mail: a generic **webhook** (JSON, optional auth header), **ntfy** (ntfy.sh or self-hosted, optional access token), **Telegram** (one or more chats), **Slack** (incoming webhook) and **Microsoft Teams** (Workflows webhook with an Adaptive Card; the old Office 365 connector URLs no longer work and are refused). Any combination can be on. They get the same notifications as mail, at the same times. Other services can be reached with the webhook and a relay such as Apprise or n8n.
+- Every notification target remembers on its own what it was told: a target that is down is retried without sending duplicates to the others, also after a restart. A target added later does not get the history.
+- The status page lists every notification target with the time of its last message and its last error.
+- Helm chart: `notifications.*` values; tokens and webhook URLs go into the Secret only. New example `notify-targets.yaml`.
 
 ### Changed
 
 - **New look for the web UI**: a top bar with logo, slimmer buttons with icons and a clear main action, problem cards with severity counters above them, tables as cards, a status page with state pills, and a favicon. Still no JavaScript and no external files; light and dark mode and the phone layout are kept. The history shows the duration below the time and the severity above the reason, so the table fits on a small laptop screen.
 - The README shows screenshots of the web interface.
+- Database migration `005_deliveries.sql`. On the upgrade, the configured targets start from the current state, so nothing is sent twice.
 
 ## [0.1.0] - not released yet
 
