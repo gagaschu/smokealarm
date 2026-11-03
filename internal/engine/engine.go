@@ -26,7 +26,7 @@ import (
 // and passes them in, so the loop can be tested with fake functions.
 type Engine struct {
 	// Snapshot returns the current cluster objects (the informer caches).
-	Snapshot func(now time.Time) *checks.Snapshot
+	Snapshot func(ctx context.Context, now time.Time) *checks.Snapshot
 	Checks   []checks.Check
 	Options  checks.Options
 	Interval time.Duration
@@ -36,9 +36,10 @@ type Engine struct {
 	// Retention is how long resolved problems are kept as history.
 	Retention time.Duration
 
-	// SkippedChecks lists checks that do not run and why (disabled by
-	// configuration, optional CRDs not installed). They only appear in the
-	// status; the engine does nothing else with them.
+	// SkippedChecks lists checks that never run in this process and why
+	// (disabled by configuration, optional CRDs not installed). They only
+	// appear in the status. Checks that cannot run only temporarily are
+	// reported by the snapshot (see checks.Snapshot.Skipped).
 	SkippedChecks []SkippedCheck
 
 	Store    *store.Store
@@ -51,8 +52,13 @@ type Engine struct {
 	Now    func() time.Time
 	Logger *slog.Logger
 
-	mu     sync.Mutex // protects status, which the web server reads
-	status Status
+	mu         sync.Mutex // protects status and runSkipped, which the web server reads
+	status     Status
+	runSkipped map[string]string // checks that could not run in the last run
+
+	// previousSkipped is what was skipped in the last run, to log only when
+	// that changes. Only RunOnce touches it.
+	previousSkipped map[string]string
 }
 
 // SkippedCheck is a check that does not run, with the reason to show.
@@ -92,6 +98,10 @@ func (e *Engine) Status() Status {
 func (e *Engine) checkStatuses() []CheckStatus {
 	var statuses []CheckStatus
 	for _, c := range e.Checks {
+		if reason, skipped := e.runSkipped[c.Name]; skipped {
+			statuses = append(statuses, CheckStatus{Name: c.Name, Reason: reason})
+			continue
+		}
 		statuses = append(statuses, CheckStatus{Name: c.Name, Active: true})
 	}
 	for _, c := range e.SkippedChecks {
@@ -101,11 +111,51 @@ func (e *Engine) checkStatuses() []CheckStatus {
 	return statuses
 }
 
-// setRunResult remembers when the last run finished and how it went.
-func (e *Engine) setRunResult(finished time.Time, err error) {
+// splitSkipped separates the checks that can run from those the snapshot
+// reports as unable to run this time (check name -> reason). It also logs
+// when that set changes, so a permanent problem is not repeated every run.
+func (e *Engine) splitSkipped(snap *checks.Snapshot) ([]checks.Check, map[string]string) {
+	var runnable []checks.Check
+	skipped := map[string]string{}
+	for _, c := range e.Checks {
+		if reason, found := snap.Skipped[c.Name]; found {
+			skipped[c.Name] = reason
+			continue
+		}
+		runnable = append(runnable, c)
+	}
+
+	for name, reason := range skipped {
+		if e.previousSkipped[name] != reason {
+			e.Logger.Warn("check skipped", "check", name, "reason", reason)
+		}
+	}
+	for name := range e.previousSkipped {
+		if _, stillSkipped := skipped[name]; !stillSkipped {
+			e.Logger.Info("check runs again", "check", name)
+		}
+	}
+	e.previousSkipped = skipped
+	return runnable, skipped
+}
+
+// skippedNames returns the names of the skipped checks, sorted.
+func skippedNames(skipped map[string]string) []string {
+	names := make([]string, 0, len(skipped))
+	for name := range skipped {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// setRunResult remembers when the last run finished, which checks were
+// skipped, and how it went.
+func (e *Engine) setRunResult(finished time.Time, skipped map[string]string, err error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.status.LastRun = finished
+	e.runSkipped = skipped
 	e.status.LastRunError = ""
 	if err != nil {
 		e.status.LastRunError = err.Error()
@@ -154,8 +204,9 @@ func (e *Engine) runAndLog(ctx context.Context) {
 // others still run, and all errors are returned together.
 func (e *Engine) RunOnce(ctx context.Context) error {
 	start := e.Now()
-	snap := e.Snapshot(start)
-	findings := runChecks(snap, e.Options, e.Checks)
+	snap := e.Snapshot(ctx, start)
+	runnable, skipped := e.splitSkipped(snap)
+	findings := runChecks(snap, e.Options, runnable)
 	for _, f := range findings {
 		e.Logger.Debug("finding",
 			"key", f.Key,
@@ -165,7 +216,7 @@ func (e *Engine) RunOnce(ctx context.Context) error {
 	}
 
 	var errs []error
-	if err := e.saveState(ctx, findings, start); err != nil {
+	if err := e.saveState(ctx, findings, skippedNames(skipped), start); err != nil {
 		errs = append(errs, err)
 	}
 	if err := e.notify(ctx, start); err != nil {
@@ -177,10 +228,10 @@ func (e *Engine) RunOnce(ctx context.Context) error {
 
 	finished := e.Now()
 	err := errors.Join(errs...)
-	e.setRunResult(finished, err)
+	e.setRunResult(finished, skipped, err)
 	e.Logger.Info("check run finished",
 		"findings", len(findings),
-		"checks", len(e.Checks),
+		"checks", len(runnable),
 		"duration", finished.Sub(start).String(),
 	)
 	return err
@@ -188,15 +239,15 @@ func (e *Engine) RunOnce(ctx context.Context) error {
 
 // saveState compares the findings with the stored problems and writes the
 // result back in one transaction.
-func (e *Engine) saveState(ctx context.Context, findings []checks.Finding, now time.Time) error {
+func (e *Engine) saveState(ctx context.Context, findings []checks.Finding, skipped []string, now time.Time) error {
 	open, err := e.Store.OpenRecords(ctx)
 	if err != nil {
 		return fmt.Errorf("load open findings: %w", err)
 	}
-	// Every enabled check ran, so nothing is skipped. Records of checks that
-	// were disabled since the last run are therefore resolved, not left
-	// "firing" forever.
-	changes := e.reconcile(open, findings, nil, now)
+	// Problems of checks that could not run this time stay as they are.
+	// Problems of checks that are disabled (or gone) are not in the skipped
+	// list and are resolved, not left "firing" forever.
+	changes := e.reconcile(open, findings, skipped, now)
 	if err := e.Store.Apply(ctx, changes); err != nil {
 		return fmt.Errorf("save findings: %w", err)
 	}
@@ -263,9 +314,21 @@ func (e *Engine) newRecord(f checks.Finding, now time.Time) store.Record {
 // refresh updates a known problem with the latest details and lets it fire
 // once it has lasted long enough.
 func (e *Engine) refresh(record store.Record, f checks.Finding, now time.Time) store.Record {
+	escalated := record.Severity == checks.Warning && f.Severity == checks.Critical
 	record.Severity = f.Severity
+	record.Reason = f.Reason
 	record.Message = f.Message
 	record.LastSeen = now
+
+	// A problem that gets worse is still the same problem, so it is not
+	// resolved and restarted. But somebody who read "warning" must hear that
+	// it is critical now: clearing the marker lists it as new again. If it is
+	// still pending, it is simply reported with the higher severity when it
+	// fires. Getting better again is not reported; the resolution will be.
+	if escalated && record.State == store.StateFiring {
+		record.FiringNotifiedAt = nil
+		e.Logger.Info("finding escalated", "key", f.Key, "severity", f.Severity, "reason", f.Reason)
+	}
 	if record.State == store.StatePending && now.Sub(record.FirstSeen) >= e.AlertAfter {
 		record.State = store.StateFiring
 		record.FiringAt = &now

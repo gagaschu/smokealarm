@@ -150,3 +150,143 @@ func TestPVCPendingRespectsIgnore(t *testing.T) {
 		})
 	}
 }
+
+const gib = int64(1) << 30
+
+func TestPVCUsageThresholds(t *testing.T) {
+	const capacity = 1000
+	tests := []struct {
+		name       string
+		used       int64
+		wantReason string
+		wantSev    Severity
+	}{
+		{"empty", 0, "", ""},
+		{"84 percent", 840, "", ""},
+		{"exactly 85 percent", 850, "", ""},
+		{"just above 85 percent", 851, "VolumeAlmostFull", Warning},
+		{"90 percent", 900, "VolumeAlmostFull", Warning},
+		{"exactly 95 percent", 950, "VolumeAlmostFull", Warning},
+		{"just above 95 percent", 951, "VolumeFull", Critical},
+		{"completely full", 1000, "VolumeFull", Critical},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			snap := &Snapshot{Now: testNow, VolumeUsage: map[string]VolumeUsage{
+				"media/data": {UsedBytes: tt.used, CapacityBytes: capacity},
+			}}
+			got := PVCUsage(snap, testOptions())
+
+			if tt.wantReason == "" {
+				if len(got) != 0 {
+					t.Fatalf("got %+v, want none", got)
+				}
+				return
+			}
+			wantKey := "pvc-usage/PersistentVolumeClaim/media/data/usage"
+			if len(got) != 1 || got[0].Key != wantKey || got[0].Severity != tt.wantSev {
+				t.Errorf("got %+v, want %s %s", got, tt.wantSev, wantKey)
+			}
+		})
+	}
+}
+
+func TestPVCUsageMessage(t *testing.T) {
+	snap := &Snapshot{Now: testNow, VolumeUsage: map[string]VolumeUsage{
+		"media/data": {UsedBytes: 9*gib + gib/2 + 1, CapacityBytes: 10 * gib},
+	}}
+	got := PVCUsage(snap, testOptions())
+	want := "95.0% full (9.5 GiB of 10.0 GiB used)"
+	if len(got) != 1 || got[0].Message != want {
+		t.Errorf("got %+v, want message %q", got, want)
+	}
+}
+
+func TestPVCUsageSkipsInvalidEntries(t *testing.T) {
+	snap := &Snapshot{Now: testNow, VolumeUsage: map[string]VolumeUsage{
+		"media/zero-capacity": {UsedBytes: 10, CapacityBytes: 0},
+		"no-slash":            {UsedBytes: 99, CapacityBytes: 100},
+	}}
+	if got := PVCUsage(snap, testOptions()); len(got) != 0 {
+		t.Errorf("got %+v, want none", got)
+	}
+}
+
+func TestPVCUsageOutputOrderIsStable(t *testing.T) {
+	full := VolumeUsage{UsedBytes: 99, CapacityBytes: 100}
+	snap := &Snapshot{Now: testNow, VolumeUsage: map[string]VolumeUsage{
+		"b/two": full, "a/one": full, "c/three": full,
+	}}
+	got := PVCUsage(snap, testOptions())
+	if len(got) != 3 || got[0].Object.Namespace != "a" || got[1].Object.Namespace != "b" || got[2].Object.Namespace != "c" {
+		t.Errorf("findings are not sorted by volume: %+v", got)
+	}
+}
+
+func TestPVCUsageRespectsIgnore(t *testing.T) {
+	full := map[string]VolumeUsage{"media/data": {UsedBytes: 99, CapacityBytes: 100}}
+	annotated := newPVC(corev1.ClaimBound, time.Hour, nil)
+	annotated.Annotations = map[string]string{IgnoreAnnotation: "true"}
+	ignoredNamespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+		Name: "media", Annotations: map[string]string{IgnoreAnnotation: "true"},
+	}}
+
+	tests := []struct {
+		name string
+		snap *Snapshot
+		opts Options
+		want int
+	}{
+		{"not ignored", &Snapshot{VolumeUsage: full}, testOptions(), 1},
+		{"claim annotation", &Snapshot{VolumeUsage: full, PVCs: []*corev1.PersistentVolumeClaim{annotated}}, testOptions(), 0},
+		{"namespace annotation", &Snapshot{VolumeUsage: full, Namespaces: []*corev1.Namespace{ignoredNamespace}}, testOptions(), 0},
+		{"namespace in env list", &Snapshot{VolumeUsage: full}, Options{IgnoredNamespaces: []string{"media"}}, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.snap.Now = testNow
+			if got := len(PVCUsage(tt.snap, tt.opts)); got != tt.want {
+				t.Errorf("got %d findings, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFormatBytes(t *testing.T) {
+	tests := []struct {
+		n    int64
+		want string
+	}{
+		{0, "0 B"},
+		{1023, "1023 B"},
+		{1024, "1.0 KiB"},
+		{5 * 1024 * 1024, "5.0 MiB"},
+		{10 * gib, "10.0 GiB"},
+		{3 * gib * 1024, "3.0 TiB"},
+	}
+	for _, tt := range tests {
+		if got := formatBytes(tt.n); got != tt.want {
+			t.Errorf("formatBytes(%d) = %q, want %q", tt.n, got, tt.want)
+		}
+	}
+}
+
+func TestPVCUsageKeyIsStableAcrossSeverities(t *testing.T) {
+	keyFor := func(used int64) (string, Severity, string) {
+		snap := &Snapshot{Now: testNow, VolumeUsage: map[string]VolumeUsage{"media/data": {UsedBytes: used, CapacityBytes: 100}}}
+		got := PVCUsage(snap, testOptions())
+		if len(got) != 1 {
+			t.Fatalf("used %d: got %+v, want one finding", used, got)
+		}
+		return got[0].Key, got[0].Severity, got[0].Reason
+	}
+
+	warnKey, warnSeverity, warnReason := keyFor(90)
+	critKey, critSeverity, critReason := keyFor(97)
+	if warnSeverity != Warning || critSeverity != Critical || warnReason != "VolumeAlmostFull" || critReason != "VolumeFull" {
+		t.Fatalf("got %s/%s and %s/%s; the reason must still say what is going on", warnSeverity, warnReason, critSeverity, critReason)
+	}
+	if warnKey != critKey {
+		t.Errorf("key changed with the severity: %q vs %q", warnKey, critKey)
+	}
+}

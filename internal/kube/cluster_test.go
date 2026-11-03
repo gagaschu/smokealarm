@@ -86,7 +86,7 @@ func TestBuildSnapshotReadsFromCache(t *testing.T) {
 		&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Namespace: "media", Name: "pvc"}},
 		&storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: "local-path"}},
 	)
-	cluster, err := New(client, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	cluster, err := New(client, nil, Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestBuildSnapshotReadsFromCache(t *testing.T) {
 	}
 
 	now := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
-	snap := cluster.BuildSnapshot(now)
+	snap := cluster.BuildSnapshot(ctx, now)
 
 	if !snap.Now.Equal(now) {
 		t.Errorf("Now = %v, want %v", snap.Now, now)

@@ -368,3 +368,41 @@ func TestPing(t *testing.T) {
 		t.Error("Ping on a closed database must fail")
 	}
 }
+
+func TestUpdateWritesReasonAndNotifiedMarker(t *testing.T) {
+	s, _ := openTemp(t)
+	ctx := context.Background()
+
+	firingAt := testNow
+	record := newRecord("a", StateFiring, testNow)
+	record.FiringAt = &firingAt
+	if err := s.Apply(ctx, Changes{Insert: []Record{record}}); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	open, _ := s.OpenRecords(ctx)
+	if err := s.MarkFiringNotified(ctx, []int64{open[0].ID}, testNow); err != nil {
+		t.Fatal(err)
+	}
+
+	// The problem gets worse: new severity and reason, reported again.
+	open, _ = s.OpenRecords(ctx)
+	if open[0].FiringNotifiedAt == nil {
+		t.Fatal("the marker was not stored")
+	}
+	changed := open[0]
+	changed.Severity, changed.Reason, changed.FiringNotifiedAt = checks.Warning, "OtherReason", nil
+	if err := s.Apply(ctx, Changes{Update: []Record{changed}}); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+
+	got, _ := s.OpenRecords(ctx)
+	if got[0].Reason != "OtherReason" || got[0].Severity != checks.Warning {
+		t.Errorf("got reason %q, severity %q; want the update stored", got[0].Reason, got[0].Severity)
+	}
+	if got[0].FiringNotifiedAt != nil {
+		t.Error("the notified marker was not reset")
+	}
+	if unnotified, _ := s.Unnotified(ctx); len(unnotified) != 1 {
+		t.Errorf("%d unreported records, want the changed one to be reported again", len(unnotified))
+	}
+}

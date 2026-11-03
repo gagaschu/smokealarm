@@ -63,7 +63,7 @@ func TestWorkloadReplicas(t *testing.T) {
 						f, tt.wantReason, tt.wantSeverty, tt.wantMessage)
 				}
 			}
-			if got[0].Key != "workload-replicas/Deployment/media/web/"+tt.wantReason {
+			if got[0].Key != "workload-replicas/Deployment/media/web/replicas" {
 				t.Errorf("unexpected key %q", got[0].Key)
 			}
 		})
@@ -127,5 +127,32 @@ func TestWorkloadReplicasRespectsIgnore(t *testing.T) {
 				t.Errorf("got %d findings, want %d", got, tt.want)
 			}
 		})
+	}
+}
+
+// A workload that gets worse is still the same problem: the key must not
+// change with the severity, otherwise the engine would see one problem
+// disappear and a new one start.
+func TestWorkloadReplicasKeyIsStableAcrossSeverities(t *testing.T) {
+	keyFor := func(available int32) (string, Severity) {
+		snap := &Snapshot{Deployments: []*appsv1.Deployment{{
+			ObjectMeta: workloadMeta(),
+			Spec:       appsv1.DeploymentSpec{Replicas: int32Ptr(3)},
+			Status:     appsv1.DeploymentStatus{AvailableReplicas: available},
+		}}}
+		got := WorkloadReplicas(snap, testOptions())
+		if len(got) != 1 {
+			t.Fatalf("available %d: got %+v, want one finding", available, got)
+		}
+		return got[0].Key, got[0].Severity
+	}
+
+	warnKey, warnSeverity := keyFor(1)
+	critKey, critSeverity := keyFor(0)
+	if warnSeverity != Warning || critSeverity != Critical {
+		t.Fatalf("severities = %s, %s; want warning, critical", warnSeverity, critSeverity)
+	}
+	if warnKey != critKey {
+		t.Errorf("key changed with the severity: %q vs %q", warnKey, critKey)
 	}
 }

@@ -123,7 +123,7 @@ Fixed values (constants, per spec): OOM window 15m, restart window 1h, PVC usage
 | argocd.go | `argocd-health` | critical, Degraded / Missing |
 | | `argocd-sync` | warning, OutOfSync |
 
-When severity escalates, the reason changes on purpose (so the key changes too): the escalation goes out as a new problem, and the old finding resolves. This keeps the state logic simple: one key always has one severity.
+A problem that can get worse while it lasts (`pvc-usage`, `cert-expiry`, `workload-replicas`) is **one finding with one key**: the key is built from a stable part (`usage`, `expiry`, `replicas`), while `Reason` and `Severity` change with how bad it is (`VolumeAlmostFull` → `VolumeFull`). The engine updates the record in place and, if a firing problem becomes critical, clears its "reported" marker so it is announced again as a new CRITICAL problem (with the original start time). No "resolved" notification and no pending gap; getting better again is silent, the later resolution is reported. Checks use `newEscalatingFinding` for this; all other checks use `newFinding`, where the reason is part of the key.
 
 ### kube
 ```go
@@ -137,10 +137,10 @@ type Cluster struct { // created in main
 }
 type Features struct{ CertManager, ArgoCD bool } // from the discovery API at startup
 
-func New(cfg Config, logger) (*Cluster, error)
+func New(client, dynamicClient, Options{Features, VolumeStats}, logger) (*Cluster, error)
 func (c *Cluster) Start(ctx) error          // start informers
 func (c *Cluster) Synced() bool             // for /readyz
-func (c *Cluster) BuildSnapshot(ctx, now, withVolumeStats bool) (*checks.Snapshot, []error)
+func (c *Cluster) BuildSnapshot(ctx, now) *checks.Snapshot // Snapshot.Skipped says which checks could not get their data
 ```
 - `SetTransform` on every informer: strip `managedFields` and the `kubectl.kubernetes.io/last-applied-configuration` annotation; for Pods also strip `spec.volumes`/`env` etc.
 - Events informer only for `type=Warning` (field selector).
@@ -332,7 +332,7 @@ Every phase: own branch from main, unit tests with fake objects, `go build`/`go 
 ## 7. Deliberate deviations / decisions
 - **`KUBECONFIG` without prefix:** it is the standard variable used by kubectl/client-go; a separate `SMOKEALARM_KUBECONFIG` would only add confusion.
 - **`notify.Log` as a second notifier:** a real second implementation (used when mail is off, and in phases 1–3), so the interface is not built "just in case".
-- **Escalation = new key:** warning→critical comes with its own reason (see table) instead of an in-place severity change.
+- **Escalation = same problem (changed after phase 6):** the first design (warning→critical as a new key) showed "All good" and sent a "resolved" mail while a volume was getting fuller. Now an escalation updates the existing record and is reported again; see the paragraph under the check table. Keys of the three affected checks changed (`…/usage`, `…/expiry`, `…/replicas`); no migration, because v0.1 is unreleased and old rows resolve on the next run.
 - **CronJob job failures are reported on the CronJob**, so the key stays stable across job runs.
 - **Only check-specific thresholds marked "Default" in the spec are configurable**; all other values are constants (spec: "no configuration effort").
 - **Rate limiting per client IP, in memory:** behind an ingress this effectively becomes one shared limit for everyone — acceptable for a single admin user.
@@ -352,3 +352,9 @@ Every phase: own branch from main, unit tests with fake objects, `go build`/`go 
 - **`hash-password` reads stdin with echo on (phase 5):** hiding the typed password needs `golang.org/x/term`, which is not on the allowed list. Use `read -s PW; printf '%s' "$PW" | smokealarm hash-password`.
 - **Sessions (phase 5):** fixed expiry (no sliding renewal); only the SHA-256 hash of the session id is stored; the login handler never accepts a redirect target. The rate limit uses `RemoteAddr` only, so behind an ingress all clients share one limit.
 - **Security headers (phase 5):** CSP `default-src 'self'` (the pages need no inline script or style), `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Cache-Control: no-store` on pages.
+- **Phase 6, skipping checks:** two kinds. *Static*: checks whose CRDs are missing (`Check.Requires`, detected once at startup) are not in `Engine.Checks` and show up as skipped with the reason; problems left over from an earlier run are resolved normally. *Temporary*: `Snapshot.Skipped` (check name → reason) is set by the data collection; the engine does not run those checks and leaves their open problems untouched (this is what the `skipped` parameter of `reconcile` is for). A change in the skipped set is logged once, not every run.
+- **Phase 6, `pvc-usage`:** only Ready nodes are asked for kubelet stats. If any of them fails (403 or other), the whole check is skipped for that run, because a missing node would make its full volumes look "fine again" and resolve their problems. NotReady nodes are not asked and do not cause a skip; their volume findings may resolve (`node-not-ready` reports the node). Without the check enabled no kubelet request is made and `nodes/proxy` is not needed.
+- **Phase 6, memory:** the dynamic informers keep only the fields the checks read (Argo CD Applications are large).
+- **Phase 6, RBAC list for the Helm chart (phase 7), all get/list/watch unless noted:** namespaces, pods, events, nodes, deployments, statefulsets, daemonsets, jobs, cronjobs, persistentvolumeclaims, storageclasses; `nodes/proxy` (`get`, only if `pvc-usage` is enabled); `certificates.cert-manager.io` and `applications.argoproj.io` (each behind its own Helm switch). Discovery needs no extra rule.
+- **Phase 6, CRD detection:** a 404 means "not installed"; any other discovery error aborts startup instead of silently switching checks off. CRDs installed later are noticed after a restart.
+- **Phase 6, `pvc-usage` and `local-path`:** the kubelet reports the usage of the filesystem the volume lives on. For k3s `local-path` volumes that is the node's disk (the requested size is not enforced), so every such claim shows the same numbers and the check only alarms when the node disk is nearly full. It is meaningful for volumes with their own filesystem (Longhorn, Ceph, iSCSI/block volumes, a dedicated mount). To test it, use a static `local` PV on a small tmpfs (see the PR description).

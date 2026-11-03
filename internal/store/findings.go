@@ -96,8 +96,10 @@ func (s *Store) Namespaces(ctx context.Context) ([]string, error) {
 }
 
 // Apply writes all changes or none. Update only touches the columns that
-// change during a life cycle (severity, message, state, last_seen, firing_at,
-// resolved_at); the notified markers have their own methods.
+// change during a life cycle (severity, reason, message, state, last_seen,
+// firing_at, resolved_at). firing_notified_at is written too, so that a
+// problem that got worse can be reported again; the markers are otherwise set
+// by MarkFiringNotified and MarkResolvedNotified.
 func (s *Store) Apply(ctx context.Context, changes Changes) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -118,9 +120,11 @@ func (s *Store) Apply(ctx context.Context, changes Changes) error {
 	}
 	for _, r := range changes.Update {
 		_, err := tx.ExecContext(ctx, `UPDATE findings
-			SET severity = ?, message = ?, state = ?, last_seen = ?, firing_at = ?, resolved_at = ?
+			SET severity = ?, reason = ?, message = ?, state = ?, last_seen = ?, firing_at = ?, resolved_at = ?,
+			    firing_notified_at = ?
 			WHERE id = ?`,
-			r.Severity, r.Message, r.State, unix(r.LastSeen), nullableUnix(r.FiringAt), nullableUnix(r.ResolvedAt), r.ID)
+			r.Severity, r.Reason, r.Message, r.State, unix(r.LastSeen), nullableUnix(r.FiringAt), nullableUnix(r.ResolvedAt),
+			nullableUnix(r.FiringNotifiedAt), r.ID)
 		if err != nil {
 			return fmt.Errorf("update finding %s: %w", r.Key, err)
 		}

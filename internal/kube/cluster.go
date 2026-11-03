@@ -8,6 +8,8 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/dynamic/dynamicinformer"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
@@ -38,13 +40,34 @@ type Cluster struct {
 	cronJobs       cache.SharedIndexInformer
 	pvcs           cache.SharedIndexInformer
 	storageClasses cache.SharedIndexInformer
+
+	// Only set if the CRDs exist (see Features).
+	dynamicFactory dynamicinformer.DynamicSharedInformerFactory
+	certificates   cache.SharedIndexInformer
+	applications   cache.SharedIndexInformer
+
+	// volumeStats switches the kubelet stats collection on. fetchStats reads
+	// the stats of one node; tests replace it.
+	volumeStats bool
+	fetchStats  statsFetcher
+}
+
+// Options tells the cluster which optional parts to use.
+type Options struct {
+	Features Features
+	// VolumeStats collects the volume usage from the kubelets (needs the RBAC
+	// permission nodes/proxy). Leave it off if pvc-usage is disabled.
+	VolumeStats bool
 }
 
 // New prepares the informers but does not start them; call Start for that.
-// The client is passed in so tests can use a fake clientset.
-func New(client kubernetes.Interface, logger *slog.Logger) (*Cluster, error) {
+// The clients are passed in so tests can use fakes. The dynamic client may be
+// nil if no optional feature is used.
+func New(client kubernetes.Interface, dynamicClient dynamic.Interface, options Options, logger *slog.Logger) (*Cluster, error) {
 	c := &Cluster{
 		logger:      logger,
+		volumeStats: options.VolumeStats,
+		fetchStats:  kubeletStatsFetcher(client),
 		coreFactory: informers.NewSharedInformerFactory(client, resyncPeriod),
 		eventFactory: informers.NewSharedInformerFactoryWithOptions(client, resyncPeriod,
 			informers.WithTweakListOptions(onlyWarnings)),
@@ -67,16 +90,58 @@ func New(client kubernetes.Interface, logger *slog.Logger) (*Cluster, error) {
 			return nil, fmt.Errorf("set informer transform: %w", err)
 		}
 	}
+
+	if err := c.addCustomResources(dynamicClient, options.Features); err != nil {
+		return nil, err
+	}
 	return c, nil
 }
 
-// allInformers lists every informer, for the steps that treat them alike.
+// addCustomResources creates informers for the optional CRDs that exist.
+func (c *Cluster) addCustomResources(dynamicClient dynamic.Interface, features Features) error {
+	if !features.CertManager && !features.ArgoCD {
+		return nil
+	}
+	if dynamicClient == nil {
+		return errors.New("a dynamic client is needed for cert-manager or Argo CD")
+	}
+	c.dynamicFactory = dynamicinformer.NewDynamicSharedInformerFactory(dynamicClient, resyncPeriod)
+
+	if features.CertManager {
+		c.certificates = c.dynamicFactory.ForResource(certificateGVR()).Informer()
+		if err := c.certificates.SetTransform(trimCertificate); err != nil {
+			return fmt.Errorf("set certificate transform: %w", err)
+		}
+	}
+	if features.ArgoCD {
+		c.applications = c.dynamicFactory.ForResource(applicationGVR()).Informer()
+		if err := c.applications.SetTransform(trimApplication); err != nil {
+			return fmt.Errorf("set application transform: %w", err)
+		}
+	}
+	return nil
+}
+
+// allInformers lists the typed informers, which share one transform.
 func (c *Cluster) allInformers() []cache.SharedIndexInformer {
 	return []cache.SharedIndexInformer{
 		c.namespaces, c.pods, c.events,
 		c.deployments, c.statefulSets, c.daemonSets,
 		c.nodes, c.jobs, c.cronJobs, c.pvcs, c.storageClasses,
 	}
+}
+
+// syncedInformers lists every informer that must be synced, including the
+// optional custom resources that are in use.
+func (c *Cluster) syncedInformers() []cache.SharedIndexInformer {
+	informers := c.allInformers()
+	if c.certificates != nil {
+		informers = append(informers, c.certificates)
+	}
+	if c.applications != nil {
+		informers = append(informers, c.applications)
+	}
+	return informers
 }
 
 // onlyWarnings keeps Normal events out of the cache; they are the vast
@@ -90,13 +155,16 @@ func onlyWarnings(opts *metav1.ListOptions) {
 func (c *Cluster) Start(ctx context.Context) {
 	c.coreFactory.Start(ctx.Done())
 	c.eventFactory.Start(ctx.Done())
+	if c.dynamicFactory != nil {
+		c.dynamicFactory.Start(ctx.Done())
+	}
 }
 
 // WaitForSync blocks until all caches hold the initial list of objects.
 // Running checks before that would report objects as missing.
 func (c *Cluster) WaitForSync(ctx context.Context) error {
 	var synced []cache.InformerSynced
-	for _, informer := range c.allInformers() {
+	for _, informer := range c.syncedInformers() {
 		synced = append(synced, informer.HasSynced)
 	}
 	if !cache.WaitForCacheSync(ctx.Done(), synced...) {
@@ -108,7 +176,7 @@ func (c *Cluster) WaitForSync(ctx context.Context) error {
 
 // Synced reports whether the caches are filled. It backs /readyz.
 func (c *Cluster) Synced() bool {
-	for _, informer := range c.allInformers() {
+	for _, informer := range c.syncedInformers() {
 		if !informer.HasSynced() {
 			return false
 		}
