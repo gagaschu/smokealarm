@@ -46,8 +46,12 @@ type Engine struct {
 	// by the snapshot (see checks.Snapshot.Skipped).
 	SkippedChecks []SkippedCheck
 
-	Store    *store.Store
-	Notifier notify.Notifier
+	Store *store.Store
+	// Notifiers are the notification targets. Each one remembers on its own
+	// what it was told, so a target that fails is retried without sending
+	// the message to the others again. There must be at least one (main uses
+	// notify.Log when nothing is configured).
+	Notifiers []notify.Notifier
 	// BaseURL is the link to the web UI that notifications point to. It may
 	// be empty.
 	BaseURL string
@@ -56,9 +60,10 @@ type Engine struct {
 	Now    func() time.Time
 	Logger *slog.Logger
 
-	mu         sync.Mutex // protects status and runSkipped, which the web server reads
+	mu         sync.Mutex // protects status, runSkipped and targets, which the web server reads
 	status     Status
-	runSkipped map[string]string // checks that could not run in the last run
+	runSkipped map[string]string       // checks that could not run in the last run
+	targets    map[string]TargetStatus // by Notifier.Name
 
 	// previousSkipped is what was skipped in the last run, to log only when
 	// that changes. Only RunOnce touches it.
@@ -82,14 +87,21 @@ type CheckStatus struct {
 	Reason string // why the check is not active; empty if it is
 }
 
+// TargetStatus is one line of the target list on the status page.
+type TargetStatus struct {
+	Name        string // Notifier.Name
+	Description string // Notifier.Description, without secrets
+	LastSentAt  time.Time
+	LastError   string    // empty if the last send worked
+	LastErrorAt time.Time // zero if there is no error
+}
+
 // Status is what the engine reports about itself, for the status page.
 type Status struct {
-	LastRun           time.Time // zero before the first run has finished
-	LastRunError      string    // empty if the last run had no errors
-	Checks            []CheckStatus
-	NotifierName      string
-	LastNotifyError   string    // empty if the last send worked
-	LastNotifyErrorAt time.Time // zero if there is no error
+	LastRun      time.Time // zero before the first run has finished
+	LastRunError string    // empty if the last run had no errors
+	Checks       []CheckStatus
+	Targets      []TargetStatus // in the order of Engine.Notifiers
 }
 
 // Status returns a copy of the current status.
@@ -97,8 +109,13 @@ func (e *Engine) Status() Status {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	s := e.status
-	s.NotifierName = e.Notifier.Name()
 	s.Checks = e.checkStatuses()
+	for _, n := range e.Notifiers {
+		target := e.targets[n.Name()]
+		target.Name = n.Name()
+		target.Description = n.Description()
+		s.Targets = append(s.Targets, target)
+	}
 	return s
 }
 
@@ -183,19 +200,25 @@ func (e *Engine) setRunResult(finished time.Time, skipped map[string]string, err
 	}
 }
 
-// setNotifyResult remembers whether the last send worked. The error is
-// cleared by the next success, so the status shows the current situation and
-// not an old incident.
-func (e *Engine) setNotifyResult(err error, now time.Time) {
+// setNotifyResult remembers whether the last send to a target worked. The
+// error is cleared by the next success, so the status shows the current
+// situation and not an old incident.
+func (e *Engine) setNotifyResult(target string, err error, now time.Time) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if err == nil {
-		e.status.LastNotifyError = ""
-		e.status.LastNotifyErrorAt = time.Time{}
-		return
+	if e.targets == nil {
+		e.targets = map[string]TargetStatus{}
 	}
-	e.status.LastNotifyError = err.Error()
-	e.status.LastNotifyErrorAt = now
+	status := e.targets[target]
+	if err == nil {
+		status.LastSentAt = now
+		status.LastError = ""
+		status.LastErrorAt = time.Time{}
+	} else {
+		status.LastError = err.Error()
+		status.LastErrorAt = now
+	}
+	e.targets[target] = status
 }
 
 // Run executes one pass immediately and then one per interval until the
@@ -388,48 +411,64 @@ func (e *Engine) finishDowntimes(ctx context.Context, unknown []string, now time
 	return nil
 }
 
-// notify sends one combined notification for everything that has not been
-// reported yet. Records are marked as reported only after the notifier
-// succeeded, so a failed send is simply tried again at the next run, also
-// after a restart. Reminders for critical problems that are due go into the
-// same notification, except for checks whose state is unknown. Of an
-// acknowledged problem only the end is reported; the store leaves out the rest.
-// A problem in a downtime sends nothing at all.
+// notify tells every target what it has not been told yet. The targets are
+// independent: one that fails does not stop the others, and only it is tried
+// again at the next run.
 func (e *Engine) notify(ctx context.Context, unknown []string, now time.Time) error {
-	records, err := e.Store.Unnotified(ctx)
-	if err != nil {
-		return fmt.Errorf("load unreported findings: %w", err)
-	}
 	silenced, err := e.Store.DowntimeKeys(ctx)
 	if err != nil {
 		return fmt.Errorf("load downtimes: %w", err)
 	}
-	due, err := e.dueReminders(ctx, unknown, silenced, now)
+	var errs []error
+	for _, target := range e.Notifiers {
+		if err := e.notifyTarget(ctx, target, unknown, silenced, now); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// notifyTarget sends one combined notification to one target, with everything
+// it has not been told yet. Records are marked as reported to this target only
+// after it succeeded, so a failed send is simply tried again at the next run,
+// also after a restart. Reminders for critical problems that are due go into
+// the same notification, except for checks whose state is unknown. Of an
+// acknowledged problem only the end is reported; the store leaves out the rest.
+// A problem in a downtime sends nothing at all.
+func (e *Engine) notifyTarget(ctx context.Context, target notify.Notifier, unknown []string,
+	silenced map[string]bool, now time.Time) error {
+	name := target.Name()
+	records, err := e.Store.Unnotified(ctx, name)
 	if err != nil {
-		return fmt.Errorf("load findings due for a reminder: %w", err)
+		return fmt.Errorf("load findings not reported via %s: %w", name, err)
+	}
+	due, err := e.dueReminders(ctx, name, unknown, silenced, now)
+	if err != nil {
+		return fmt.Errorf("load findings due for a reminder via %s: %w", name, err)
 	}
 
 	r := e.buildReport(records, due, silenced)
 	n := r.notification
-	if err := e.Store.MarkResolvedNotified(ctx, r.silentIDs, now); err != nil {
-		return fmt.Errorf("mark silently resolved findings: %w", err)
+	if err := e.Store.MarkResolvedNotified(ctx, name, r.silentIDs, now); err != nil {
+		return fmt.Errorf("mark silently resolved findings for %s: %w", name, err)
 	}
 	if len(n.New) == 0 && len(n.Reminders) == 0 && len(n.Resolved) == 0 {
 		return nil
 	}
 
-	err = e.Notifier.Send(ctx, n)
-	e.setNotifyResult(err, now)
+	err = target.Send(ctx, n)
+	e.setNotifyResult(name, err, now)
 	if err != nil {
-		return fmt.Errorf("send notification via %s: %w", e.Notifier.Name(), err)
+		return fmt.Errorf("send notification via %s: %w", target.Description(), err)
 	}
-	e.Logger.Info("notification sent", "notifier", e.Notifier.Name(), "new", len(n.New), "reminders", len(n.Reminders), "resolved", len(n.Resolved))
+	e.Logger.Info("notification sent", "target", target.Description(),
+		"new", len(n.New), "reminders", len(n.Reminders), "resolved", len(n.Resolved))
 
-	if err := e.Store.MarkFiringNotified(ctx, r.firingIDs, now); err != nil {
-		return fmt.Errorf("mark new findings as reported: %w", err)
+	if err := e.Store.MarkFiringNotified(ctx, name, r.firingIDs, now); err != nil {
+		return fmt.Errorf("mark new findings as reported via %s: %w", name, err)
 	}
-	if err := e.Store.MarkResolvedNotified(ctx, r.resolvedIDs, now); err != nil {
-		return fmt.Errorf("mark resolved findings as reported: %w", err)
+	if err := e.Store.MarkResolvedNotified(ctx, name, r.resolvedIDs, now); err != nil {
+		return fmt.Errorf("mark resolved findings as reported via %s: %w", name, err)
 	}
 	return nil
 }
@@ -479,15 +518,16 @@ func (e *Engine) buildReport(records, due []store.Record, silenced map[string]bo
 	return r
 }
 
-// dueReminders returns the critical problems whose last report is at least
-// one repeat interval old. Problems of checks whose state is unknown are left
+// dueReminders returns the critical problems whose last report to the target
+// is at least one repeat interval old. Problems of checks whose state is unknown are left
 // out, because a reminder would claim they still exist; they are reminded of
 // as soon as the check runs again. Problems in a downtime are left out too.
-func (e *Engine) dueReminders(ctx context.Context, unknown []string, silenced map[string]bool, now time.Time) ([]store.Record, error) {
+func (e *Engine) dueReminders(ctx context.Context, target string, unknown []string,
+	silenced map[string]bool, now time.Time) ([]store.Record, error) {
 	if e.CriticalRepeatInterval <= 0 {
 		return nil, nil
 	}
-	records, err := e.Store.CriticalDueForReminder(ctx, now.Add(-e.CriticalRepeatInterval))
+	records, err := e.Store.CriticalDueForReminder(ctx, target, now.Add(-e.CriticalRepeatInterval))
 	if err != nil {
 		return nil, err
 	}

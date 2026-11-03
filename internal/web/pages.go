@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gagaschu/smokealarm/internal/checks"
+	"github.com/gagaschu/smokealarm/internal/engine"
 	"github.com/gagaschu/smokealarm/internal/store"
 )
 
@@ -85,13 +86,20 @@ type historyView struct {
 }
 
 type statusView struct {
-	LastRun           string
-	LastRunError      string
-	Checks            []checkView
-	MailConfigured    bool
-	NotifierName      string
-	LastNotifyError   string
-	LastNotifyErrorAt string
+	LastRun      string
+	LastRunError string
+	Checks       []checkView
+	Targets      []targetView
+	LogOnly      bool // no notification target is configured
+}
+
+// targetView is one notification target. The description never contains a
+// secret; the engine gets it from the notifier.
+type targetView struct {
+	Description string
+	LastSentAt  string // empty if nothing was sent since the start
+	LastError   string
+	LastErrorAt string
 }
 
 type checkView struct {
@@ -343,23 +351,38 @@ func (s *Server) status(w http.ResponseWriter, _ *http.Request) {
 	st := s.Status()
 
 	view := statusView{
-		LastRunError:    st.LastRunError,
-		MailConfigured:  st.NotifierName == "mail",
-		NotifierName:    st.NotifierName,
-		LastNotifyError: st.LastNotifyError,
+		LastRun:      formatOptionalTime(st.LastRun),
+		LastRunError: st.LastRunError,
+		Targets:      targetViews(st.Targets),
 	}
-	if !st.LastRun.IsZero() {
-		view.LastRun = st.LastRun.UTC().Format(timeFormat)
-	}
-	if !st.LastNotifyErrorAt.IsZero() {
-		view.LastNotifyErrorAt = st.LastNotifyErrorAt.UTC().Format(timeFormat)
-	}
+	view.LogOnly = len(st.Targets) == 1 && st.Targets[0].Name == "log"
 	for _, c := range st.Checks {
 		view.Checks = append(view.Checks, checkView{Name: c.Name, Active: c.Active, Reason: c.Reason})
 	}
 	s.render(w, http.StatusOK, "status", page{
 		Title: "Status", Active: "status", ShowNav: true, Refresh: true, Status: view,
 	})
+}
+
+func targetViews(targets []engine.TargetStatus) []targetView {
+	var views []targetView
+	for _, t := range targets {
+		views = append(views, targetView{
+			Description: t.Description,
+			LastSentAt:  formatOptionalTime(t.LastSentAt),
+			LastError:   t.LastError,
+			LastErrorAt: formatOptionalTime(t.LastErrorAt),
+		})
+	}
+	return views
+}
+
+// formatOptionalTime is the time in UTC, or empty for the zero time.
+func formatOptionalTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(timeFormat)
 }
 
 // objectLabel is "Pod media/jellyfin", or "Node pi-1" for cluster-scoped objects.

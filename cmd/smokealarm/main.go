@@ -221,7 +221,7 @@ func newEngine(cfg config.Config, logger *slog.Logger, cluster *kube.Cluster, db
 		Retention:              cfg.Retention,
 		SkippedChecks:          skipped,
 		Store:                  db,
-		Notifier:               newNotifier(cfg, logger),
+		Notifiers:              []notify.Notifier{newNotifier(cfg, logger)},
 		BaseURL:                cfg.BaseURL,
 		Now:                    time.Now,
 		Logger:                 logger,

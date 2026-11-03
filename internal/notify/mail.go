@@ -50,8 +50,11 @@ type Mail struct {
 	Now func() time.Time
 }
 
-// Name identifies the notifier in log messages.
+// Name identifies the target.
 func (m *Mail) Name() string { return "mail" }
+
+// Description names the mail server, which is not a secret.
+func (m *Mail) Description() string { return "mail (" + m.Host + ")" }
 
 // Send delivers one mail with all changes. Errors never contain the password.
 func (m *Mail) Send(ctx context.Context, n Notification) error {

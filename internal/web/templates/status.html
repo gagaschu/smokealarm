@@ -13,17 +13,28 @@
     <dd class="error">{{.Status.LastRunError}}</dd>
   </div>
   {{end}}
-  <div>
-    <dt>Notifications</dt>
-    <dd>{{if .Status.MailConfigured}}<span class="pill ok">mail is configured</span>{{else}}<span class="pill">mail is not configured (notifications go to the log only)</span>{{end}}</dd>
-  </div>
-  {{if .Status.LastNotifyError}}
-  <div>
-    <dt>Last sending error</dt>
-    <dd class="error">{{.Status.LastNotifyError}} <span class="footnote">({{.Status.LastNotifyErrorAt}})</span></dd>
-  </div>
-  {{end}}
 </dl>
+
+<h2>Notifications</h2>
+{{if .Status.LogOnly}}
+<p class="footnote">No notification target is configured, so notifications go to the log only. See the README for mail, webhook, ntfy, Telegram, Slack and Teams.</p>
+{{else}}
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Target</th><th>State</th><th>Last sent</th><th>Last error</th></tr></thead>
+  <tbody>
+    {{range .Status.Targets}}
+    <tr>
+      <td class="nowrap mono" data-label="Target">{{.Description}}</td>
+      <td class="nowrap" data-label="State">{{if .LastError}}<span class="pill alert">sending failed</span>{{else}}<span class="pill ok">ok</span>{{end}}</td>
+      <td class="nowrap time" data-label="Last sent">{{if .LastSentAt}}{{.LastSentAt}}{{else}}<span class="footnote">nothing since the start</span>{{end}}</td>
+      <td class="wrap" data-label="Last error">{{if .LastError}}<span class="error">{{.LastError}}</span> <span class="footnote">({{.LastErrorAt}})</span>{{end}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+</div>
+{{end}}
 
 <h2>Checks</h2>
 <div class="table-wrap">

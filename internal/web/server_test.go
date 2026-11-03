@@ -462,11 +462,17 @@ func TestHistoryNamespaceIsEscaped(t *testing.T) {
 func TestStatusPage(t *testing.T) {
 	e := newTestEnv(t)
 	e.status = engine.Status{
-		LastRun:           testNow.Add(-time.Minute),
-		LastRunError:      "save findings: disk full",
-		NotifierName:      "mail",
-		LastNotifyError:   "mail: connect to smtp.example.com:587: timeout",
-		LastNotifyErrorAt: testNow.Add(-2 * time.Minute),
+		LastRun:      testNow.Add(-time.Minute),
+		LastRunError: "save findings: disk full",
+		Targets: []engine.TargetStatus{
+			{
+				Name: "mail", Description: "mail (smtp.example.com)",
+				LastError:   "mail: connect to smtp.example.com:587: timeout",
+				LastErrorAt: testNow.Add(-2 * time.Minute),
+			},
+			{Name: "ntfy", Description: "ntfy (ntfy.example.org)", LastSentAt: testNow.Add(-3 * time.Minute)},
+			{Name: "slack", Description: "slack"},
+		},
 		Checks: []engine.CheckStatus{
 			{Name: "pod-crashloop", Active: true},
 			{Name: "argocd-health", Active: false, Reason: "Argo CD CRDs not installed"},
@@ -475,8 +481,10 @@ func TestStatusPage(t *testing.T) {
 
 	body := e.do(http.MethodGet, "/status", nil, e.login()).Body.String()
 	for _, want := range []string{
-		"2026-11-03 11:59:00 UTC", "save findings: disk full", "mail is configured",
+		"2026-11-03 11:59:00 UTC", "save findings: disk full",
+		"mail (smtp.example.com)", "sending failed",
 		"mail: connect to smtp.example.com:587: timeout", "2026-11-03 11:58:00 UTC",
+		"ntfy (ntfy.example.org)", "2026-11-03 11:57:00 UTC", "slack", "nothing since the start",
 		"pod-crashloop", "active", "argocd-health", "skipped", "Argo CD CRDs not installed",
 	} {
 		if !strings.Contains(body, want) {
@@ -487,13 +495,13 @@ func TestStatusPage(t *testing.T) {
 
 func TestStatusPageWithoutMailAndErrors(t *testing.T) {
 	e := newTestEnv(t)
-	e.status = engine.Status{NotifierName: "log"}
+	e.status = engine.Status{Targets: []engine.TargetStatus{{Name: "log", Description: "log only"}}}
 
 	body := e.do(http.MethodGet, "/status", nil, e.login()).Body.String()
-	if !strings.Contains(body, "mail is not configured") || !strings.Contains(body, "not yet") {
+	if !strings.Contains(body, "go to the log only") || !strings.Contains(body, "not yet") {
 		t.Errorf("unexpected status page:\n%s", body)
 	}
-	if strings.Contains(body, "Last sending error") || strings.Contains(body, "Last run error") {
+	if strings.Contains(body, "sending failed") || strings.Contains(body, "Last run error") {
 		t.Error("error rows must only appear when there is an error")
 	}
 }
