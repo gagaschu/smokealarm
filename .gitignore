@@ -1,0 +1,8 @@
+# Build output
+/smokealarm
+/dist/
+
+# Local runtime data
+*.db
+*.db-shm
+*.db-wal
