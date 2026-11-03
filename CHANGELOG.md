@@ -10,6 +10,7 @@ All notable changes to this project are documented here. The format is based on
 
 - **Reminders for critical problems**: `SMOKEALARM_CRITICAL_REPEAT_INTERVAL` reports critical problems that are still open again at that interval. Off by default.
 - **Acknowledge critical problems** in the web UI: an acknowledged problem stays on the overview with a mark and sends no more reminders until it is resolved. "Resolved" is still reported. A first mail that has not gone out yet is dropped.
+- An acknowledgement can be removed again. The problem then behaves like any other, so a mail can go out in the next run.
 - **Downtimes** in the web UI: silence one problem until a fixed time, from the overview or the history. While it runs, the problem sends no mail, including "resolved". If it is still active when the downtime ends, it is reported again; if it went away, nothing is sent. The **Downtimes** page lists running downtimes and can end them early.
 - Actions in the web UI that change state are protected against cross-site requests.
 
