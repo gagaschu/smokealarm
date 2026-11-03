@@ -62,6 +62,39 @@ func (s *Store) Unnotified(ctx context.Context) ([]Record, error) {
 		ORDER BY id`)
 }
 
+// Resolved returns resolved problems, newest first, for the history page. An
+// empty namespace means all namespaces. At most limit records are returned.
+func (s *Store) Resolved(ctx context.Context, namespace string, limit int) ([]Record, error) {
+	return s.query(ctx, `SELECT `+selectColumns+` FROM findings
+		WHERE state = 'resolved' AND (? = '' OR namespace = ?)
+		ORDER BY resolved_at DESC, id DESC LIMIT ?`, namespace, namespace, limit)
+}
+
+// Namespaces returns the namespaces that appear in the history, for the
+// filter on the history page. Cluster-scoped objects have no namespace and
+// are not listed.
+func (s *Store) Namespaces(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT namespace FROM findings
+		WHERE state = 'resolved' AND namespace <> '' ORDER BY namespace`)
+	if err != nil {
+		return nil, fmt.Errorf("query namespaces: %w", err)
+	}
+	defer func() { _ = rows.Close() }() // a read error is reported by rows.Err below
+
+	var namespaces []string
+	for rows.Next() {
+		var namespace string
+		if err := rows.Scan(&namespace); err != nil {
+			return nil, fmt.Errorf("scan namespace: %w", err)
+		}
+		namespaces = append(namespaces, namespace)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read namespaces: %w", err)
+	}
+	return namespaces, nil
+}
+
 // Apply writes all changes or none. Update only touches the columns that
 // change during a life cycle (severity, message, state, last_seen, firing_at,
 // resolved_at); the notified markers have their own methods.
@@ -145,8 +178,8 @@ func (s *Store) DeleteResolvedBefore(ctx context.Context, before time.Time) (int
 	return n, nil
 }
 
-func (s *Store) query(ctx context.Context, statement string) ([]Record, error) {
-	rows, err := s.db.QueryContext(ctx, statement)
+func (s *Store) query(ctx context.Context, statement string, args ...any) ([]Record, error) {
+	rows, err := s.db.QueryContext(ctx, statement, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query findings: %w", err)
 	}

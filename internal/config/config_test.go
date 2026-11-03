@@ -7,8 +7,26 @@ import (
 	"time"
 )
 
+// testHash is structurally a valid bcrypt hash; the tests never check a
+// password against it.
+const testHash = "$2a$10$7EqJtq98hPqEX7fNZaFWoOhi5BAmGZ2XJ0n6ZbQlm9y0rKQ2sXG7y"
+
+// adminEnv holds the variables that have no default.
+func adminEnv() map[string]string {
+	return map[string]string{
+		"SMOKEALARM_ADMIN_USER":          "admin",
+		"SMOKEALARM_ADMIN_PASSWORD_HASH": testHash,
+	}
+}
+
+// env returns a lookup function over the given values plus the required
+// admin variables (which the given values may override).
 func env(values map[string]string) func(string) string {
-	return func(name string) string { return values[name] }
+	all := adminEnv()
+	for k, v := range values {
+		all[k] = v
+	}
+	return func(name string) string { return all[name] }
 }
 
 func TestLoadDefaults(t *testing.T) {
@@ -29,6 +47,11 @@ func TestLoadDefaults(t *testing.T) {
 		PVCPendingAfter:  5 * time.Minute,
 		CronJobGrace:     5 * time.Minute,
 		SMTP:             SMTPConfig{Port: 587, TLS: "starttls"},
+
+		AdminUser:         "admin",
+		AdminPasswordHash: testHash,
+		SessionTTL:        7 * 24 * time.Hour,
+		CookieSecure:      true,
 	}
 	if !reflect.DeepEqual(cfg, want) {
 		t.Errorf("got %+v, want %+v", cfg, want)
@@ -122,5 +145,51 @@ func TestLoadRejectsBadAlertAndRetention(t *testing.T) {
 				t.Errorf("got %v, want an error mentioning %s", err, tt.want)
 			}
 		})
+	}
+}
+
+func TestAdminVariablesAreRequired(t *testing.T) {
+	// Not through env(): that helper fills in the admin variables.
+	_, err := Load(func(string) string { return "" })
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	for _, want := range []string{"SMOKEALARM_ADMIN_USER is required", "SMOKEALARM_ADMIN_PASSWORD_HASH is required"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not contain %q", err, want)
+		}
+	}
+}
+
+func TestAdminPasswordHashMustBeBcrypt(t *testing.T) {
+	_, err := Load(env(map[string]string{"SMOKEALARM_ADMIN_PASSWORD_HASH": "my-plain-password"}))
+	if err == nil || !strings.Contains(err.Error(), "not a valid bcrypt hash") {
+		t.Fatalf("got %v, want a bcrypt hash error", err)
+	}
+	if strings.Contains(err.Error(), "my-plain-password") {
+		t.Errorf("error repeats the value: %v", err)
+	}
+}
+
+func TestSessionAndCookieSettings(t *testing.T) {
+	cfg, err := Load(env(map[string]string{
+		"SMOKEALARM_SESSION_TTL":   "12h",
+		"SMOKEALARM_COOKIE_SECURE": "false",
+	}))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.SessionTTL != 12*time.Hour || cfg.CookieSecure {
+		t.Errorf("SessionTTL = %v, CookieSecure = %v", cfg.SessionTTL, cfg.CookieSecure)
+	}
+
+	for name, values := range map[string]map[string]string{
+		"zero ttl":     {"SMOKEALARM_SESSION_TTL": "0s"},
+		"bad boolean":  {"SMOKEALARM_COOKIE_SECURE": "maybe"},
+		"bad duration": {"SMOKEALARM_SESSION_TTL": "forever"},
+	} {
+		if _, err := Load(env(values)); err == nil {
+			t.Errorf("%s: expected an error", name)
+		}
 	}
 }

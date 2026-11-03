@@ -260,3 +260,111 @@ func recordKeys(records []Record) string {
 	}
 	return keys
 }
+
+func TestSessions(t *testing.T) {
+	s, _ := openTemp(t)
+	ctx := context.Background()
+
+	session := Session{IDHash: "hash-1", Username: "admin", CreatedAt: testNow, ExpiresAt: testNow.Add(time.Hour)}
+	if err := s.CreateSession(ctx, session); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	got, found, err := s.Session(ctx, "hash-1", testNow.Add(30*time.Minute))
+	if err != nil || !found || got.Username != "admin" || !got.ExpiresAt.Equal(session.ExpiresAt) {
+		t.Fatalf("Session = %+v, %v, %v; want the stored session", got, found, err)
+	}
+
+	if _, found, _ := s.Session(ctx, "other", testNow); found {
+		t.Error("unknown session id was found")
+	}
+	if _, found, _ := s.Session(ctx, "hash-1", testNow.Add(time.Hour)); found {
+		t.Error("session was found at its expiry time, want it expired")
+	}
+
+	if err := s.DeleteSession(ctx, "hash-1"); err != nil {
+		t.Fatalf("DeleteSession: %v", err)
+	}
+	if _, found, _ := s.Session(ctx, "hash-1", testNow); found {
+		t.Error("deleted session still found")
+	}
+	if err := s.DeleteSession(ctx, "hash-1"); err != nil {
+		t.Errorf("deleting a missing session must not fail: %v", err)
+	}
+}
+
+func TestDeleteExpiredSessions(t *testing.T) {
+	s, _ := openTemp(t)
+	ctx := context.Background()
+
+	for _, session := range []Session{
+		{IDHash: "old", Username: "admin", CreatedAt: testNow.Add(-2 * time.Hour), ExpiresAt: testNow.Add(-time.Hour)},
+		{IDHash: "valid", Username: "admin", CreatedAt: testNow, ExpiresAt: testNow.Add(time.Hour)},
+	} {
+		if err := s.CreateSession(ctx, session); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	n, err := s.DeleteExpiredSessions(ctx, testNow)
+	if err != nil || n != 1 {
+		t.Fatalf("DeleteExpiredSessions = %d, %v; want 1", n, err)
+	}
+	if _, found, _ := s.Session(ctx, "valid", testNow); !found {
+		t.Error("the valid session was deleted")
+	}
+}
+
+func resolvedRecord(key, namespace string, resolvedAt time.Time) Record {
+	r := newRecord(key, StateResolved, resolvedAt.Add(-time.Hour))
+	r.Object.Namespace = namespace
+	r.ResolvedAt = &resolvedAt
+	return r
+}
+
+func TestResolvedAndNamespaces(t *testing.T) {
+	s, _ := openTemp(t)
+	ctx := context.Background()
+
+	err := s.Apply(ctx, Changes{Insert: []Record{
+		resolvedRecord("a", "media", testNow.Add(-3*time.Hour)),
+		resolvedRecord("b", "infra", testNow.Add(-1*time.Hour)),
+		resolvedRecord("c", "media", testNow.Add(-2*time.Hour)),
+		resolvedRecord("node", "", testNow.Add(-4*time.Hour)),
+		newRecord("open", StateFiring, testNow), // open problems are not history
+	}})
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	all, err := s.Resolved(ctx, "", 10)
+	if err != nil || recordKeys(all) != "b,c,a,node" {
+		t.Errorf("Resolved(all) = %s, %v; want newest first: b,c,a,node", recordKeys(all), err)
+	}
+	media, _ := s.Resolved(ctx, "media", 10)
+	if recordKeys(media) != "c,a" {
+		t.Errorf("Resolved(media) = %s, want c,a", recordKeys(media))
+	}
+	limited, _ := s.Resolved(ctx, "", 2)
+	if recordKeys(limited) != "b,c" {
+		t.Errorf("Resolved(limit 2) = %s, want b,c", recordKeys(limited))
+	}
+
+	namespaces, err := s.Namespaces(ctx)
+	if err != nil || len(namespaces) != 2 || namespaces[0] != "infra" || namespaces[1] != "media" {
+		t.Errorf("Namespaces = %v, %v; want [infra media] without the empty namespace", namespaces, err)
+	}
+}
+
+func TestPing(t *testing.T) {
+	s, _ := openTemp(t)
+	if err := s.Ping(context.Background()); err != nil {
+		t.Errorf("Ping: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Ping(context.Background()); err == nil {
+		t.Error("Ping on a closed database must fail")
+	}
+}

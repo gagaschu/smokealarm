@@ -165,7 +165,6 @@ type Status struct {
     LastRun        time.Time
     LastRunError   string
     Checks         []CheckStatus // Name, Enabled bool, SkipReason string
-    MailConfigured bool
     LastNotifyError   string
     LastNotifyErrorAt time.Time
 }
@@ -346,3 +345,10 @@ Every phase: own branch from main, unit tests with fake objects, `go build`/`go 
 - **Mail (phase 4):** STARTTLS is required in `starttls` mode (a server without it is an error, no silent downgrade); `none` is for local testing. The body is quoted-printable. There is no connection test at startup, so a mail server that is briefly down at boot does not stop monitoring.
 - **Golden tests use `UPDATE_GOLDEN=1`** instead of a `-update` flag, because a `flag` variable would be a package-level variable.
 - **`Status` starts minimal (phase 4):** only `NotifierName`, `LastNotifyError` and `LastNotifyErrorAt`; the error is cleared by the next successful send. `LastRun`, checks and the rest follow with the status page in phase 5.
+- **Status page data (phase 5):** `engine.Status` has no `MailConfigured` field; "mail configured" is derived from `NotifierName == "mail"`. Skipped checks come from `Engine.SkippedChecks`, which main fills (phase 6 adds "CRD not installed" without changing the engine).
+- **Overview shows firing problems only (phase 5):** pending ones have not lasted `ALERT_AFTER` yet; listing them would contradict the mails. Before the first run it says "Starting up" instead of "All good".
+- **`web.Server` (phase 5):** dependencies are plain fields (`Ready func(ctx) error`, `Status func() engine.Status`, `Store`, `Sessions`, ...). `Handler()` parses the templates and returns an error if one is broken. `/readyz` in main = informer caches synced **and** database ping.
+- **Second `go:embed` variable (phase 5):** `assets` in `internal/web` (templates and CSS), never modified. The first one is `migrationFiles` in `internal/store`.
+- **`hash-password` reads stdin with echo on (phase 5):** hiding the typed password needs `golang.org/x/term`, which is not on the allowed list. Use `read -s PW; printf '%s' "$PW" | smokealarm hash-password`.
+- **Sessions (phase 5):** fixed expiry (no sliding renewal); only the SHA-256 hash of the session id is stored; the login handler never accepts a redirect target. The rate limit uses `RemoteAddr` only, so behind an ingress all clients share one limit.
+- **Security headers (phase 5):** CSP `default-src 'self'` (the pages need no inline script or style), `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Cache-Control: no-store` on pages.

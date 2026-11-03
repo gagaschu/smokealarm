@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// Config holds all settings. Later phases add login settings.
+// Config holds all settings.
 type Config struct {
 	CheckInterval    time.Duration
 	AlertAfter       time.Duration // how long a problem must persist before it fires
@@ -24,6 +24,11 @@ type Config struct {
 	BaseURL          string // public URL of the web UI, linked in mails
 
 	SMTP SMTPConfig
+
+	AdminUser         string
+	AdminPasswordHash string // bcrypt hash, see "smokealarm hash-password"
+	SessionTTL        time.Duration
+	CookieSecure      bool // only turn off for local development over plain HTTP
 
 	RestartThreshold int
 	PodPendingAfter  time.Duration
@@ -49,10 +54,15 @@ func Load(getenv func(string) string) (Config, error) {
 		DisabledChecks:   r.list("SMOKEALARM_DISABLED_CHECKS"),
 		BaseURL:          r.text("SMOKEALARM_BASE_URL", ""),
 		SMTP:             loadSMTP(&r),
-		RestartThreshold: r.integer("SMOKEALARM_RESTART_THRESHOLD", 5),
-		PodPendingAfter:  r.duration("SMOKEALARM_POD_PENDING_AFTER", 5*time.Minute),
-		PVCPendingAfter:  r.duration("SMOKEALARM_PVC_PENDING_AFTER", 5*time.Minute),
-		CronJobGrace:     r.duration("SMOKEALARM_CRONJOB_GRACE", 5*time.Minute),
+
+		AdminUser:         r.required("SMOKEALARM_ADMIN_USER"),
+		AdminPasswordHash: r.required("SMOKEALARM_ADMIN_PASSWORD_HASH"),
+		SessionTTL:        r.duration("SMOKEALARM_SESSION_TTL", 7*24*time.Hour),
+		CookieSecure:      r.boolean("SMOKEALARM_COOKIE_SECURE", true),
+		RestartThreshold:  r.integer("SMOKEALARM_RESTART_THRESHOLD", 5),
+		PodPendingAfter:   r.duration("SMOKEALARM_POD_PENDING_AFTER", 5*time.Minute),
+		PVCPendingAfter:   r.duration("SMOKEALARM_PVC_PENDING_AFTER", 5*time.Minute),
+		CronJobGrace:      r.duration("SMOKEALARM_CRONJOB_GRACE", 5*time.Minute),
 	}
 
 	if cfg.CheckInterval <= 0 {
@@ -64,6 +74,10 @@ func Load(getenv func(string) string) (Config, error) {
 	if cfg.Retention <= 0 {
 		r.fail("SMOKEALARM_RETENTION: must be greater than zero")
 	}
+	if cfg.SessionTTL <= 0 {
+		r.fail("SMOKEALARM_SESSION_TTL: must be greater than zero")
+	}
+	validatePasswordHash(&r, cfg.AdminPasswordHash)
 	validateBaseURL(&r, cfg.BaseURL)
 	validateSMTP(&r, cfg.SMTP)
 	if cfg.RestartThreshold < 0 {
@@ -91,6 +105,29 @@ func (r *reader) text(name, def string) string {
 		return v
 	}
 	return def
+}
+
+// required reads a variable that has no default. A missing value is reported
+// together with all other problems.
+func (r *reader) required(name string) string {
+	v := r.getenv(name)
+	if v == "" {
+		r.fail("%s is required", name)
+	}
+	return v
+}
+
+func (r *reader) boolean(name string, def bool) bool {
+	v := r.getenv(name)
+	if v == "" {
+		return def
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		r.fail("%s: %q is not true or false", name, v)
+		return def
+	}
+	return b
 }
 
 func (r *reader) choice(name, def string, allowed ...string) string {

@@ -1,0 +1,272 @@
+package auth
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"golang.org/x/crypto/bcrypt"
+
+	"github.com/gagaschu/smokealarm/internal/store"
+)
+
+var testNow = time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
+
+func TestHashPasswordAndVerify(t *testing.T) {
+	hash, err := HashPassword("correct horse")
+	if err != nil {
+		t.Fatalf("HashPassword: %v", err)
+	}
+	if hash == "correct horse" || !strings.HasPrefix(hash, "$2") {
+		t.Fatalf("hash = %q, want a bcrypt hash", hash)
+	}
+
+	login := PasswordLogin{Username: "admin", Hash: []byte(hash)}
+	tests := []struct {
+		name, user, password string
+		want                 bool
+	}{
+		{"right credentials", "admin", "correct horse", true},
+		{"wrong password", "admin", "wrong", false},
+		{"wrong user", "root", "correct horse", false},
+		{"both wrong", "root", "wrong", false},
+		{"empty", "", "", false},
+		{"user is case sensitive", "Admin", "correct horse", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := login.Verify(tt.user, tt.password); got != tt.want {
+				t.Errorf("Verify(%q, %q) = %v, want %v", tt.user, tt.password, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestHashPasswordRejectsTooLongPassword(t *testing.T) {
+	// bcrypt only uses the first 72 bytes; silently ignoring the rest would
+	// make a long password weaker than it looks, so this is an error.
+	if _, err := HashPassword(strings.Repeat("x", 73)); err == nil {
+		t.Error("expected an error for a password longer than 72 bytes")
+	}
+}
+
+func TestVerifyWithBrokenHash(t *testing.T) {
+	login := PasswordLogin{Username: "admin", Hash: []byte("not a hash")}
+	if login.Verify("admin", "anything") {
+		t.Error("a broken hash must never verify")
+	}
+}
+
+func newTestSessions(t *testing.T, now *time.Time, secure bool) (*Sessions, *store.Store) {
+	t.Helper()
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"), func() time.Time { return *now })
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	return &Sessions{Store: db, TTL: time.Hour, SecureCookie: secure, Now: func() time.Time { return *now }}, db
+}
+
+// login starts a session and returns the cookie the browser would get.
+func login(t *testing.T, s *Sessions) *http.Cookie {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	if err := s.Start(rec, httptest.NewRequest(http.MethodPost, "/login", nil), "admin"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	cookies := rec.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("got %d cookies, want 1", len(cookies))
+	}
+	return cookies[0]
+}
+
+func requestWith(cookie *http.Cookie) *http.Request {
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	if cookie != nil {
+		r.AddCookie(cookie)
+	}
+	return r
+}
+
+func TestSessionRoundTrip(t *testing.T) {
+	now := testNow
+	s, _ := newTestSessions(t, &now, true)
+	cookie := login(t, s)
+
+	user, ok, err := s.Valid(requestWith(cookie))
+	if err != nil || !ok || user != "admin" {
+		t.Fatalf("Valid = %q, %v, %v; want admin, true", user, ok, err)
+	}
+	if _, ok, _ := s.Valid(requestWith(nil)); ok {
+		t.Error("a request without a cookie must not be logged in")
+	}
+	if _, ok, _ := s.Valid(requestWith(&http.Cookie{Name: cookieName, Value: "guessed"})); ok {
+		t.Error("a made-up session id must not be accepted")
+	}
+}
+
+func TestSessionExpires(t *testing.T) {
+	now := testNow
+	s, _ := newTestSessions(t, &now, true)
+	cookie := login(t, s)
+
+	now = testNow.Add(59 * time.Minute)
+	if _, ok, _ := s.Valid(requestWith(cookie)); !ok {
+		t.Error("session invalid before its TTL ran out")
+	}
+	now = testNow.Add(time.Hour)
+	if _, ok, _ := s.Valid(requestWith(cookie)); ok {
+		t.Error("session still valid after its TTL")
+	}
+}
+
+func TestLogoutInvalidatesSession(t *testing.T) {
+	now := testNow
+	s, _ := newTestSessions(t, &now, true)
+	cookie := login(t, s)
+
+	rec := httptest.NewRecorder()
+	if err := s.End(rec, requestWith(cookie)); err != nil {
+		t.Fatalf("End: %v", err)
+	}
+	if _, ok, _ := s.Valid(requestWith(cookie)); ok {
+		t.Error("session still valid after logout, even though the browser might keep the cookie")
+	}
+	cleared := rec.Result().Cookies()
+	if len(cleared) != 1 || cleared[0].Value != "" || cleared[0].Expires.After(testNow) {
+		t.Errorf("logout must expire the cookie, got %+v", cleared)
+	}
+
+	// Logging out without a session must not fail.
+	if err := s.End(httptest.NewRecorder(), requestWith(nil)); err != nil {
+		t.Errorf("End without a cookie: %v", err)
+	}
+}
+
+func TestSessionIDIsNotStored(t *testing.T) {
+	now := testNow
+	s, db := newTestSessions(t, &now, true)
+	cookie := login(t, s)
+
+	// Looking up the raw cookie value must find nothing; only its hash is stored.
+	if _, found, _ := db.Session(context.Background(), cookie.Value, now); found {
+		t.Error("the raw session id is stored in the database")
+	}
+	if _, found, _ := db.Session(context.Background(), hashID(cookie.Value), now); !found {
+		t.Error("the hash of the session id is not stored")
+	}
+	if len(cookie.Value) < 40 {
+		t.Errorf("session id %q is too short to be unguessable", cookie.Value)
+	}
+}
+
+func TestSessionIDsAreUnique(t *testing.T) {
+	now := testNow
+	s, _ := newTestSessions(t, &now, true)
+	first, second := login(t, s), login(t, s)
+	if first.Value == second.Value {
+		t.Error("two logins got the same session id")
+	}
+}
+
+func TestCookieAttributes(t *testing.T) {
+	for _, secure := range []bool{true, false} {
+		now := testNow
+		s, _ := newTestSessions(t, &now, secure)
+		cookie := login(t, s)
+
+		if cookie.Name != "smokealarm_session" || !cookie.HttpOnly || cookie.SameSite != http.SameSiteLaxMode || cookie.Path != "/" {
+			t.Errorf("cookie = %+v, want HttpOnly, SameSite=Lax, Path=/", cookie)
+		}
+		if cookie.Secure != secure {
+			t.Errorf("Secure = %v, want %v", cookie.Secure, secure)
+		}
+		if !cookie.Expires.Equal(testNow.Add(time.Hour)) {
+			t.Errorf("Expires = %v, want %v", cookie.Expires, testNow.Add(time.Hour))
+		}
+	}
+}
+
+func TestRequire(t *testing.T) {
+	now := testNow
+	s, _ := newTestSessions(t, &now, true)
+	reached := false
+	protected := s.Require(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	rec := httptest.NewRecorder()
+	protected.ServeHTTP(rec, requestWith(nil))
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/login" || reached {
+		t.Errorf("without a session: status %d, location %q, reached %v; want redirect to /login",
+			rec.Code, rec.Header().Get("Location"), reached)
+	}
+
+	rec = httptest.NewRecorder()
+	protected.ServeHTTP(rec, requestWith(login(t, s)))
+	if rec.Code != http.StatusOK || !reached {
+		t.Errorf("with a session: status %d, reached %v; want the handler to run", rec.Code, reached)
+	}
+}
+
+func TestRateLimiter(t *testing.T) {
+	now := testNow
+	limiter := &RateLimiter{Now: func() time.Time { return now }}
+	const client = "10.0.0.1"
+
+	for i := 0; i < 4; i++ {
+		limiter.Failed(client)
+		if !limiter.Allowed(client) {
+			t.Fatalf("blocked after %d failures, want to allow 5 tries", i+1)
+		}
+	}
+	limiter.Failed(client) // the fifth failure
+	if limiter.Allowed(client) {
+		t.Error("still allowed after 5 failures")
+	}
+	if !limiter.Allowed("10.0.0.2") {
+		t.Error("another client must not be affected")
+	}
+
+	now = testNow.Add(14 * time.Minute)
+	if limiter.Allowed(client) {
+		t.Error("allowed again before the window ended")
+	}
+	now = testNow.Add(15*time.Minute + time.Second)
+	if !limiter.Allowed(client) {
+		t.Error("still blocked after the window ended")
+	}
+	if len(limiter.failures) != 0 {
+		t.Errorf("old failures were not pruned: %v", limiter.failures)
+	}
+}
+
+func TestRateLimiterResetOnSuccess(t *testing.T) {
+	now := testNow
+	limiter := &RateLimiter{Now: func() time.Time { return now }}
+	for i := 0; i < 4; i++ {
+		limiter.Failed("c")
+	}
+	limiter.Succeeded("c")
+	limiter.Failed("c")
+	if !limiter.Allowed("c") {
+		t.Error("a successful login must reset the counter")
+	}
+}
+
+func TestBcryptCostIsReasonable(t *testing.T) {
+	hash, err := HashPassword("x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cost, err := bcrypt.Cost([]byte(hash))
+	if err != nil || cost < 10 {
+		t.Errorf("cost = %d, %v; want at least 10", cost, err)
+	}
+}
