@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -45,10 +46,13 @@ type Finding struct {
 
 // Snapshot is a read-only copy of the cluster objects the checks need.
 type Snapshot struct {
-	Now        time.Time
-	Namespaces []*corev1.Namespace
-	Pods       []*corev1.Pod
-	Events     []*corev1.Event // Warning events only
+	Now          time.Time
+	Namespaces   []*corev1.Namespace
+	Pods         []*corev1.Pod
+	Events       []*corev1.Event // Warning events only
+	Deployments  []*appsv1.Deployment
+	StatefulSets []*appsv1.StatefulSet
+	DaemonSets   []*appsv1.DaemonSet
 }
 
 // Options holds the configurable thresholds and the ignore list.
@@ -74,6 +78,7 @@ func All() []Check {
 		{Name: checkPodOOMKilled, Run: PodOOMKilled},
 		{Name: checkPodRestarts, Run: PodRestarts},
 		{Name: checkPodPending, Run: PodPending},
+		{Name: checkWorkloadReplicas, Run: WorkloadReplicas},
 	}
 }
 
