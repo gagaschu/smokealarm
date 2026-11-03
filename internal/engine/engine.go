@@ -36,6 +36,11 @@ type Engine struct {
 	// Retention is how long resolved problems are kept as history.
 	Retention time.Duration
 
+	// SkippedChecks lists checks that do not run and why (disabled by
+	// configuration, optional CRDs not installed). They only appear in the
+	// status; the engine does nothing else with them.
+	SkippedChecks []SkippedCheck
+
 	Store    *store.Store
 	Notifier notify.Notifier
 	// BaseURL is the link to the web UI that notifications point to. It may
@@ -50,8 +55,24 @@ type Engine struct {
 	status Status
 }
 
+// SkippedCheck is a check that does not run, with the reason to show.
+type SkippedCheck struct {
+	Name   string
+	Reason string
+}
+
+// CheckStatus is one line of the check list on the status page.
+type CheckStatus struct {
+	Name   string
+	Active bool
+	Reason string // why the check is not active; empty if it is
+}
+
 // Status is what the engine reports about itself, for the status page.
 type Status struct {
+	LastRun           time.Time // zero before the first run has finished
+	LastRunError      string    // empty if the last run had no errors
+	Checks            []CheckStatus
 	NotifierName      string
 	LastNotifyError   string    // empty if the last send worked
 	LastNotifyErrorAt time.Time // zero if there is no error
@@ -63,7 +84,32 @@ func (e *Engine) Status() Status {
 	defer e.mu.Unlock()
 	s := e.status
 	s.NotifierName = e.Notifier.Name()
+	s.Checks = e.checkStatuses()
 	return s
+}
+
+// checkStatuses lists the active and the skipped checks, sorted by name.
+func (e *Engine) checkStatuses() []CheckStatus {
+	var statuses []CheckStatus
+	for _, c := range e.Checks {
+		statuses = append(statuses, CheckStatus{Name: c.Name, Active: true})
+	}
+	for _, c := range e.SkippedChecks {
+		statuses = append(statuses, CheckStatus{Name: c.Name, Reason: c.Reason})
+	}
+	sort.Slice(statuses, func(i, j int) bool { return statuses[i].Name < statuses[j].Name })
+	return statuses
+}
+
+// setRunResult remembers when the last run finished and how it went.
+func (e *Engine) setRunResult(finished time.Time, err error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.status.LastRun = finished
+	e.status.LastRunError = ""
+	if err != nil {
+		e.status.LastRunError = err.Error()
+	}
 }
 
 // setNotifyResult remembers whether the last send worked. The error is
@@ -129,12 +175,15 @@ func (e *Engine) RunOnce(ctx context.Context) error {
 		errs = append(errs, err)
 	}
 
+	finished := e.Now()
+	err := errors.Join(errs...)
+	e.setRunResult(finished, err)
 	e.Logger.Info("check run finished",
 		"findings", len(findings),
 		"checks", len(e.Checks),
-		"duration", e.Now().Sub(start).String(),
+		"duration", finished.Sub(start).String(),
 	)
-	return errors.Join(errs...)
+	return err
 }
 
 // saveState compares the findings with the stored problems and writes the
@@ -297,7 +346,8 @@ func sortAlerts(alerts []notify.Alert) {
 	})
 }
 
-// cleanup deletes resolved problems that are older than the retention time.
+// cleanup deletes resolved problems that are older than the retention time,
+// and login sessions that have expired.
 func (e *Engine) cleanup(ctx context.Context, now time.Time) error {
 	deleted, err := e.Store.DeleteResolvedBefore(ctx, now.Add(-e.Retention))
 	if err != nil {
@@ -305,6 +355,9 @@ func (e *Engine) cleanup(ctx context.Context, now time.Time) error {
 	}
 	if deleted > 0 {
 		e.Logger.Info("old findings deleted", "count", deleted)
+	}
+	if _, err := e.Store.DeleteExpiredSessions(ctx, now); err != nil {
+		return fmt.Errorf("clean up expired sessions: %w", err)
 	}
 	return nil
 }

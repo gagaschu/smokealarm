@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log/slog"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -309,6 +310,68 @@ func TestStatusShowsSendErrorUntilNextSuccess(t *testing.T) {
 	h.mustRun(30 * time.Second)
 	if got := h.engine.Status(); got.LastNotifyError != "" || !got.LastNotifyErrorAt.IsZero() {
 		t.Errorf("status after recovery = %+v, want the error cleared", got)
+	}
+}
+
+func TestStatusAfterRun(t *testing.T) {
+	h := newHarness(t)
+	h.engine.SkippedChecks = []SkippedCheck{{Name: "argocd-health", Reason: "Argo CD CRDs not installed"}}
+
+	if got := h.engine.Status(); !got.LastRun.IsZero() {
+		t.Errorf("LastRun = %v before the first run, want zero", got.LastRun)
+	}
+
+	h.mustRun(time.Minute)
+	got := h.engine.Status()
+	if !got.LastRun.Equal(h.now) || got.LastRunError != "" {
+		t.Errorf("LastRun = %v, error %q; want the run time and no error", got.LastRun, got.LastRunError)
+	}
+
+	want := []CheckStatus{
+		{Name: "argocd-health", Active: false, Reason: "Argo CD CRDs not installed"},
+		{Name: "fake", Active: true},
+	}
+	if !slices.Equal(got.Checks, want) {
+		t.Errorf("Checks = %+v, want %+v", got.Checks, want)
+	}
+}
+
+func TestStatusShowsRunError(t *testing.T) {
+	h := newHarness(t)
+	h.findings = []checks.Finding{finding("a", checks.Critical)}
+	h.mustRun(0)
+	h.notifier.fail = true
+	_ = h.run(2 * time.Minute)
+
+	if got := h.engine.Status(); !strings.Contains(got.LastRunError, "smtp server unreachable") {
+		t.Errorf("LastRunError = %q, want the send error", got.LastRunError)
+	}
+	h.notifier.fail = false
+	h.mustRun(time.Minute)
+	if got := h.engine.Status(); got.LastRunError != "" {
+		t.Errorf("LastRunError = %q after a clean run, want it cleared", got.LastRunError)
+	}
+}
+
+func TestCleanupDeletesExpiredSessions(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	for _, session := range []store.Session{
+		{IDHash: "expired", Username: "admin", CreatedAt: h.now.Add(-2 * time.Hour), ExpiresAt: h.now.Add(-time.Hour)},
+		{IDHash: "valid", Username: "admin", CreatedAt: h.now, ExpiresAt: h.now.Add(time.Hour)},
+	} {
+		if err := h.engine.Store.CreateSession(ctx, session); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	h.mustRun(0)
+
+	if _, found, _ := h.engine.Store.Session(ctx, "valid", h.now); !found {
+		t.Error("the valid session was removed")
+	}
+	if n, _ := h.engine.Store.DeleteExpiredSessions(ctx, h.now); n != 0 {
+		t.Errorf("%d expired sessions were left behind by the cleanup", n)
 	}
 }
 
