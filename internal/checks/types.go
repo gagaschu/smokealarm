@@ -11,6 +11,7 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -54,12 +55,15 @@ type Snapshot struct {
 	StatefulSets []*appsv1.StatefulSet
 	DaemonSets   []*appsv1.DaemonSet
 	Nodes        []*corev1.Node
+	Jobs         []*batchv1.Job
+	CronJobs     []*batchv1.CronJob
 }
 
 // Options holds the configurable thresholds and the ignore list.
 type Options struct {
 	RestartThreshold  int
 	PodPendingAfter   time.Duration
+	CronJobGrace      time.Duration
 	IgnoredNamespaces []string
 }
 
@@ -82,6 +86,8 @@ func All() []Check {
 		{Name: checkWorkloadReplicas, Run: WorkloadReplicas},
 		{Name: checkNodeNotReady, Run: NodeNotReady},
 		{Name: checkNodePressure, Run: NodePressure},
+		{Name: checkJobFailed, Run: JobFailed},
+		{Name: checkCronJobMissed, Run: CronJobMissed},
 	}
 }
 
