@@ -16,16 +16,18 @@
 </dl>
 
 <h2>Checks</h2>
+<div class="table-wrap">
 <table>
   <thead><tr><th>Check</th><th>State</th><th>Reason</th></tr></thead>
   <tbody>
     {{range .Status.Checks}}
     <tr>
-      <td data-label="Check">{{.Name}}</td>
-      <td data-label="State">{{if .Active}}active{{else}}skipped{{end}}</td>
-      <td data-label="Reason">{{.Reason}}</td>
+      <td class="nowrap" data-label="Check">{{.Name}}</td>
+      <td class="nowrap" data-label="State">{{if .Active}}active{{else}}skipped{{end}}</td>
+      <td class="wrap" data-label="Reason">{{.Reason}}</td>
     </tr>
     {{end}}
   </tbody>
 </table>
+</div>
 {{end}}

@@ -49,7 +49,7 @@ header {
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem 1.5rem;
-  padding: 0.75rem 1rem;
+  padding: 0.75rem 2rem;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
 }
@@ -61,7 +61,7 @@ nav a { text-decoration: none; padding: 0.25rem 0; }
 nav a[aria-current="page"] { font-weight: 700; border-bottom: 2px solid var(--accent); }
 nav form { margin: 0; }
 
-main { max-width: 64rem; margin: 0 auto; padding: 1rem; }
+main { max-width: 100rem; margin: 0 auto; padding: 1rem 2rem; }
 h1 { font-size: 1.5rem; margin: 0.5rem 0 1rem; }
 h2 { font-size: 1.2rem; margin: 1.5rem 0 0.5rem; }
 
@@ -90,34 +90,53 @@ nav button { background: none; border: none; color: var(--accent); padding: 0.25
 .message { overflow-wrap: anywhere; }
 .since, .footnote { color: var(--muted); font-size: 0.875rem; }
 
-.badge { display: inline-block; padding: 0 0.5rem; border-radius: 999px; font-size: 0.75rem; font-weight: 700; text-transform: uppercase; }
+.badge { display: inline-block; white-space: nowrap; padding: 0 0.5rem; border-radius: 999px; font-size: 0.75rem; font-weight: 700; text-transform: uppercase; }
 .badge.critical { color: var(--critical); background: var(--critical-bg); }
 .badge.warning { color: var(--warning); background: var(--warning-bg); }
 
 .error { color: var(--critical); }
 
-table { width: 100%; border-collapse: collapse; background: var(--surface); }
-th, td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); vertical-align: top; }
-td { overflow-wrap: anywhere; }
-th { color: var(--muted); font-size: 0.875rem; }
+/* Wide tables scroll inside their box instead of widening the whole page. */
+.table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 0.375rem; background: var(--surface); }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 0.625rem 0.75rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+tbody tr:last-child td { border-bottom: none; }
+tbody tr:hover { background: var(--bg); }
+th { color: var(--muted); font-size: 0.875rem; white-space: nowrap; }
+
+/* Short values stay on one line; only long text (object, message) wraps. */
+td.nowrap { white-space: nowrap; }
+td.wrap { overflow-wrap: break-word; }
+td.message-cell { overflow-wrap: anywhere; min-width: 14rem; }
 
 dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.5rem 1.5rem; }
 dt { color: var(--muted); }
 dd { margin: 0; overflow-wrap: anywhere; }
 
-.filter { display: flex; flex-wrap: wrap; align-items: end; gap: 0.5rem; margin-bottom: 1rem; }
+.filter { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-bottom: 1rem; }
+.filter label { display: flex; align-items: center; gap: 0.5rem; }
 
 .login { max-width: 22rem; margin: 3rem auto; }
 .login form { display: grid; gap: 1rem; }
 .login label { display: grid; gap: 0.25rem; }
 
-/* On narrow screens, a table row becomes a card with labeled lines. */
-@media (max-width: 40rem) {
+/* Below about 1000 px the history table no longer fits, so each row becomes
+   a card with labeled lines. */
+@media (max-width: 64rem) {
+  .table-wrap { border: none; background: none; }
   thead { display: none; }
   table, tbody, tr, td { display: block; }
-  tr { margin-bottom: 0.75rem; border: 1px solid var(--border); border-radius: 0.375rem; }
+  tr { margin-bottom: 0.75rem; background: var(--surface); border: 1px solid var(--border); border-radius: 0.375rem; }
   td { border-bottom: none; padding: 0.25rem 0.75rem; }
+  td.nowrap { white-space: normal; }
+  td.message-cell { min-width: 0; }
   td::before { content: attr(data-label) ": "; color: var(--muted); font-size: 0.875rem; }
+  tbody tr:hover { background: var(--surface); }
   dl { grid-template-columns: 1fr; gap: 0; }
   dd { margin-bottom: 0.75rem; }
+}
+
+@media (max-width: 40rem) {
+  main { padding: 1rem; }
+  header { padding: 0.75rem 1rem; }
 }

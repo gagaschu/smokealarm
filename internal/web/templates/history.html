@@ -11,23 +11,25 @@
   <button type="submit">Filter</button>
 </form>
 {{if .History}}
+<div class="table-wrap">
 <table>
   <thead>
-    <tr><th>Resolved</th><th>Lasted</th><th>Severity</th><th>Object</th><th>Reason</th><th>Message</th></tr>
+    <tr><th>Resolved (UTC)</th><th>Lasted</th><th>Severity</th><th>Object</th><th>Reason</th><th>Message</th></tr>
   </thead>
   <tbody>
     {{range .History}}
     <tr>
-      <td data-label="Resolved">{{.ResolvedAt}}</td>
-      <td data-label="Lasted">{{.Lasted}}</td>
-      <td data-label="Severity"><span class="badge {{.Severity}}">{{.Severity}}</span></td>
-      <td data-label="Object">{{.Object}}</td>
-      <td data-label="Reason">{{.Reason}}</td>
-      <td data-label="Message">{{.Message}}</td>
+      <td class="nowrap" data-label="Resolved (UTC)">{{.ResolvedAt}}</td>
+      <td class="nowrap" data-label="Lasted">{{.Lasted}}</td>
+      <td class="nowrap" data-label="Severity"><span class="badge {{.Severity}}">{{.Severity}}</span></td>
+      <td class="wrap" data-label="Object">{{.Object}}</td>
+      <td class="nowrap" data-label="Reason">{{.Reason}}</td>
+      <td class="message-cell" data-label="Message">{{.Message}}</td>
     </tr>
     {{end}}
   </tbody>
 </table>
+</div>
 {{if .Truncated}}<p class="footnote">Showing the latest {{.Limit}} entries.</p>{{end}}
 {{else}}
 <p>No resolved problems{{if .Namespace}} in this namespace{{end}}.</p>

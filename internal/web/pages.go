@@ -17,6 +17,10 @@ const (
 	historyLimit = 200
 	loginBodyMax = 4 << 10 // a login form is tiny; refuse anything bigger
 	timeFormat   = "2006-01-02 15:04:05 UTC"
+
+	// historyTimeFormat is shorter than timeFormat to save space in the
+	// table; the column header says the times are UTC.
+	historyTimeFormat = "2006-01-02 15:04"
 )
 
 // page is everything the templates can show. Each page uses its own part.
@@ -240,7 +244,7 @@ func (s *Server) history(w http.ResponseWriter, r *http.Request) {
 			Message:  rec.Message,
 		}
 		if rec.ResolvedAt != nil {
-			view.ResolvedAt = rec.ResolvedAt.UTC().Format(timeFormat)
+			view.ResolvedAt = rec.ResolvedAt.UTC().Format(historyTimeFormat)
 			view.Lasted = formatAge(rec.ResolvedAt.Sub(rec.FirstSeen))
 		}
 		data.History = append(data.History, view)
