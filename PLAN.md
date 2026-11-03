@@ -123,7 +123,7 @@ Fixed values (constants, per spec): OOM window 15m, restart window 1h, PVC usage
 | argocd.go | `argocd-health` | critical, Degraded / Missing |
 | | `argocd-sync` | warning, OutOfSync |
 
-When severity escalates, the reason changes on purpose (so the key changes too): the escalation goes out as a new problem, and the old finding resolves. This keeps the state logic simple: one key always has one severity.
+A problem that can get worse while it lasts (`pvc-usage`, `cert-expiry`, `workload-replicas`) is **one finding with one key**: the key is built from a stable part (`usage`, `expiry`, `replicas`), while `Reason` and `Severity` change with how bad it is (`VolumeAlmostFull` → `VolumeFull`). The engine updates the record in place and, if a firing problem becomes critical, clears its "reported" marker so it is announced again as a new CRITICAL problem (with the original start time). No "resolved" notification and no pending gap; getting better again is silent, the later resolution is reported. Checks use `newEscalatingFinding` for this; all other checks use `newFinding`, where the reason is part of the key.
 
 ### kube
 ```go
@@ -332,7 +332,7 @@ Every phase: own branch from main, unit tests with fake objects, `go build`/`go 
 ## 7. Deliberate deviations / decisions
 - **`KUBECONFIG` without prefix:** it is the standard variable used by kubectl/client-go; a separate `SMOKEALARM_KUBECONFIG` would only add confusion.
 - **`notify.Log` as a second notifier:** a real second implementation (used when mail is off, and in phases 1–3), so the interface is not built "just in case".
-- **Escalation = new key:** warning→critical comes with its own reason (see table) instead of an in-place severity change.
+- **Escalation = same problem (changed after phase 6):** the first design (warning→critical as a new key) showed "All good" and sent a "resolved" mail while a volume was getting fuller. Now an escalation updates the existing record and is reported again; see the paragraph under the check table. Keys of the three affected checks changed (`…/usage`, `…/expiry`, `…/replicas`); no migration, because v0.1 is unreleased and old rows resolve on the next run.
 - **CronJob job failures are reported on the CronJob**, so the key stays stable across job runs.
 - **Only check-specific thresholds marked "Default" in the spec are configurable**; all other values are constants (spec: "no configuration effort").
 - **Rate limiting per client IP, in memory:** behind an ingress this effectively becomes one shared limit for everyone — acceptable for a single admin user.
