@@ -14,7 +14,11 @@ It was developed and tested with k3s on a Raspberry Pi (arm64). Nothing in it de
 
 ## How it works
 
-Every 30 seconds smokealarm runs all checks against its in-memory copy of the cluster state and compares the result with the previous run. A new problem starts as **pending**. If it is still there after `SMOKEALARM_ALERT_AFTER` (2 minutes by default), it becomes **firing** and is reported. When it goes away, it is **resolved** and reported again. A problem that disappears before the wait is over is never reported. All changes from one run go into a single mail. [ARCHITECTURE.md](ARCHITECTURE.md) has the details.
+Every 30 seconds smokealarm runs all checks against its in-memory copy of the cluster state and compares the result with the previous run. A new problem starts as **pending**. If it is still there after `SMOKEALARM_ALERT_AFTER` (2 minutes by default), it becomes **firing** and is reported. When it goes away, it is **resolved** and reported again. A problem that disappears before the wait is over is never reported. All changes from one run go into a single mail.
+
+If you already know about a critical problem, press **Acknowledge** on the overview. It stays on the page with a mark and sends no more reminders. You still get a mail when it is resolved. See [Acknowledging a problem](#acknowledging-a-problem) for the details.
+
+[ARCHITECTURE.md](ARCHITECTURE.md) has the details.
 
 ## Installation
 
@@ -116,6 +120,17 @@ Details: https://smokealarm.example.com
 
 If one run finds several changes, the subject is a count (`[smokealarm] 3 new problems, 1 resolved`) and the body lists all of them, critical problems first. A problem you were already told about triggers a new mail if it becomes critical. Set `SMOKEALARM_CRITICAL_REPEAT_INTERVAL` (chart: `config.criticalRepeatInterval`) to be reminded of critical problems that are still open: each one is reported again as `[smokealarm] STILL CRITICAL: ...` once its last report is that old. Warnings are not repeated. If the mail server is down, smokealarm tries again on the next run, even after a restart.
 
+## Acknowledging a problem
+
+Only firing critical problems can be acknowledged. Warnings are not repeated anyway.
+
+- An acknowledged problem sends no reminders, and the mark lasts until the problem is resolved. There is no undo.
+- "Resolved" is always reported, even if the first mail never went out. A first mail that is still waiting, for example during a mail server outage, is dropped once the problem is acknowledged. If you have several recipients, the others then only hear about it from the "resolved" mail.
+- If an acknowledged problem becomes a warning and then critical again, it stays acknowledged and no mail is sent.
+- If the problem returns after "resolved", it is a new alarm with a new mail.
+
+An acknowledgement covers one problem, identified by its key: check, object and reason. Only `pvc-usage`, `cert-expiry` and `workload-replicas` keep their key when the reason changes. For the other checks a new reason counts as a new problem, and so does a new object name, such as a pod that was recreated by its Deployment. The new problem gets its own mail and is not acknowledged.
+
 ## Configuration
 
 All configuration is done through environment variables starting with `SMOKEALARM_`. The Helm chart sets them from its [values.yaml](deploy/helm/smokealarm/values.yaml). Invalid values stop the program at startup with an error message. Durations use Go syntax (`30s`, `5m`, `2h`) plus `d` for days (`30d`).
@@ -197,6 +212,8 @@ smokealarm only needs `get`, `list` and `watch` on a short list of resources, an
 The container runs as non-root with a read-only root filesystem, all capabilities dropped, no privilege escalation and the default seccomp profile. It can only write to the data volume.
 
 There is one local admin, with the password stored as a bcrypt hash. Sessions are kept in the database, which stores only a hash of the session id. The cookie is `HttpOnly` and `SameSite=Lax`, and `Secure` unless you turn that off. Failed logins are limited to 5 per 15 minutes per client address; behind a proxy, all clients share one limit.
+
+Actions that change state, such as acknowledging a problem, need a valid session and refuse requests that come from another site or another host of the same domain (Go's `http.CrossOriginProtection`). Your proxy has to pass on the original `Host` header if you use plain HTTP, otherwise these actions fail with 403. Over HTTPS, browsers send a `Sec-Fetch-Site` header and the `Host` does not matter.
 
 Passwords, hashes and session ids are never logged.
 

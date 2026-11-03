@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -52,12 +53,15 @@ type page struct {
 }
 
 type problemView struct {
-	Severity string // "critical" or "warning", also used as CSS class
-	Object   string
-	Reason   string
-	Message  string
-	Since    string // exact time
-	Age      string // how long ago
+	ID             int64
+	Severity       string // "critical" or "warning", also used as CSS class
+	Object         string
+	Reason         string
+	Message        string
+	Since          string // exact time
+	Age            string // how long ago
+	CanAcknowledge bool   // critical and not acknowledged yet
+	AcknowledgedAt string // exact time, empty if not acknowledged
 }
 
 type historyView struct {
@@ -179,14 +183,7 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 	now := s.Now()
 	data := page{Title: "Overview", Active: "overview", ShowNav: true, Refresh: true}
 	for _, rec := range firing {
-		data.Problems = append(data.Problems, problemView{
-			Severity: string(rec.Severity),
-			Object:   objectLabel(rec.Object),
-			Reason:   rec.Reason,
-			Message:  rec.Message,
-			Since:    rec.FirstSeen.UTC().Format(timeFormat),
-			Age:      formatAge(now.Sub(rec.FirstSeen)),
-		})
+		data.Problems = append(data.Problems, newProblemView(rec, now))
 	}
 
 	lastRun := s.Status().LastRun
@@ -197,6 +194,44 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 		data.LastRunAgo = formatAge(now.Sub(lastRun))
 	}
 	s.render(w, http.StatusOK, "overview", data)
+}
+
+// newProblemView prepares one firing problem for the overview.
+func newProblemView(rec store.Record, now time.Time) problemView {
+	view := problemView{
+		ID:             rec.ID,
+		Severity:       string(rec.Severity),
+		Object:         objectLabel(rec.Object),
+		Reason:         rec.Reason,
+		Message:        rec.Message,
+		Since:          rec.FirstSeen.UTC().Format(timeFormat),
+		Age:            formatAge(now.Sub(rec.FirstSeen)),
+		CanAcknowledge: rec.Severity == checks.Critical && rec.AcknowledgedAt == nil,
+	}
+	if rec.AcknowledgedAt != nil {
+		view.AcknowledgedAt = rec.AcknowledgedAt.UTC().Format(timeFormat)
+	}
+	return view
+}
+
+// acknowledge marks a firing critical problem as known, which stops its
+// reminders until it is resolved. It always returns to the overview: if the
+// problem is gone or changed in the meantime, the page shows that.
+func (s *Server) acknowledge(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	key, changed, err := s.Store.Acknowledge(r.Context(), id, s.Now())
+	if err != nil {
+		s.serverError(w, "acknowledge finding", err)
+		return
+	}
+	if changed {
+		s.Logger.Info("finding acknowledged", "key", key)
+	}
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 // sortProblems puts critical first, then the longest-lasting problems.

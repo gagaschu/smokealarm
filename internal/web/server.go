@@ -79,6 +79,15 @@ func (s *Server) Handler() (http.Handler, error) {
 	mux.Handle("GET /history", protected(s.history))
 	mux.Handle("GET /status", protected(s.status))
 
+	// Actions change state, so they also refuse requests that a browser
+	// reports as coming from another site. SameSite=Lax alone would still let
+	// a different host of the same domain submit a form here.
+	crossOrigin := http.NewCrossOriginProtection()
+	action := func(handler http.HandlerFunc) http.Handler {
+		return crossOrigin.Handler(s.Sessions.Require(handler))
+	}
+	mux.Handle("POST /problems/{id}/acknowledge", action(s.acknowledge))
+
 	return securityHeaders(mux), nil
 }
 

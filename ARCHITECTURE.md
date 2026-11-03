@@ -40,7 +40,7 @@ A check is a plain function: *snapshot in, findings out*. It never talks to the 
 | `internal/store` | SQLite: findings and login sessions. The schema lives in numbered SQL files (`migrations/`) that are applied at startup. |
 | `internal/notify` | Sends notifications. `Notifier` is an interface with two implementations: mail and log. A Telegram or webhook notifier would be one more file. |
 | `internal/auth` | Password check, sessions, the login rate limit. The middleware only asks "is there a valid session?", so another login method (OIDC) can be added without touching it. |
-| `internal/web` | The pages (overview, history, status, login), as HTML templates and one CSS file, all embedded in the binary. |
+| `internal/web` | The pages (overview, history, status, login) and the acknowledge action, as HTML templates and one CSS file, all embedded in the binary. |
 | `deploy/helm/smokealarm` | The Helm chart. |
 
 ## The life of a finding
@@ -58,6 +58,7 @@ A finding has a stable **key** (check + object + a fixed word), so smokealarm ca
 - Reporting is remembered in the database *after* a successful send, so a failed mail is retried at the next run, even after a restart.
 - If a firing problem gets worse (warning → critical), it stays the same problem and is reported again as critical.
 - With `CRITICAL_REPEAT_INTERVAL` set, a critical problem that is still firing is reported again once its last report is that old. Warnings are not repeated.
+- A firing critical problem can be acknowledged in the web UI. From then on only its end is reported: no reminders, no mail if it goes from warning back to critical, and a first mail that has not gone out yet is dropped. The mark belongs to this one alarm, so a problem that returns after "resolved" is new again.
 - If a check cannot get its data (for example the kubelet does not answer), it is skipped for that run and its open problems are left alone, because "no data" is not "all fine". They get no reminders either, until the check runs again.
 - If a check is switched off (configuration, or an optional CRD or permission is missing at startup), its open problems count as gone and are reported as resolved in the next run. The README says so, because switching a check off can look like a recovery.
 

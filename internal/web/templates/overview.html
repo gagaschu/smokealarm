@@ -16,11 +16,16 @@
   <li class="problem {{.Severity}}">
     <div class="headline">
       <span class="badge {{.Severity}}">{{.Severity}}</span>
+      {{if .AcknowledgedAt}}<span class="badge acknowledged">acknowledged</span>{{end}}
       <strong>{{.Reason}}</strong>
       <span class="object">{{.Object}}</span>
     </div>
     <p class="message">{{.Message}}</p>
-    <p class="since">since <time title="{{.Since}}">{{.Age}} ago</time></p>
+    <p class="since">since <time title="{{.Since}}">{{.Age}} ago</time>{{if .AcknowledgedAt}}, acknowledged {{.AcknowledgedAt}}{{end}}</p>
+    {{if .CanAcknowledge}}<form class="acknowledge" method="post" action="/problems/{{.ID}}/acknowledge">
+      <button type="submit">Acknowledge</button>
+      <span class="since">No more reminders. You still get a mail when it is resolved.</span>
+    </form>{{end}}
   </li>
   {{end}}
 </ul>
