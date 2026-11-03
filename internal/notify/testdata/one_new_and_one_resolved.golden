@@ -1,0 +1,16 @@
+1 new problem, 1 resolved
+
+NEW PROBLEMS
+
+[CRITICAL] CrashLoopBackOff
+  Object:  Pod media/jellyfin
+  Message: container jellyfin keeps crashing (7 restarts), last exit code 137 (Error)
+  Since:   2026-11-03 10:00:00 UTC
+
+RESOLVED
+
+[RESOLVED] ReplicasUnavailable
+  Object:   Deployment media/sonarr
+  Message:  1/2 replicas available
+  Since:    2026-11-03 10:30:00 UTC
+  Resolved: 2026-11-03 12:30:00 UTC

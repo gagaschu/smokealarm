@@ -1,0 +1,15 @@
+2 resolved
+
+RESOLVED
+
+[RESOLVED] CrashLoopBackOff
+  Object:   Pod media/jellyfin
+  Message:  container jellyfin keeps crashing (7 restarts), last exit code 137 (Error)
+  Since:    2026-11-03 10:00:00 UTC
+  Resolved: 2026-11-03 12:30:00 UTC
+
+[RESOLVED] NotReady
+  Object:   Node pi-2
+  Message:  node is not ready for 10m0s (status Unknown): Kubelet stopped posting node status.
+  Since:    2026-11-03 10:00:00 UTC
+  Resolved: 2026-11-03 12:30:00 UTC
