@@ -6,3 +6,6 @@
 *.db
 *.db-shm
 *.db-wal
+
+# Build output
+/bin/

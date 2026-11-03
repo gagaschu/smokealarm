@@ -1,0 +1,8 @@
+.git
+.claude
+bin
+deploy
+*.db
+*.db-shm
+*.db-wal
+*.md

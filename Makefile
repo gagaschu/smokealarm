@@ -1,0 +1,61 @@
+# smokealarm: common tasks. Run "make help" for the list.
+
+IMAGE      ?= ghcr.io/gagaschu/smokealarm
+TAG        ?= dev
+PLATFORMS  ?= linux/amd64,linux/arm64
+GO_VERSION := $(shell awk '/^go /{print $$2}' go.mod)
+
+.DEFAULT_GOAL := help
+
+.PHONY: help
+help: ## Show this list
+	@awk 'BEGIN{FS=":.*## "} /^[a-z-]+:.*## /{printf "  %-14s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+
+.PHONY: build
+build: ## Build the binary into bin/smokealarm
+	CGO_ENABLED=0 go build -trimpath -o bin/smokealarm ./cmd/smokealarm
+
+.PHONY: test
+test: ## Run go vet and all tests (with the race detector)
+	go vet ./...
+	go test -race ./...
+
+.PHONY: lint
+lint: ## Run golangci-lint
+	golangci-lint run
+
+# Local run against the cluster from KUBECONFIG. The password hash is required;
+# create one with "make hash-password". The defaults suit local development:
+# readable logs and a session cookie that also works over plain HTTP.
+.PHONY: run
+run: ## Run locally against KUBECONFIG (needs SMOKEALARM_ADMIN_PASSWORD_HASH)
+	@test -n "$$SMOKEALARM_ADMIN_PASSWORD_HASH" || { \
+	  echo 'SMOKEALARM_ADMIN_PASSWORD_HASH is not set. Create one with "make hash-password" and export it.'; exit 1; }
+	SMOKEALARM_ADMIN_USER=$${SMOKEALARM_ADMIN_USER:-admin} \
+	SMOKEALARM_LOG_FORMAT=$${SMOKEALARM_LOG_FORMAT:-text} \
+	SMOKEALARM_COOKIE_SECURE=$${SMOKEALARM_COOKIE_SECURE:-false} \
+	go run ./cmd/smokealarm
+
+.PHONY: hash-password
+hash-password: ## Ask for a password and print its bcrypt hash
+	@read -s -p 'Password: ' pw; echo >&2; printf '%s' "$$pw" | go run ./cmd/smokealarm hash-password
+
+# Multi-architecture image (amd64 and arm64). This needs a buildx builder that
+# supports multiple platforms (create one once with "docker buildx create --use",
+# or turn on the containerd image store in Docker Desktop). Without PUSH=1 it
+# is only built; a multi-arch image cannot be loaded into the local Docker, use
+# "make image-local" for that. Example for publishing:
+#   make image IMAGE=ghcr.io/you/smokealarm TAG=0.1.0 PUSH=1
+.PHONY: image
+image: ## Build the multi-arch image (PUSH=1 to push it)
+	docker buildx build --platform $(PLATFORMS) --build-arg GO_VERSION=$(GO_VERSION) \
+	  -t $(IMAGE):$(TAG) $(if $(PUSH),--push,) .
+
+.PHONY: image-local
+image-local: ## Build the image for this machine and load it into Docker
+	docker buildx build --load --build-arg GO_VERSION=$(GO_VERSION) -t $(IMAGE):$(TAG) .
+
+.PHONY: chart
+chart: ## Lint the Helm chart and render it with the default and the example values
+	helm lint deploy/helm/smokealarm --set auth.passwordHash='$$2a$$10$$example'
+	helm template smokealarm deploy/helm/smokealarm --set auth.passwordHash='$$2a$$10$$example' > /dev/null
