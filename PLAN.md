@@ -116,7 +116,7 @@ Fixed values (constants, per spec): OOM window 15m, restart window 1h, PVC usage
 | | `node-pressure` | warning, MemoryPressure / DiskPressure / PIDPressure |
 | jobs.go | `job-failed` | warning, JobFailed (standalone Job) / LastJobFailed (on the **CronJob**, newest job only → stable key) |
 | | `cronjob-missed` | warning, MissedSchedule (robfig/cron, respects `spec.timeZone`, suspended CronJobs skipped) |
-| storage.go | `pvc-pending` | warning, PVCPending |
+| storage.go | `pvc-pending` | warning, PVCPending (claims of a WaitForFirstConsumer StorageClass are skipped; a waiting pod is covered by `pod-pending`) |
 | | `pvc-usage` | warning VolumeAlmostFull (>85 %) / critical VolumeFull (>95 %) |
 | certs.go | `cert-not-ready` | warning, CertificateNotReady |
 | | `cert-expiry` | warning ExpiresSoon (<14d) / critical ExpiresVerySoon (<3d) |
@@ -327,7 +327,7 @@ Every phase: own branch from main, unit tests with fake objects, `go build`/`go 
 4. **phase-4-mail** – `notify.Mail` (STARTTLS/TLS/auth/multiple recipients), subject/body templates, golden tests (`testdata/*.golden`, `-update` flag), SMTP config validation, last send error in `Status`. Try it locally with Mailpit (`SMTP_TLS=none`).
 5. **phase-5-web** – `auth` (login, sessions, middleware, rate limit), `hash-password` subcommand, `web` (overview, history with namespace filter, status, CSS, auto-refresh), `/readyz` incl. DB ping. Handler tests with `httptest`.
 6. **phase-6-optional-checks** – discovery of cert-manager/Argo CD, dynamic informers + conversion to `Certificate`/`Application`, `certs.go`, `argocd.go`, kubelet stats + `pvc-usage`, skip reasons on the status page. Tests incl. "CRD missing".
-7. **phase-7-packaging** – Dockerfile (multi-stage, distroless/static:nonroot, buildx amd64/arm64), Makefile (build, test, lint, run, image), Helm chart (Recreate, PVC, RBAC switches, Secret/existingSecret, probes, resources, securityContext, optional Ingress), README, ARCHITECTURE.md, LICENSE (Apache-2.0), CHANGELOG.md.
+7. **phase-7-packaging** – Dockerfile (multi-stage, distroless/static:nonroot, buildx amd64/arm64), Makefile (build, test, lint, run, image), Helm chart (RBAC read access: namespaces, pods, events, nodes, deployments, statefulsets, daemonsets, jobs, cronjobs, persistentvolumeclaims, storageclasses; Recreate, PVC, RBAC switches, Secret/existingSecret, probes, resources, securityContext, optional Ingress), README, ARCHITECTURE.md, LICENSE (Apache-2.0), CHANGELOG.md.
 
 ## 7. Deliberate deviations / decisions
 - **`KUBECONFIG` without prefix:** it is the standard variable used by kubectl/client-go; a separate `SMOKEALARM_KUBECONFIG` would only add confusion.

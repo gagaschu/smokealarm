@@ -5,15 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
-
-	"github.com/gagaschu/smokealarm/internal/checks"
 )
 
 // resyncPeriod is zero: we only read the caches, so periodic resyncs of
@@ -30,9 +27,17 @@ type Cluster struct {
 	coreFactory  informers.SharedInformerFactory
 	eventFactory informers.SharedInformerFactory
 
-	namespaces cache.SharedIndexInformer
-	pods       cache.SharedIndexInformer
-	events     cache.SharedIndexInformer
+	namespaces     cache.SharedIndexInformer
+	pods           cache.SharedIndexInformer
+	events         cache.SharedIndexInformer
+	deployments    cache.SharedIndexInformer
+	statefulSets   cache.SharedIndexInformer
+	daemonSets     cache.SharedIndexInformer
+	nodes          cache.SharedIndexInformer
+	jobs           cache.SharedIndexInformer
+	cronJobs       cache.SharedIndexInformer
+	pvcs           cache.SharedIndexInformer
+	storageClasses cache.SharedIndexInformer
 }
 
 // New prepares the informers but does not start them; call Start for that.
@@ -47,14 +52,31 @@ func New(client kubernetes.Interface, logger *slog.Logger) (*Cluster, error) {
 	c.namespaces = c.coreFactory.Core().V1().Namespaces().Informer()
 	c.pods = c.coreFactory.Core().V1().Pods().Informer()
 	c.events = c.eventFactory.Core().V1().Events().Informer()
+	c.deployments = c.coreFactory.Apps().V1().Deployments().Informer()
+	c.statefulSets = c.coreFactory.Apps().V1().StatefulSets().Informer()
+	c.daemonSets = c.coreFactory.Apps().V1().DaemonSets().Informer()
+	c.nodes = c.coreFactory.Core().V1().Nodes().Informer()
+	c.jobs = c.coreFactory.Batch().V1().Jobs().Informer()
+	c.cronJobs = c.coreFactory.Batch().V1().CronJobs().Informer()
+	c.pvcs = c.coreFactory.Core().V1().PersistentVolumeClaims().Informer()
+	c.storageClasses = c.coreFactory.Storage().V1().StorageClasses().Informer()
 
 	// Transforms must be set before the informers start.
-	for _, informer := range []cache.SharedIndexInformer{c.namespaces, c.pods, c.events} {
+	for _, informer := range c.allInformers() {
 		if err := informer.SetTransform(trimObject); err != nil {
 			return nil, fmt.Errorf("set informer transform: %w", err)
 		}
 	}
 	return c, nil
+}
+
+// allInformers lists every informer, for the steps that treat them alike.
+func (c *Cluster) allInformers() []cache.SharedIndexInformer {
+	return []cache.SharedIndexInformer{
+		c.namespaces, c.pods, c.events,
+		c.deployments, c.statefulSets, c.daemonSets,
+		c.nodes, c.jobs, c.cronJobs, c.pvcs, c.storageClasses,
+	}
 }
 
 // onlyWarnings keeps Normal events out of the cache; they are the vast
@@ -73,7 +95,11 @@ func (c *Cluster) Start(ctx context.Context) {
 // WaitForSync blocks until all caches hold the initial list of objects.
 // Running checks before that would report objects as missing.
 func (c *Cluster) WaitForSync(ctx context.Context) error {
-	if !cache.WaitForCacheSync(ctx.Done(), c.namespaces.HasSynced, c.pods.HasSynced, c.events.HasSynced) {
+	var synced []cache.InformerSynced
+	for _, informer := range c.allInformers() {
+		synced = append(synced, informer.HasSynced)
+	}
+	if !cache.WaitForCacheSync(ctx.Done(), synced...) {
 		return errors.New("informer caches did not sync before shutdown")
 	}
 	c.logger.Info("informer caches synced")
@@ -82,7 +108,12 @@ func (c *Cluster) WaitForSync(ctx context.Context) error {
 
 // Synced reports whether the caches are filled. It backs /readyz.
 func (c *Cluster) Synced() bool {
-	return c.namespaces.HasSynced() && c.pods.HasSynced() && c.events.HasSynced()
+	for _, informer := range c.allInformers() {
+		if !informer.HasSynced() {
+			return false
+		}
+	}
+	return true
 }
 
 // Ready is the readiness probe for the web server.
@@ -91,26 +122,4 @@ func (c *Cluster) Ready() error {
 		return errors.New("informer caches are not synced yet")
 	}
 	return nil
-}
-
-// BuildSnapshot copies the current cache contents into a snapshot. The
-// objects are shared with the cache, so checks must treat them as read-only.
-func (c *Cluster) BuildSnapshot(now time.Time) *checks.Snapshot {
-	snap := &checks.Snapshot{Now: now}
-	for _, obj := range c.namespaces.GetStore().List() {
-		if ns, ok := obj.(*corev1.Namespace); ok {
-			snap.Namespaces = append(snap.Namespaces, ns)
-		}
-	}
-	for _, obj := range c.pods.GetStore().List() {
-		if pod, ok := obj.(*corev1.Pod); ok {
-			snap.Pods = append(snap.Pods, pod)
-		}
-	}
-	for _, obj := range c.events.GetStore().List() {
-		if event, ok := obj.(*corev1.Event); ok {
-			snap.Events = append(snap.Events, event)
-		}
-	}
-	return snap
 }

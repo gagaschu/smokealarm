@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+	_ "time/tzdata" // CronJob time zones must work in the distroless image, which has no zoneinfo
 
 	"github.com/gagaschu/smokealarm/internal/checks"
 	"github.com/gagaschu/smokealarm/internal/config"
@@ -36,6 +37,12 @@ func run() error {
 		return fmt.Errorf("load config: %w", err)
 	}
 	logger := newLogger(cfg.LogFormat, cfg.LogLevel)
+
+	enabledChecks, err := checks.Select(cfg.DisabledChecks)
+	if err != nil {
+		return fmt.Errorf("select checks: %w", err)
+	}
+	logger.Info("checks selected", "enabled", len(enabledChecks), "disabled", cfg.DisabledChecks)
 
 	// Stop cleanly on Ctrl-C locally and on SIGTERM from Kubernetes.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -70,10 +77,12 @@ func run() error {
 
 	loop := &engine.Engine{
 		Snapshot: cluster.BuildSnapshot,
-		Checks:   checks.All(),
+		Checks:   enabledChecks,
 		Options: checks.Options{
 			RestartThreshold:  cfg.RestartThreshold,
 			PodPendingAfter:   cfg.PodPendingAfter,
+			PVCPendingAfter:   cfg.PVCPendingAfter,
+			CronJobGrace:      cfg.CronJobGrace,
 			IgnoredNamespaces: cfg.IgnoreNamespaces,
 		},
 		Interval: cfg.CheckInterval,
