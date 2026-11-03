@@ -1,0 +1,27 @@
+{{define "content"}}
+<h1>Downtimes</h1>
+{{if .Downtimes}}
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>Until (UTC)</th><th>Remaining</th><th>Object</th><th>Reason</th><th>Problem now</th><th></th></tr>
+  </thead>
+  <tbody>
+    {{range .Downtimes}}
+    <tr>
+      <td class="nowrap" data-label="Until (UTC)">{{.Until}}</td>
+      <td class="nowrap" data-label="Remaining">{{.Remaining}}</td>
+      <td class="wrap" data-label="Object">{{.Object}}</td>
+      <td class="nowrap" data-label="Reason">{{.Reason}}</td>
+      <td class="nowrap" data-label="Problem now">{{if .Firing}}active{{else}}not active{{end}}</td>
+      <td class="nowrap"><form method="post" action="/downtimes/{{.ID}}/end"><button type="submit">End now</button></form></td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}
+<p>No downtimes are running. You can set one for a problem on the overview or in the history.</p>
+{{end}}
+{{template "downtimeHint"}}
+{{end}}

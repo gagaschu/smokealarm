@@ -16,7 +16,7 @@ import (
 // Limits and formats for the pages.
 const (
 	historyLimit = 200
-	loginBodyMax = 4 << 10 // a login form is tiny; refuse anything bigger
+	formBodyMax  = 4 << 10 // our forms are tiny; refuse anything bigger
 	timeFormat   = "2006-01-02 15:04:05 UTC"
 
 	// historyTimeFormat is shorter than timeFormat to save space in the
@@ -31,7 +31,7 @@ type page struct {
 	ShowNav bool
 	Refresh bool // reload the page every 30 seconds
 
-	// login
+	// login and downtime form
 	Error string
 
 	// overview
@@ -50,6 +50,10 @@ type page struct {
 
 	// status
 	Status statusView
+
+	// downtimes
+	Downtimes    []downtimeView
+	DowntimeForm downtimeFormView
 }
 
 type problemView struct {
@@ -62,15 +66,18 @@ type problemView struct {
 	Age            string // how long ago
 	CanAcknowledge bool   // critical and not acknowledged yet
 	AcknowledgedAt string // exact time, empty if not acknowledged
+	DowntimeUntil  string // end of the running downtime, empty if there is none
 }
 
 type historyView struct {
-	Severity   string
-	Object     string
-	Reason     string
-	Message    string
-	ResolvedAt string
-	Lasted     string
+	ID            int64
+	Severity      string
+	Object        string
+	Reason        string
+	Message       string
+	ResolvedAt    string
+	Lasted        string
+	DowntimeUntil string // end of the running downtime, empty if there is none
 }
 
 type statusView struct {
@@ -129,7 +136,7 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, loginBodyMax)
+	r.Body = http.MaxBytesReader(w, r.Body, formBodyMax)
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
@@ -181,9 +188,16 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 	sortProblems(firing)
 
 	now := s.Now()
+	downtimeEnds, err := s.downtimeEnds(r.Context(), now)
+	if err != nil {
+		s.serverError(w, "load downtimes", err)
+		return
+	}
 	data := page{Title: "Overview", Active: "overview", ShowNav: true, Refresh: true}
 	for _, rec := range firing {
-		data.Problems = append(data.Problems, newProblemView(rec, now))
+		view := newProblemView(rec, now)
+		view.DowntimeUntil = downtimeEnds[rec.Key]
+		data.Problems = append(data.Problems, view)
 	}
 
 	lastRun := s.Status().LastRun
@@ -263,6 +277,11 @@ func (s *Server) history(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, "load namespaces", err)
 		return
 	}
+	downtimeEnds, err := s.downtimeEnds(r.Context(), s.Now())
+	if err != nil {
+		s.serverError(w, "load downtimes", err)
+		return
+	}
 
 	data := page{
 		Title: "History", Active: "history", ShowNav: true, Refresh: true,
@@ -273,10 +292,12 @@ func (s *Server) history(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, rec := range records {
 		view := historyView{
-			Severity: string(rec.Severity),
-			Object:   objectLabel(rec.Object),
-			Reason:   rec.Reason,
-			Message:  rec.Message,
+			ID:            rec.ID,
+			Severity:      string(rec.Severity),
+			Object:        objectLabel(rec.Object),
+			Reason:        rec.Reason,
+			Message:       rec.Message,
+			DowntimeUntil: downtimeEnds[rec.Key],
 		}
 		if rec.ResolvedAt != nil {
 			view.ResolvedAt = rec.ResolvedAt.UTC().Format(historyTimeFormat)

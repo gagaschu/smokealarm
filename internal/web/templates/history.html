@@ -14,7 +14,7 @@
 <div class="table-wrap">
 <table>
   <thead>
-    <tr><th>Resolved (UTC)</th><th>Lasted</th><th>Severity</th><th>Object</th><th>Reason</th><th>Message</th></tr>
+    <tr><th>Resolved (UTC)</th><th>Lasted</th><th>Severity</th><th>Object</th><th>Reason</th><th>Message</th><th>Downtime</th></tr>
   </thead>
   <tbody>
     {{range .History}}
@@ -25,6 +25,7 @@
       <td class="wrap" data-label="Object">{{.Object}}</td>
       <td class="nowrap" data-label="Reason">{{.Reason}}</td>
       <td class="message-cell" data-label="Message">{{.Message}}</td>
+      <td class="nowrap" data-label="Downtime">{{if .DowntimeUntil}}<span class="badge downtime">downtime</span> until {{.DowntimeUntil}}<br><a href="/downtimes/new?finding={{.ID}}">Change</a>{{else}}<a href="/downtimes/new?finding={{.ID}}">Set downtime</a>{{end}}</td>
     </tr>
     {{end}}
   </tbody>

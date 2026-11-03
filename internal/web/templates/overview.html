@@ -17,15 +17,18 @@
     <div class="headline">
       <span class="badge {{.Severity}}">{{.Severity}}</span>
       {{if .AcknowledgedAt}}<span class="badge acknowledged">acknowledged</span>{{end}}
+      {{if .DowntimeUntil}}<span class="badge downtime">downtime</span>{{end}}
       <strong>{{.Reason}}</strong>
       <span class="object">{{.Object}}</span>
     </div>
     <p class="message">{{.Message}}</p>
     <p class="since">since <time title="{{.Since}}">{{.Age}} ago</time>{{if .AcknowledgedAt}}, acknowledged {{.AcknowledgedAt}}{{end}}</p>
+    {{if .DowntimeUntil}}<p class="since">No mails during the downtime until {{.DowntimeUntil}}.</p>{{end}}
     {{if .CanAcknowledge}}<form class="acknowledge" method="post" action="/problems/{{.ID}}/acknowledge">
       <button type="submit">Acknowledge</button>
       <span class="since">No more reminders. You still get a mail when it is resolved.</span>
     </form>{{end}}
+    <p class="since"><a href="/downtimes/new?finding={{.ID}}">{{if .DowntimeUntil}}Change downtime{{else}}Set downtime{{end}}</a></p>
   </li>
   {{end}}
 </ul>
