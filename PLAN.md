@@ -171,7 +171,7 @@ type Status struct {
 }
 func (e *Engine) Run(ctx)                       // ticker loop
 func (e *Engine) RunOnce(ctx) error             // snapshot → checks → reconcile → notify → retention
-func (e *Engine) Reconcile(ctx, findings []checks.Finding, ranChecks []string, now) error // testable without kube
+func (e *Engine) reconcile(open []store.Record, findings []checks.Finding, skipped []string, now) store.Changes // pure, no I/O
 func (e *Engine) Status() Status
 ```
 **Reconcile rules:**
@@ -282,6 +282,7 @@ CREATE TABLE sessions (
 );
 CREATE INDEX sessions_expires ON sessions(expires_at);
 ```
+Implementation note (phase 3): `001_findings.sql` contains only the `findings` table; `schema_migrations` is created by the migration code itself; the `sessions` table arrives with phase 5 as `002_sessions.sql`.
 Migrations: files `NNN_name.sql` are embedded, applied in order, each in a transaction; the version goes into `schema_migrations`.
 
 ## 5. Environment variables
@@ -292,7 +293,7 @@ Durations: Go format (`30s`, `5m`, `2h`) plus a `d` suffix for days (`30d`). Lis
 | `SMOKEALARM_CHECK_INTERVAL` | `30s` | Interval between check runs |
 | `SMOKEALARM_ALERT_AFTER` | `2m` | How long a problem must persist before it fires |
 | `SMOKEALARM_RETENTION` | `30d` | Keep resolved findings this long |
-| `SMOKEALARM_DB_PATH` | `/data/smokealarm.db` | SQLite file (locally e.g. `./smokealarm.db`) |
+| `SMOKEALARM_DB_PATH` | `smokealarm.db` | SQLite file; the Helm chart sets `/data/smokealarm.db` |
 | `SMOKEALARM_LISTEN_ADDR` | `:8080` | HTTP listen address |
 | `SMOKEALARM_BASE_URL` | – | Public URL of the UI, used for links in mails |
 | `SMOKEALARM_LOG_FORMAT` | `auto` | `json`, `text`, `auto` (json in cluster, text locally) |
@@ -338,3 +339,7 @@ Every phase: own branch from main, unit tests with fake objects, `go build`/`go 
 - **Rate limiting per client IP, in memory:** behind an ingress this effectively becomes one shared limit for everyone — acceptable for a single admin user.
 - **Engine status in memory** (mutex-protected); after a restart, "last send error" is empty until the next attempt.
 - **CSRF:** no token; SameSite=Lax plus POST-only for login/logout is enough for v0.1.
+- **Store persists, engine decides (phase 3):** `store.Apply(Changes)` writes inserts, updates and deletes in one transaction; the pending/firing/resolved rules live in the pure function `engine.reconcile`.
+- **`skipped` instead of `ranChecks` (phase 3):** `reconcile` gets the checks that could not run this time. Problems of checks that were disabled (or removed) are resolved normally instead of staying "firing" forever.
+- **Per-run finding log line is Debug (phase 3):** state transitions are logged at Info, so the log does not repeat every 30 s.
+- **`go:embed` needs one package-level variable** (`migrationFiles` in `internal/store`); it is never modified.
