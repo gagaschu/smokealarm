@@ -1,26 +1,34 @@
-{{define "downtimeHint"}}<p class="footnote">During a downtime this problem sends no mail, not even "resolved". If it is still active when the downtime ends, you get a mail. If it is gone by then, nothing is sent.</p>
-<p class="footnote">A downtime covers exactly one problem: the same check, object and reason. A new reason or a new object name, such as a recreated pod, is a new problem and sends mail as usual. Only <code>pvc-usage</code>, <code>cert-expiry</code> and <code>workload-replicas</code> stay the same problem when the reason changes.</p>{{end}}
+{{define "downtimeHint"}}<aside class="hint">{{template "icon-info"}}<div>
+<p>During a downtime this problem sends no mail, not even "resolved". If it is still active when the downtime ends, you get a mail. If it is gone by then, nothing is sent.</p>
+<p>A downtime covers exactly one problem: the same check, object and reason. A new reason or a new object name, such as a recreated pod, is a new problem and sends mail as usual. Only <code>pvc-usage</code>, <code>cert-expiry</code> and <code>workload-replicas</code> stay the same problem when the reason changes.</p>
+</div></aside>{{end}}
 {{define "layout"}}<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#171a21" media="(prefers-color-scheme: dark)">
 {{if .Refresh}}<meta http-equiv="refresh" content="30">
 {{end}}<title>{{.Title}} – smokealarm</title>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-<header>
-  <a class="brand" href="/">smokealarm</a>
-  {{if .ShowNav}}<nav>
-    <a href="/"{{if eq .Active "overview"}} aria-current="page"{{end}}>Overview</a>
-    <a href="/history"{{if eq .Active "history"}} aria-current="page"{{end}}>History</a>
-    <a href="/downtimes"{{if eq .Active "downtimes"}} aria-current="page"{{end}}>Downtimes</a>
-    <a href="/status"{{if eq .Active "status"}} aria-current="page"{{end}}>Status</a>
-    <form method="post" action="/logout"><button type="submit">Log out</button></form>
-  </nav>{{end}}
+{{if .ShowNav}}<header class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="/"><span class="logo">{{template "icon-flame"}}</span>smokealarm</a>
+    <nav aria-label="Main">
+      <a href="/"{{if eq .Active "overview"}} aria-current="page"{{end}}>Overview</a>
+      <a href="/history"{{if eq .Active "history"}} aria-current="page"{{end}}>History</a>
+      <a href="/downtimes"{{if eq .Active "downtimes"}} aria-current="page"{{end}}>Downtimes</a>
+      <a href="/status"{{if eq .Active "status"}} aria-current="page"{{end}}>Status</a>
+    </nav>
+    <form class="logout" method="post" action="/logout"><button class="ghost" type="submit">{{template "icon-logout"}}Log out</button></form>
+  </div>
 </header>
-<main>
+{{end}}<main>
 {{template "content" .}}
 </main>
 </body>

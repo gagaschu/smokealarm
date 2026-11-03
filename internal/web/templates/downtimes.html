@@ -1,5 +1,7 @@
 {{define "content"}}
-<h1>Downtimes</h1>
+<div class="page-head">
+  <h1>Downtimes</h1>
+</div>
 {{if .Downtimes}}
 <div class="table-wrap">
 <table>
@@ -9,19 +11,19 @@
   <tbody>
     {{range .Downtimes}}
     <tr>
-      <td class="nowrap" data-label="Until (UTC)">{{.Until}}</td>
-      <td class="nowrap" data-label="Remaining">{{.Remaining}}</td>
-      <td class="wrap" data-label="Object">{{.Object}}</td>
-      <td class="nowrap" data-label="Reason">{{.Reason}}</td>
-      <td class="nowrap" data-label="Problem now">{{if .Firing}}active{{else}}not active{{end}}</td>
-      <td class="nowrap"><form method="post" action="/downtimes/{{.ID}}/end"><button type="submit">End now</button></form></td>
+      <td class="nowrap time" data-label="Until (UTC)">{{.Until}}</td>
+      <td class="nowrap time" data-label="Remaining">{{.Remaining}}</td>
+      <td class="wrap mono" data-label="Object">{{.Object}}</td>
+      <td class="nowrap strong" data-label="Reason">{{.Reason}}</td>
+      <td class="nowrap" data-label="Problem now">{{if .Firing}}<span class="pill alert">active</span>{{else}}<span class="pill">not active</span>{{end}}</td>
+      <td class="nowrap end"><form method="post" action="/downtimes/{{.ID}}/end"><button class="small" type="submit">{{template "icon-x"}}End now</button></form></td>
     </tr>
     {{end}}
   </tbody>
 </table>
 </div>
 {{else}}
-<p>No downtimes are running. You can set one for a problem on the overview or in the history.</p>
+<div class="empty"><p>No downtimes are running. You can set one for a problem on the overview or in the history.</p></div>
 {{end}}
 {{template "downtimeHint"}}
 {{end}}

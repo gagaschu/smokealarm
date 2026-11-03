@@ -40,7 +40,7 @@ A check is a plain function: *snapshot in, findings out*. It never talks to the 
 | `internal/store` | SQLite: findings, downtimes and login sessions. The schema lives in numbered SQL files (`migrations/`) that are applied at startup. |
 | `internal/notify` | Sends notifications. `Notifier` is an interface with two implementations: mail and log. A Telegram or webhook notifier would be one more file. |
 | `internal/auth` | Password check, sessions, the login rate limit. The middleware only asks "is there a valid session?", so another login method (OIDC) can be added without touching it. |
-| `internal/web` | The pages (overview, history, downtimes, status, login) and the actions (acknowledge and remove that, downtimes), as HTML templates and one CSS file, all embedded in the binary. |
+| `internal/web` | The pages (overview, history, downtimes, status, login) and the actions (acknowledge and remove that, downtimes), as HTML templates, one CSS file, small SVG icons and a favicon, all embedded in the binary. |
 | `deploy/helm/smokealarm` | The Helm chart. |
 
 ## The life of a finding

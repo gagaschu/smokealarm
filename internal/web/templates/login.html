@@ -1,15 +1,19 @@
 {{define "content"}}
-<section class="login">
-  <h1>Log in</h1>
+<section class="login panel">
+  <div class="login-head">
+    <span class="logo">{{template "icon-flame"}}</span>
+    <h1>Log in</h1>
+    <p>smokealarm – silent until something's on fire</p>
+  </div>
   {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
-  <form method="post" action="/login">
-    <label>Username
+  <form class="stack" method="post" action="/login">
+    <label class="field">Username
       <input name="username" autocomplete="username" required autofocus>
     </label>
-    <label>Password
+    <label class="field">Password
       <input name="password" type="password" autocomplete="current-password" required>
     </label>
-    <button type="submit">Log in</button>
+    <button class="primary" type="submit">Log in</button>
   </form>
 </section>
 {{end}}

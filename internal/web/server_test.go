@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -179,6 +180,29 @@ func TestStaticFilesAndProbesNeedNoLogin(t *testing.T) {
 	if rec := e.do(http.MethodGet, "/static/missing.css", nil, nil); rec.Code != http.StatusNotFound {
 		t.Errorf("missing file: status %d, want 404", rec.Code)
 	}
+	// The browser asks for the icon before anybody has logged in.
+	rec = e.do(http.MethodGet, "/static/favicon.svg", nil, nil)
+	if rec.Code != http.StatusOK || !strings.HasPrefix(rec.Header().Get("Content-Type"), "image/svg+xml") {
+		t.Errorf("favicon.svg: status %d, type %q", rec.Code, rec.Header().Get("Content-Type"))
+	}
+}
+
+// The content security policy blocks inline styles, so a style attribute in
+// a template would silently do nothing in the browser.
+func TestTemplatesHaveNoStyleAttributes(t *testing.T) {
+	files, err := fs.Glob(assets, "templates/*.html")
+	if err != nil || len(files) == 0 {
+		t.Fatalf("templates: %v, %v", files, err)
+	}
+	for _, name := range files {
+		content, err := assets.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(content), "style=") {
+			t.Errorf("%s has a style attribute; put the rule into static/style.css", name)
+		}
+	}
 }
 
 func TestUnknownPathIs404(t *testing.T) {
@@ -338,6 +362,36 @@ func TestOverviewListsFiringProblemsWorstFirst(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("body does not contain %q", want)
 		}
+	}
+}
+
+func TestOverviewCountsProblemsBySeverity(t *testing.T) {
+	e := newTestEnv(t)
+	cookie := e.login()
+	e.status.LastRun = testNow
+	e.insert(
+		problem("crit-a", "media", checks.Critical, store.StateFiring, testNow.Add(-time.Hour), "c"),
+		problem("crit-b", "media", checks.Critical, store.StateFiring, testNow.Add(-time.Hour), "c"),
+		problem("warn", "media", checks.Warning, store.StateFiring, testNow.Add(-time.Hour), "w"),
+		// Pending problems are not on the page, so they are not counted.
+		problem("pending", "media", checks.Critical, store.StatePending, testNow, "p"),
+	)
+	body := e.do(http.MethodGet, "/", nil, cookie).Body.String()
+	for _, want := range []string{`<span class="count critical">2 critical</span>`, `<span class="count warning">1 warning</span>`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("overview does not contain %q:\n%s", want, body)
+		}
+	}
+
+	only := newTestEnv(t)
+	only.status.LastRun = testNow
+	only.insert(
+		problem("warn-a", "media", checks.Warning, store.StateFiring, testNow, "w"),
+		problem("warn-b", "media", checks.Warning, store.StateFiring, testNow, "w"),
+	)
+	body = only.do(http.MethodGet, "/", nil, only.login()).Body.String()
+	if !strings.Contains(body, ">2 warnings<") || strings.Contains(body, "count critical") {
+		t.Errorf("want only the warning counter, in plural:\n%s", body)
 	}
 }
 

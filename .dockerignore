@@ -6,3 +6,4 @@ deploy
 *.db-shm
 *.db-wal
 *.md
+docs

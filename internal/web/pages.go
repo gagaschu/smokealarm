@@ -36,6 +36,8 @@ type page struct {
 
 	// overview
 	Problems          []problemView
+	CriticalCount     int // for the counters below the heading
+	WarningCount      int
 	CanAcknowledgeAny bool // explains the button once, not on every problem
 	AcknowledgedAny   bool // the same for removing an acknowledgement
 	WaitingFirstRun   bool
@@ -200,6 +202,11 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 		view := newProblemView(rec, now)
 		view.DowntimeUntil = downtimeEnds[rec.Key]
 		data.Problems = append(data.Problems, view)
+		if rec.Severity == checks.Critical {
+			data.CriticalCount++
+		} else {
+			data.WarningCount++
+		}
 		data.CanAcknowledgeAny = data.CanAcknowledgeAny || view.CanAcknowledge
 		data.AcknowledgedAny = data.AcknowledgedAny || view.AcknowledgedAt != ""
 	}

@@ -1,36 +1,100 @@
-/* smokealarm: plain CSS, no framework. Light and dark follow the system. */
+/* smokealarm: plain CSS, no framework, no build step.
+   Light and dark follow the system setting (prefers-color-scheme).
+
+   Sections:
+   1. Colors and sizes (light, then dark)
+   2. Basics
+   3. Top bar and navigation
+   4. Page head
+   5. Buttons and form fields
+   6. Badges, pills and counters
+   7. Problem cards (overview)
+   8. Empty states, hints and errors
+   9. Tables (history, downtimes, status)
+   10. Status facts, forms and login
+   11. Small screens
+   12. Reduced motion */
+
+
+/* 1. Colors and sizes ------------------------------------------------------ */
 
 :root {
-  --bg: #fafaf9;
-  --fg: #1c1917;
-  --muted: #78716c;
+  color-scheme: light dark;
+
+  --bg: #f4f5f7;
   --surface: #ffffff;
-  --border: #d6d3d1;
-  --accent: #1d4ed8;
-  --critical: #b91c1c;
-  --critical-bg: #fee2e2;
-  --warning: #92400e;
-  --warning-bg: #fef3c7;
-  --good: #166534;
-  --good-bg: #dcfce7;
+  --surface-muted: #f8f9fb;
+  --fg: #111827;
+  --muted: #5b6474;
+  --border: #e3e6eb;
+  --border-strong: #cfd4dc;
+
+  /* Accent: buttons and links. --accent is a background behind white text,
+     --accent-text is for text on the page. */
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --accent-text: #1d4ed8;
+  --accent-soft: #e8effe;
+  --on-accent: #ffffff;
+
+  /* Meaning: problem severity and "all fine". */
+  --critical: #dc2626;
+  --critical-text: #b42318;
+  --critical-soft: #fdecec;
+  --warning: #e08a00;
+  --warning-text: #9a5b00;
+  --warning-soft: #fdf3e1;
+  --good: #16a34a;
+  --good-text: #157f3c;
+  --good-soft: #e7f6ec;
+
+  --topbar-bg: rgb(255 255 255 / 0.85);
+  --shadow-sm: 0 1px 2px rgb(16 24 40 / 0.05);
+  --shadow: 0 1px 3px rgb(16 24 40 / 0.07), 0 1px 2px rgb(16 24 40 / 0.04);
+  --ring: rgb(37 99 235 / 0.3);
+
+  --radius-sm: 0.5rem;
+  --radius: 0.75rem;
+  --radius-lg: 1rem;
+  --page-width: 80rem;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #1c1917;
-    --fg: #f5f5f4;
-    --muted: #a8a29e;
-    --surface: #292524;
-    --border: #44403c;
-    --accent: #93c5fd;
-    --critical: #fca5a5;
-    --critical-bg: #450a0a;
-    --warning: #fcd34d;
-    --warning-bg: #422006;
-    --good: #86efac;
-    --good-bg: #052e16;
+    --bg: #0f1115;
+    --surface: #171a21;
+    --surface-muted: #1d2129;
+    --fg: #e8eaee;
+    --muted: #9aa3b2;
+    --border: #272c36;
+    --border-strong: #363c48;
+
+    --accent: #2f6fe4;
+    --accent-hover: #3d7cf0;
+    --accent-text: #8ab4ff;
+    --accent-soft: rgb(76 141 255 / 0.15);
+    --on-accent: #ffffff;
+
+    --critical: #f05252;
+    --critical-text: #ff9e9e;
+    --critical-soft: rgb(240 82 82 / 0.15);
+    --warning: #f0a020;
+    --warning-text: #fcc66b;
+    --warning-soft: rgb(240 160 32 / 0.15);
+    --good: #31c46b;
+    --good-text: #7ee2a3;
+    --good-soft: rgb(49 196 107 / 0.15);
+
+    --topbar-bg: rgb(23 26 33 / 0.85);
+    --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.3);
+    --shadow: 0 1px 3px rgb(0 0 0 / 0.4), 0 1px 2px rgb(0 0 0 / 0.25);
+    --ring: rgb(138 180 255 / 0.4);
   }
 }
+
+
+/* 2. Basics ---------------------------------------------------------------- */
 
 * { box-sizing: border-box; }
 
@@ -38,119 +102,541 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--fg);
-  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
 
-a { color: var(--accent); }
+main { max-width: var(--page-width); margin: 0 auto; padding: 2rem 2rem 3rem; }
 
-header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem 1.5rem;
-  padding: 0.75rem 2rem;
-  background: var(--surface);
+h1 { font-size: 1.625rem; line-height: 1.25; letter-spacing: -0.02em; margin: 0; }
+h2 { font-size: 1.125rem; letter-spacing: -0.01em; margin: 2rem 0 0.75rem; }
+
+a { color: var(--accent-text); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+code {
+  font-family: var(--mono);
+  font-size: 0.85em;
+  padding: 0.1em 0.35em;
+  border-radius: 0.3rem;
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+/* Times and durations line up when they are below each other. */
+time, .time { font-variant-numeric: tabular-nums; }
+.mono { font-family: var(--mono); font-size: 0.875rem; }
+.strong { font-weight: 600; }
+.footnote { color: var(--muted); font-size: 0.875rem; }
+
+/* Icons take the color of the text around them (see icons.html). */
+.icon {
+  width: 1rem;
+  height: 1rem;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.icon.filled { fill: currentColor; stroke: none; }
+
+/* A keyboard user sees where they are; a mouse click shows no ring. */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+
+/* 3. Top bar and navigation ------------------------------------------------ */
+
+/* The bar stays at the top while the page scrolls. */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--topbar-bg);
+  -webkit-backdrop-filter: saturate(180%) blur(12px);
+  backdrop-filter: saturate(180%) blur(12px);
   border-bottom: 1px solid var(--border);
 }
 
-.brand { font-weight: 700; text-decoration: none; color: var(--fg); }
-
-nav { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 1rem; }
-nav a { text-decoration: none; padding: 0.25rem 0; }
-nav a[aria-current="page"] { font-weight: 700; border-bottom: 2px solid var(--accent); }
-nav form { margin: 0; }
-
-main { max-width: 100rem; margin: 0 auto; padding: 1rem 2rem; }
-h1 { font-size: 1.5rem; margin: 0.5rem 0 1rem; }
-h2 { font-size: 1.2rem; margin: 1.5rem 0 0.5rem; }
-
-button, select, input, .button {
-  font: inherit;
-  color: inherit;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 0.375rem;
-  padding: 0.375rem 0.75rem;
+.topbar-inner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem 2rem;
+  max-width: var(--page-width);
+  margin: 0 auto;
+  padding: 0.625rem 2rem;
 }
-button { cursor: pointer; }
-/* A link that opens a page but looks like the buttons next to it. */
-.button { display: inline-block; text-decoration: none; }
-nav button { background: none; border: none; color: var(--accent); padding: 0.25rem 0; }
 
-.state { padding: 2rem 1rem; text-align: center; border-radius: 0.5rem; background: var(--surface); border: 1px solid var(--border); }
-.state.good { background: var(--good-bg); color: var(--good); border-color: var(--good); }
-.state h1 { font-size: 2rem; }
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.625rem;
+  color: var(--fg);
+  font-weight: 700;
+  font-size: 1.0625rem;
+  letter-spacing: -0.01em;
+}
+.brand:hover { text-decoration: none; }
+
+/* The logo: a white flame on an orange-red tile. */
+.logo {
+  display: inline-grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: var(--radius-sm);
+  color: #ffffff;
+  background: linear-gradient(135deg, #fb923c, #dc2626);
+  box-shadow: 0 1px 2px rgb(220 38 38 / 0.3), inset 0 1px 0 rgb(255 255 255 / 0.25);
+}
+.logo .icon { width: 1.25rem; height: 1.25rem; }
+
+nav { display: flex; gap: 0.25rem; flex: 1; }
+nav a {
+  padding: 0.375rem 0.75rem;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 0.9375rem;
+  white-space: nowrap;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+nav a:hover { color: var(--fg); background: var(--surface-muted); text-decoration: none; }
+nav a[aria-current="page"] { color: var(--accent-text); background: var(--accent-soft); font-weight: 600; }
+
+.logout { margin: 0 0 0 auto; }
+
+
+/* 4. Page head ------------------------------------------------------------- */
+
+/* Title on the left; filter or "last check" on the right, or below it if
+   there is not enough room. */
+.page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.75rem 1.5rem;
+  margin-bottom: 1.25rem;
+}
+
+.last-run {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+/* A small green dot that pulses: the page reloads by itself. */
+.live {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--good);
+  animation: pulse 2s ease-out infinite;
+}
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 rgb(22 163 74 / 0.45); }
+  70%, 100% { box-shadow: 0 0 0 0.5rem rgb(22 163 74 / 0); }
+}
+
+
+/* 5. Buttons and form fields ----------------------------------------------- */
+
+/* .button is a link that looks like the buttons next to it. */
+button, .button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4375rem;
+  min-height: 2.125rem;
+  padding: 0.375rem 0.8125rem;
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1.25;
+  white-space: nowrap;
+  color: var(--fg);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+button:hover, .button:hover { background: var(--surface-muted); border-color: var(--muted); text-decoration: none; }
+button:active, .button:active { transform: translateY(1px); }
+button .icon, .button .icon { color: var(--muted); }
+
+/* The main action of a card or form. */
+.primary { color: var(--on-accent); background: var(--accent); border-color: var(--accent); }
+.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.primary .icon { color: inherit; }
+
+/* Quiet action without a frame, such as "Log out". */
+.ghost { color: var(--muted); background: transparent; border-color: transparent; box-shadow: none; }
+.ghost:hover { color: var(--fg); background: var(--surface-muted); border-color: transparent; }
+
+/* Smaller buttons inside table rows. */
+.small { min-height: 1.875rem; padding: 0.25rem 0.625rem; font-size: 0.8125rem; }
+
+/* Fields keep 16 px text, otherwise phones zoom in when they get focus. */
+input, select {
+  min-height: 2.5rem;
+  padding: 0.4375rem 0.75rem;
+  font: inherit;
+  font-size: 1rem;
+  color: var(--fg);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+input:focus, select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--ring); }
+
+.filter { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin: 0; }
+.filter label { display: flex; align-items: center; gap: 0.5rem; color: var(--muted); font-size: 0.875rem; }
+.filter select { min-height: 2.125rem; padding-block: 0.25rem; }
+
+
+/* 6. Badges, pills and counters -------------------------------------------- */
+
+/* Badges mark a problem: severity, acknowledged, downtime. */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.125rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  line-height: 1.5;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.badge::before { content: ""; width: 0.375rem; height: 0.375rem; border-radius: 50%; background: currentColor; }
+.badge.critical { color: var(--critical-text); background: var(--critical-soft); }
+.badge.warning { color: var(--warning-text); background: var(--warning-soft); }
+.badge.acknowledged { color: var(--muted); background: var(--surface-muted); box-shadow: inset 0 0 0 1px var(--border-strong); }
+.badge.downtime { color: var(--accent-text); background: var(--accent-soft); }
+
+/* Pills show a state in a table or on the status page. */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4375rem;
+  padding: 0.0625rem 0.625rem;
+  border-radius: 999px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--muted);
+  background: var(--surface-muted);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.pill::before { content: ""; flex: none; width: 0.4375rem; height: 0.4375rem; border-radius: 50%; background: currentColor; }
+.pill.ok { color: var(--good-text); background: var(--good-soft); box-shadow: none; }
+.pill.alert { color: var(--warning-text); background: var(--warning-soft); box-shadow: none; }
+
+/* Counters below the overview heading: "3 critical", "2 warnings". */
+.counts { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.625rem 0 0; }
+.count {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4375rem;
+  padding: 0.125rem 0.625rem;
+  border-radius: 999px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+.count::before { content: ""; width: 0.5rem; height: 0.5rem; border-radius: 50%; background: currentColor; }
+.count.critical { color: var(--critical-text); background: var(--critical-soft); }
+.count.warning { color: var(--warning-text); background: var(--warning-soft); }
+
+
+/* 7. Problem cards (overview) ---------------------------------------------- */
 
 .problems { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.75rem; }
+
 /* Details on the left, buttons on the right. Where both do not fit next to each
    other, such as on a phone, the buttons wrap below the details. */
-.problem { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1.5rem; padding: 0.75rem 1rem; background: var(--surface); border: 1px solid var(--border); border-left-width: 6px; border-radius: 0.375rem; }
-.problem.critical { border-left-color: var(--critical); }
-.problem.warning { border-left-color: var(--warning); }
-.problem .headline { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 0.75rem; }
-.problem .object { color: var(--muted); }
-.problem p { margin: 0.25rem 0 0; }
-.message { overflow-wrap: anywhere; }
-.since, .footnote { color: var(--muted); font-size: 0.875rem; }
+.problem {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem 1.5rem;
+  padding: 1rem 1.25rem 1rem 1.5rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
 
-.badge { display: inline-block; white-space: nowrap; padding: 0 0.5rem; border-radius: 999px; font-size: 0.75rem; font-weight: 700; text-transform: uppercase; }
-.badge.critical { color: var(--critical); background: var(--critical-bg); }
-.badge.warning { color: var(--warning); background: var(--warning-bg); }
-.badge.acknowledged { color: var(--muted); border: 1px solid currentColor; }
-.badge.downtime { color: var(--accent); border: 1px solid currentColor; }
+/* The colored stripe on the left shows the severity. It is drawn separately so
+   the corners of the card stay round. */
+.problem::before { content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 4px; background: var(--border-strong); }
+.problem.critical::before { background: var(--critical); }
+.problem.warning::before { background: var(--warning); }
+/* Somebody knows about an acknowledged problem, so its stripe is quieter. */
+.problem.is-acknowledged::before { opacity: 0.4; }
 
 .details { flex: 1 1 24rem; min-width: 0; overflow-wrap: anywhere; }
+.badges { display: flex; flex-wrap: wrap; gap: 0.375rem; margin-bottom: 0.5rem; }
+.reason { font-size: 1.0625rem; font-weight: 650; letter-spacing: -0.01em; margin: 0; }
+.object { margin: 0.125rem 0 0; font-family: var(--mono); font-size: 0.8125rem; color: var(--muted); overflow-wrap: anywhere; }
+.message { margin: 0.625rem 0 0; }
+.meta { display: flex; align-items: flex-start; gap: 0.4375rem; margin: 0.5rem 0 0; color: var(--muted); font-size: 0.8125rem; }
+.meta .icon { margin-top: 0.15rem; }
+
 .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
 .actions form { margin: 0; }
 
-.error { color: var(--critical); }
+
+/* 8. Empty states, hints and errors ---------------------------------------- */
+
+/* "All good" and "Starting up". */
+.state {
+  display: grid;
+  justify-items: center;
+  gap: 0.5rem;
+  padding: 4rem 1.5rem;
+  text-align: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+}
+.state h1 { font-size: 2rem; }
+.state p { margin: 0; color: var(--muted); }
+.state.good { background: linear-gradient(180deg, var(--good-soft), var(--surface) 75%); }
+
+.state-icon {
+  display: grid;
+  place-items: center;
+  width: 4.5rem;
+  height: 4.5rem;
+  margin-bottom: 0.75rem;
+  border-radius: 50%;
+  color: var(--muted);
+  background: var(--surface-muted);
+}
+.state.good .state-icon { color: var(--good); background: var(--good-soft); box-shadow: 0 0 0 0.5rem rgb(22 163 74 / 0.08); }
+.state-icon .icon { width: 2.5rem; height: 2.5rem; stroke-width: 1.75; }
+
+.spinner {
+  width: 2rem;
+  height: 2rem;
+  border: 3px solid var(--border-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* A list or table that has nothing to show. */
+.empty {
+  padding: 2rem 1.5rem;
+  text-align: center;
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+}
+.empty p { margin: 0; }
+
+/* Explanations, such as what "Acknowledge" does. */
+.hint {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+  padding: 0.875rem 1rem;
+  color: var(--muted);
+  font-size: 0.875rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.hint > .icon { width: 1.125rem; height: 1.125rem; margin-top: 0.125rem; color: var(--accent-text); }
+.hint p { margin: 0; }
+.hint p + p { margin-top: 0.375rem; }
+
+.error { color: var(--critical-text); }
+p.error {
+  margin: 0 0 1rem;
+  padding: 0.625rem 0.875rem;
+  font-size: 0.9375rem;
+  background: var(--critical-soft);
+  border-radius: var(--radius-sm);
+}
+
+
+/* 9. Tables (history, downtimes, status) ----------------------------------- */
 
 /* Wide tables scroll inside their box instead of widening the whole page. */
-.table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 0.375rem; background: var(--surface); }
-table { width: 100%; border-collapse: collapse; }
-th, td { text-align: left; padding: 0.625rem 0.75rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+.table-wrap {
+  overflow-x: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+table { width: 100%; border-collapse: collapse; font-size: 0.9375rem; }
+/* Baseline: the first lines of text, badges and buttons in a row line up. */
+th, td { text-align: left; padding: 0.75rem 1rem; border-bottom: 1px solid var(--border); vertical-align: baseline; }
+th {
+  color: var(--muted);
+  background: var(--surface-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
 tbody tr:last-child td { border-bottom: none; }
-tbody tr:hover { background: var(--bg); }
-th { color: var(--muted); font-size: 0.875rem; white-space: nowrap; }
+tbody tr:hover td { background: var(--surface-muted); }
 
 /* Short values stay on one line; only long text (object, message) wraps. */
 td.nowrap { white-space: nowrap; }
 td.wrap { overflow-wrap: break-word; }
 td.message-cell { overflow-wrap: anywhere; min-width: 14rem; }
+td.mono { font-size: 0.8125rem; }
+td.end { text-align: right; }
 
-dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.5rem 1.5rem; }
-dt { color: var(--muted); }
+/* A second line in a cell, such as the duration below the time and the reason
+   below the severity. Two values share a column, so the history table still
+   fits on a small laptop screen. */
+.below { display: block; margin-top: 0.25rem; }
+.below:not(.strong) { color: var(--muted); font-size: 0.8125rem; }
+td.end form { margin: 0; }
+
+/* The downtime column: mark, end and button, wrapped where needed. */
+td.downtime-cell { min-width: 11rem; }
+.cell-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.375rem 0.5rem; }
+.until { color: var(--muted); font-size: 0.8125rem; font-variant-numeric: tabular-nums; }
+
+
+/* 10. Status facts, forms and login ---------------------------------------- */
+
+/* Label and value in rows, on one card. */
+.facts {
+  margin: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.facts > div {
+  display: grid;
+  grid-template-columns: 12rem minmax(0, 1fr);
+  gap: 0.25rem 1.5rem;
+  padding: 0.875rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+}
+.facts > div:last-child { border-bottom: none; }
+dt { color: var(--muted); font-size: 0.875rem; padding-top: 0.0625rem; }
 dd { margin: 0; overflow-wrap: anywhere; }
 
-.filter { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-bottom: 1rem; }
-.filter label { display: flex; align-items: center; gap: 0.5rem; }
+/* A box for one form, such as the downtime form. */
+.narrow { max-width: 34rem; }
+.panel {
+  padding: 1.75rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+}
+.panel > p { margin: 0 0 1rem; }
 
-.downtime-form { max-width: 32rem; margin-bottom: 1.5rem; }
-.downtime-form form { display: grid; gap: 0.75rem; justify-items: start; }
-.downtime-form label { display: grid; gap: 0.25rem; }
+/* What the downtime is for: reason and object. */
+.subject {
+  display: grid;
+  gap: 0.125rem;
+  margin: 1rem 0;
+  padding: 0.75rem 1rem;
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.subject .object { margin: 0; }
 
-.login { max-width: 22rem; margin: 3rem auto; }
-.login form { display: grid; gap: 1rem; }
-.login label { display: grid; gap: 0.25rem; }
+.stack { display: grid; gap: 1rem; justify-items: start; }
+.stack .footnote { margin: -0.5rem 0 0; }
+.field { display: grid; gap: 0.375rem; font-size: 0.875rem; font-weight: 600; }
+.field input { font-weight: 400; }
 
-/* Below about 1000 px the history table no longer fits, so each row becomes
-   a card with labeled lines. */
+.login { max-width: 24rem; margin: 10vh auto 2rem; }
+.login-head { display: grid; justify-items: center; gap: 0.25rem; margin-bottom: 1.5rem; text-align: center; }
+.login-head .logo { width: 3rem; height: 3rem; margin-bottom: 0.75rem; border-radius: var(--radius); }
+.login-head .logo .icon { width: 1.75rem; height: 1.75rem; }
+.login-head p { margin: 0; color: var(--muted); font-size: 0.875rem; }
+.login .stack { justify-items: stretch; }
+.login button { min-height: 2.5rem; font-size: 0.9375rem; margin-top: 0.25rem; }
+
+
+/* 11. Small screens -------------------------------------------------------- */
+
+/* Below about 1000 px the tables no longer fit, so each row becomes a card
+   with the column name on the left of every value. */
 @media (max-width: 64rem) {
-  .table-wrap { border: none; background: none; }
+  .table-wrap { overflow: visible; background: none; border: none; box-shadow: none; }
   thead { display: none; }
   table, tbody, tr, td { display: block; }
-  tr { margin-bottom: 0.75rem; background: var(--surface); border: 1px solid var(--border); border-radius: 0.375rem; }
-  td { border-bottom: none; padding: 0.25rem 0.75rem; }
+  tr {
+    margin-bottom: 0.75rem;
+    padding: 0.5rem 0;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+  }
+  td { position: relative; padding: 0.375rem 1rem 0.375rem 9rem; border-bottom: none; }
+  td::before {
+    content: attr(data-label);
+    position: absolute;
+    left: 1rem;
+    top: 0.5rem;
+    width: 7.5rem;
+    color: var(--muted);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
   td.nowrap { white-space: normal; }
-  td.message-cell { min-width: 0; }
-  td::before { content: attr(data-label) ": "; color: var(--muted); font-size: 0.875rem; }
-  tbody tr:hover { background: var(--surface); }
-  dl { grid-template-columns: 1fr; gap: 0; }
-  dd { margin-bottom: 0.75rem; }
+  td.message-cell, td.downtime-cell { min-width: 0; }
+  td.end { text-align: left; }
+  tbody tr:hover td { background: none; }
 }
 
 @media (max-width: 40rem) {
-  main { padding: 1rem; }
-  header { padding: 0.75rem 1rem; }
+  main { padding: 1.25rem 1rem 2rem; }
+  h1 { font-size: 1.375rem; }
+
+  /* Logo and "Log out" in the first row, the navigation in the second. It
+     scrolls sideways instead of wrapping. */
+  .topbar-inner { flex-wrap: wrap; padding: 0.5rem 1rem 0; gap: 0.25rem 1rem; }
+  .logout { order: 2; }
+  nav { order: 3; flex-basis: 100%; overflow-x: auto; padding-bottom: 0.5rem; scrollbar-width: none; }
+
+  .problem { padding: 1rem 1rem 1rem 1.25rem; }
+  .facts > div { grid-template-columns: minmax(0, 1fr); }
+  td { padding-left: 1rem; }
+  td::before { position: static; display: block; width: auto; margin-bottom: 0.125rem; }
+  .panel { padding: 1.25rem; }
+  .state { padding: 3rem 1rem; }
+}
+
+
+/* 12. Reduced motion ------------------------------------------------------- */
+
+/* People who asked their system for less motion get no pulsing or sliding. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
 }

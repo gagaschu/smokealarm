@@ -1,17 +1,22 @@
 {{define "content"}}
-<section class="downtime-form">
+<div class="narrow">
+<section class="panel">
   <h1>{{if .DowntimeForm.Existing}}Change{{else}}Set{{end}} downtime</h1>
-  <p><strong>{{.DowntimeForm.Reason}}</strong> <span class="object">{{.DowntimeForm.Object}}</span></p>
+  <div class="subject">
+    <strong>{{.DowntimeForm.Reason}}</strong>
+    <span class="object">{{.DowntimeForm.Object}}</span>
+  </div>
   {{if .DowntimeForm.Existing}}<p>The current downtime ends {{.DowntimeForm.Existing}}. Saving replaces it.</p>{{end}}
   {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
-  <form method="post" action="/downtimes">
+  <form class="stack" method="post" action="/downtimes">
     <input type="hidden" name="finding" value="{{.DowntimeForm.FindingID}}">
-    <label>Until (UTC)
+    <label class="field">Until (UTC)
       <input type="datetime-local" name="until" value="{{.DowntimeForm.Until}}" min="{{.DowntimeForm.Min}}" required>
     </label>
     <p class="footnote">Enter the time in UTC, not your local time. It is now {{.DowntimeForm.Now}}.</p>
-    <button type="submit">Save downtime</button>
+    <button class="primary" type="submit">{{template "icon-bell-off"}}Save downtime</button>
   </form>
 </section>
 {{template "downtimeHint"}}
+</div>
 {{end}}
