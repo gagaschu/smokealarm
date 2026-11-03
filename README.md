@@ -6,6 +6,8 @@ smokealarm runs inside your cluster and tells you what is broken right now.
 
 It runs a fixed set of checks that need no configuration, and shows current problems and their history on a web page that also works on a phone. When a problem starts or ends, it sends you a mail.
 
+![The overview with three critical problems and two warnings](docs/screenshots/overview.png)
+
 ## Scope
 
 The list of checks is short on purpose, so that each one can be reliable. smokealarm has no metrics database, no graphs and no query language, so it won't replace Prometheus. It doesn't collect logs or traces. It also doesn't do root-cause analysis: it can tell you that a pod is crash-looping, but finding out why is up to you.
@@ -21,6 +23,28 @@ If you already know about a critical problem, press **Acknowledge** on the overv
 To silence one problem until a fixed time, for example during planned work or while it flaps, set a [downtime](#downtimes).
 
 [ARCHITECTURE.md](ARCHITECTURE.md) has the details.
+
+## The web interface
+
+The overview shows what is firing right now, critical problems first. For each problem you see the object, the reason, the message from the cluster and how long it has been going on. From there you can acknowledge a critical problem or set a downtime. When nothing is wrong, the page just says "All good".
+
+The pages reload every 30 seconds and work on a phone. Light or dark mode follows your system setting.
+
+<p>
+  <img src="docs/screenshots/phone-all-good.png" alt="All good, on a phone in dark mode" width="280">
+  &nbsp;
+  <img src="docs/screenshots/phone-overview.png" alt="The overview on a phone in dark mode" width="280">
+</p>
+
+The history lists resolved problems, newest first, and you can filter it by namespace. They are kept for 30 days by default (`SMOKEALARM_RETENTION`). A problem that keeps coming back can get a downtime from here too.
+
+![The history with five resolved problems, one of them in a downtime](docs/screenshots/history.png)
+
+The status page tells you when the checks last ran, whether mail is set up and whether the last mail failed. It also lists every check. If one can't run, for example because Argo CD isn't installed, the reason is next to it.
+
+![The status page in dark mode](docs/screenshots/status.png)
+
+A fourth page lists the running downtimes and can end them early. The screenshots show made-up data.
 
 ## Installation
 

@@ -16,7 +16,8 @@ All notable changes to this project are documented here. The format is based on
 
 ### Changed
 
-- **New look for the web UI**: a top bar with logo, slimmer buttons with icons and a clear main action, problem cards with severity counters above them, tables as cards, a status page with state pills, and a favicon. Still no JavaScript and no external files; light and dark mode and the phone layout are kept.
+- **New look for the web UI**: a top bar with logo, slimmer buttons with icons and a clear main action, problem cards with severity counters above them, tables as cards, a status page with state pills, and a favicon. Still no JavaScript and no external files; light and dark mode and the phone layout are kept. The history shows the duration below the time and the severity above the reason, so the table fits on a small laptop screen.
+- The README shows screenshots of the web interface.
 
 ## [0.1.0] - not released yet
 
