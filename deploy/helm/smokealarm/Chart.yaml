@@ -1,0 +1,14 @@
+apiVersion: v2
+name: smokealarm
+description: A smoke alarm for your Kubernetes cluster – silent until something's on fire.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.25.0-0"
+home: https://github.com/gagaschu/smokealarm
+sources:
+  - https://github.com/gagaschu/smokealarm
+keywords:
+  - monitoring
+  - alerting
+  - health-check

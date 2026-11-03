@@ -1,0 +1,31 @@
+smokealarm {{ .Chart.AppVersion }} is installed.
+
+Open the web UI:
+{{- if .Values.ingress.enabled }}
+  {{ ternary "https" "http" .Values.ingress.tls.enabled }}://{{ .Values.ingress.host }}
+{{- else }}
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "smokealarm.fullname" . }} 8080:{{ .Values.service.port }}
+  then open http://localhost:8080
+{{- end }}
+Log in as "{{ .Values.auth.adminUser }}".
+{{- if and (not .Values.ingress.enabled) .Values.config.cookieSecure }}
+
+NOTE: config.cookieSecure is true, so browsers only keep the login cookie over
+HTTPS. Over a plain-HTTP port-forward, log in works only on http://localhost
+in most browsers; if it does not, install with --set config.cookieSecure=false
+for local use.
+{{- end }}
+{{- if not .Values.persistence.enabled }}
+
+WARNING: persistence.enabled is false. The history and login sessions are lost
+whenever the pod restarts.
+{{- end }}
+{{- if not .Values.smtp.host }}
+
+Mail is not configured (smtp.host is empty): state changes are only written to
+the log. Check the log with:  kubectl -n {{ .Release.Namespace }} logs deploy/{{ include "smokealarm.fullname" . }}
+{{- end }}
+{{- with include "smokealarm.disabledChecks" . }}
+
+Disabled checks: {{ . }}
+{{- end }}

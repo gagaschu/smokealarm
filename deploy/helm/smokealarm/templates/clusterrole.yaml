@@ -1,0 +1,53 @@
+{{- if .Values.rbac.create }}
+# smokealarm only reads: every rule is get, list, watch.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "smokealarm.fullname" . }}
+  labels:
+    {{- include "smokealarm.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [namespaces, pods, events, nodes, persistentvolumeclaims]
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources: [deployments, statefulsets, daemonsets]
+    verbs: [get, list, watch]
+  - apiGroups: [batch]
+    resources: [jobs, cronjobs]
+    verbs: [get, list, watch]
+  - apiGroups: [storage.k8s.io]
+    resources: [storageclasses]
+    verbs: [get, list, watch]
+  {{- if .Values.rbac.nodesProxy }}
+  # pvc-usage reads the volume usage from the kubelets through the API server.
+  - apiGroups: [""]
+    resources: [nodes/proxy]
+    verbs: [get]
+  {{- end }}
+  {{- if .Values.rbac.certManager }}
+  - apiGroups: [cert-manager.io]
+    resources: [certificates]
+    verbs: [get, list, watch]
+  {{- end }}
+  {{- if .Values.rbac.argocd }}
+  - apiGroups: [argoproj.io]
+    resources: [applications]
+    verbs: [get, list, watch]
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "smokealarm.fullname" . }}
+  labels:
+    {{- include "smokealarm.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "smokealarm.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "smokealarm.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
