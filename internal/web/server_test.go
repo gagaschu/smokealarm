@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -178,6 +179,29 @@ func TestStaticFilesAndProbesNeedNoLogin(t *testing.T) {
 	}
 	if rec := e.do(http.MethodGet, "/static/missing.css", nil, nil); rec.Code != http.StatusNotFound {
 		t.Errorf("missing file: status %d, want 404", rec.Code)
+	}
+	// The browser asks for the icon before anybody has logged in.
+	rec = e.do(http.MethodGet, "/static/favicon.svg", nil, nil)
+	if rec.Code != http.StatusOK || !strings.HasPrefix(rec.Header().Get("Content-Type"), "image/svg+xml") {
+		t.Errorf("favicon.svg: status %d, type %q", rec.Code, rec.Header().Get("Content-Type"))
+	}
+}
+
+// The content security policy blocks inline styles, so a style attribute in
+// a template would silently do nothing in the browser.
+func TestTemplatesHaveNoStyleAttributes(t *testing.T) {
+	files, err := fs.Glob(assets, "templates/*.html")
+	if err != nil || len(files) == 0 {
+		t.Fatalf("templates: %v, %v", files, err)
+	}
+	for _, name := range files {
+		content, err := assets.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(content), "style=") {
+			t.Errorf("%s has a style attribute; put the rule into static/style.css", name)
+		}
 	}
 }
 

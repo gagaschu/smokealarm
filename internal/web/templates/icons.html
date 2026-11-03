@@ -1,0 +1,17 @@
+{{/*
+Small icons, drawn as inline SVG so they need no extra request and no
+JavaScript. The content security policy allows inline SVG, but no style
+attributes, so color and line width come from the .icon rules in style.css.
+All icons use a 24 x 24 grid and are only decoration (aria-hidden): the text
+next to them says what they mean.
+*/}}
+{{define "icon-flame"}}<svg class="icon filled" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill-rule="evenodd" d="M12 2.5c.7 3 2.5 4.7 4.1 6.4 1.5 1.6 2.65 3.35 2.65 5.85a6.75 6.75 0 0 1-13.5 0c0-2.35 1-4.2 2.65-5.65.15 1.6.8 2.8 2 3.4-.3-3.6.35-6.85 2.1-10zM12 13.4c-1.3 1.15-2.25 2.25-2.25 3.6a2.25 2.25 0 0 0 4.5 0c0-1.35-.95-2.45-2.25-3.6z"/></svg>{{end}}
+{{define "icon-check"}}<svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20 6 9 17l-5-5"/></svg>{{end}}
+{{define "icon-check-circle"}}<svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9.25"/><path d="m8 12.25 2.75 2.75L16 9.5"/></svg>{{end}}
+{{define "icon-bell-off"}}<svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8.5 4.1A6 6 0 0 1 18 9v3.5M6 9.5V13l-2 3.5h12.5"/><path d="M10 20a2.2 2.2 0 0 0 4 0"/><path d="m3 3 18 18"/></svg>{{end}}
+{{define "icon-undo"}}<svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3.5 12a8.5 8.5 0 1 0 2.5-6L3.5 8.5"/><path d="M3.5 3.5v5h5"/></svg>{{end}}
+{{define "icon-x"}}<svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M18 6 6 18M6 6l12 12"/></svg>{{end}}
+{{define "icon-clock"}}<svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>{{end}}
+{{define "icon-info"}}<svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M12 11v5.5M12 7.75v.01"/></svg>{{end}}
+{{define "icon-logout"}}<svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 20.5H5.5a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2H9"/><path d="m15.5 16.5 4.5-4.5-4.5-4.5M20 12H9"/></svg>{{end}}
+{{define "icon-filter"}}<svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3.5 5h17l-6.5 7.5v5.75L10 20.5v-8z"/></svg>{{end}}

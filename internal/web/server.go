@@ -50,7 +50,7 @@ type Server struct {
 func (s *Server) Handler() (http.Handler, error) {
 	s.pages = map[string]*template.Template{}
 	for _, name := range []string{"login", "overview", "history", "status", "downtimes", "downtime_form"} {
-		page, err := template.ParseFS(assets, "templates/layout.html", "templates/"+name+".html")
+		page, err := template.ParseFS(assets, "templates/layout.html", "templates/icons.html", "templates/"+name+".html")
 		if err != nil {
 			return nil, fmt.Errorf("parse template %s: %w", name, err)
 		}
