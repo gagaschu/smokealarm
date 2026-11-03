@@ -27,7 +27,15 @@ import (
 const shutdownTimeout = 5 * time.Second
 
 func main() {
-	if err := run(); err != nil {
+	// Subcommands run before the configuration is loaded, so they work
+	// without any SMOKEALARM_* variables.
+	var err error
+	if len(os.Args) > 1 {
+		err = runCommand(os.Args[1:], os.Stdin, os.Stdout)
+	} else {
+		err = run()
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "smokealarm:", err)
 		os.Exit(1)
 	}
