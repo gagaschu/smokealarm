@@ -1,150 +1,150 @@
-# Auftrag: smokealarm – leichtgewichtiges Kubernetes-Health-Monitoring in Go
+# Brief: smokealarm – lightweight Kubernetes health monitoring in Go
 
-## Ziel
-Baue ein kleines Open-Source-Tool namens smokealarm, das im Kubernetes-Cluster läuft und genau eine Frage beantwortet: „Was ist gerade kaputt?“
-Leitbild: „A smoke alarm for your Kubernetes cluster – silent until something's on fire.“
-Keine Metrik-Datenbank, keine Graphen, keine Logs, keine Traces, keine Root-Cause-Analyse. Stattdessen: wenige feste, zuverlässige Checks ohne Konfigurationsaufwand, eine einfache Web-Oberfläche mit aktuellen Problemen und Historie, und Benachrichtigung per Mail bei Zustandswechseln.
-Primäre Testumgebung: k3s auf Raspberry Pi (arm64). Es muss aber auf jedem Standard-Kubernetes laufen und darf nichts k3s-Spezifisches voraussetzen.
+## Goal
+Build a small open-source tool called smokealarm that runs in the Kubernetes cluster and answers exactly one question: "What is broken right now?"
+Motto: "A smoke alarm for your Kubernetes cluster – silent until something's on fire."
+No metrics database, no graphs, no logs, no traces, no root-cause analysis. Instead: a few fixed, reliable checks with no configuration effort, a simple web UI with current problems and history, and mail notifications on state changes.
+Primary test environment: k3s on Raspberry Pi (arm64). However, it must run on any standard Kubernetes and must not require anything k3s-specific.
 
-## Wichtigste Anforderung: lesbarer, einfacher Code
-Der Maintainer ist kein Go-Entwickler. Der Code muss für jemanden mit Ops-Hintergrund ohne Go-Erfahrung nachvollziehbar sein. Lesbarkeit hat Vorrang vor Eleganz, Performance und Abstraktion.
-- Idiomatisches, schlichtes Go (Effective Go, Go Code Review Comments). gofmt, go vet und golangci-lint mit Standard-Lintern müssen sauber sein.
-- Explizit statt clever: keine Generics, keine Reflection, keine init()-Funktionen, keine globalen Variablen außer Konstanten. Abhängigkeiten werden in main() erzeugt und als Struct-Felder weitergegeben.
-- Interfaces nur dort, wo es real mehrere Implementierungen gibt (z. B. Notifier: Mail jetzt, Telegram/Webhook später). Keine Interfaces auf Vorrat.
-- Nebenläufigkeit minimal: Informers, eine Hauptschleife mit Ticker, der HTTP-Server. Keine Channel-Pipelines, keine Worker-Pools.
-- Kurze Funktionen (Richtwert < 50 Zeilen), sprechende Namen. Fehler immer mit Kontext wrappen (fmt.Errorf("load config: %w", err)), nie verschlucken.
-- Kommentare erklären das Warum, nicht das Was. Jedes Paket hat einen Package-Doc-Kommentar. Jeder Check hat einen Doc-Kommentar: was wird geprüft, warum ist das ein Problem, welche Schwere.
-- Code, Kommentare, Log-Meldungen und Doku auf Englisch.
-- Logging mit log/slog (JSON im Cluster, Text lokal).
-- Zeit über eine injizierbare now-Funktion, damit Logik und Tests deterministisch sind.
+## Most important requirement: readable, simple code
+The maintainer is not a Go developer. The code must be understandable for someone with an ops background and no Go experience. Readability takes priority over elegance, performance and abstraction.
+- Idiomatic, plain Go (Effective Go, Go Code Review Comments). gofmt, go vet and golangci-lint with the standard linters must be clean.
+- Explicit rather than clever: no generics, no reflection, no init() functions, no global variables except constants. Dependencies are created in main() and passed on as struct fields.
+- Interfaces only where there really are several implementations (e.g. Notifier: mail now, Telegram/webhook later). No interfaces just in case.
+- Minimal concurrency: informers, one main loop with a ticker, the HTTP server. No channel pipelines, no worker pools.
+- Short functions (guideline < 50 lines), descriptive names. Always wrap errors with context (fmt.Errorf("load config: %w", err)), never swallow them.
+- Comments explain the why, not the what. Every package has a package doc comment. Every check has a doc comment: what is checked, why it is a problem, which severity.
+- Code, comments, log messages and documentation in English.
+- Logging with log/slog (JSON in the cluster, text locally).
+- Time comes from an injectable now function, so that logic and tests are deterministic.
 
-## Abhängigkeiten
-Erlaubt, sonst nur Standard-Library:
+## Dependencies
+Allowed, otherwise standard library only:
 - k8s.io/client-go, k8s.io/api, k8s.io/apimachinery
-- modernc.org/sqlite (pure Go, damit CGO_ENABLED=0 und einfaches Cross-Compiling)
+- modernc.org/sqlite (pure Go, for CGO_ENABLED=0 and easy cross-compiling)
 - golang.org/x/crypto (bcrypt)
-- github.com/robfig/cron/v3 (nur zum Parsen von CronJob-Schedules)
-Ausdrücklich nicht: controller-runtime, cobra, viper, Web-Frameworks (gin, echo, chi), ORMs, Prometheus-Libraries, Frontend-Build-Tooling.
-HTTP-Routing mit net/http (Go-1.22+-Patterns), HTML mit html/template, Mail mit net/smtp und text/template, SQL mit database/sql.
-Weitere Abhängigkeiten nur nach Rückfrage.
+- github.com/robfig/cron/v3 (only for parsing CronJob schedules)
+Explicitly not: controller-runtime, cobra, viper, web frameworks (gin, echo, chi), ORMs, Prometheus libraries, frontend build tooling.
+HTTP routing with net/http (Go 1.22+ patterns), HTML with html/template, mail with net/smtp and text/template, SQL with database/sql.
+Further dependencies only after asking.
 
-## Projektstruktur
-cmd/smokealarm/main.go   Verdrahtung: Config laden, Clients, Store, Engine, Webserver starten; Subcommand hash-password
-internal/config          Config aus Env-Variablen, Defaults, Validierung
-internal/kube            Clients, Informers (core + dynamic für CRDs), Erkennung optionaler CRDs
-internal/checks          Eine Datei pro Bereich (pods.go, workloads.go, nodes.go, jobs.go, storage.go, certs.go, argocd.go) plus Tests
-internal/engine          Hauptschleife: Checks ausführen, mit gespeichertem Zustand abgleichen, Benachrichtigungen auslösen
-internal/store           SQLite-Zugriff, Schema-Migrationen als eingebettete .sql-Dateien, Retention
-internal/notify          Notifier-Interface, Mail-Implementierung
-internal/auth            Lokaler Login, Sessions, Middleware
-internal/web             Handler, Templates, CSS (alles per go:embed)
-deploy/helm/smokealarm   Helm-Chart
-Keine weiteren Pakete ohne guten Grund.
+## Project structure
+cmd/smokealarm/main.go   Wiring: load config, start clients, store, engine, web server; subcommand hash-password
+internal/config          Config from environment variables, defaults, validation
+internal/kube            Clients, informers (core + dynamic for CRDs), detection of optional CRDs
+internal/checks          One file per area (pods.go, workloads.go, nodes.go, jobs.go, storage.go, certs.go, argocd.go) plus tests
+internal/engine          Main loop: run checks, compare with stored state, trigger notifications
+internal/store           SQLite access, schema migrations as embedded .sql files, retention
+internal/notify          Notifier interface, mail implementation
+internal/auth            Local login, sessions, middleware
+internal/web             Handlers, templates, CSS (all via go:embed)
+deploy/helm/smokealarm   Helm chart
+No further packages without a good reason.
 
-## Kernkonzept
-Ein Check ist eine einfache Funktion: Er bekommt einen Snapshot der Cluster-Objekte aus dem Informer-Cache und gibt eine Liste von Findings zurück. Checks rufen nie selbst die API auf und haben keinen eigenen Zustand – dadurch sind sie trivial mit Fake-Objekten testbar. (Ausnahme: PVC-Füllstand, siehe unten – die Kubelet-Stats werden vor den Checks in den Snapshot geladen.)
+## Core concept
+A check is a simple function: it receives a snapshot of the cluster objects from the informer cache and returns a list of findings. Checks never call the API themselves and have no state of their own, which makes them trivial to test with fake objects. (Exception: PVC usage, see below – the kubelet stats are loaded into the snapshot before the checks run.)
 
-Finding (Richtschnur):
-- Key: stabil aus Check + Kind/Namespace/Name + Grund; identifiziert „dasselbe Problem“ über Läufe hinweg
+Finding (guideline):
+- Key: stable, from check + kind/namespace/name + reason; identifies "the same problem" across runs
 - Check, Severity (critical | warning), Object (Kind, Namespace, Name)
-- Reason: kurz, z. B. "CrashLoopBackOff"
-- Message: menschenlesbar mit relevantem Kontext (z. B. letzter Exit-Code, passendes Warning-Event)
+- Reason: short, e.g. "CrashLoopBackOff"
+- Message: human-readable with relevant context (e.g. last exit code, matching warning event)
 
-Ablauf alle SMOKEALARM_CHECK_INTERVAL (Default 30s):
-1. Snapshot bauen, alle aktivierten Checks ausführen.
-2. Mit dem Zustand in SQLite abgleichen: neues Problem → pending; besteht länger als SMOKEALARM_ALERT_AFTER (Default 2m) → firing; verschwunden → resolved (nur wenn es vorher firing war, sonst still verwerfen). Kurze Flaps werden so nicht gemeldet.
-3. Alle noch nicht gemeldeten Wechsel (firing/resolved) als eine Sammel-Benachrichtigung verschicken. Erst nach erfolgreichem Versand als gemeldet markieren; schlägt der Versand fehl, wird es im nächsten Lauf erneut versucht. Das überlebt auch Neustarts.
-4. Resolved-Findings älter als SMOKEALARM_RETENTION (Default 30d) löschen.
+Sequence every SMOKEALARM_CHECK_INTERVAL (default 30s):
+1. Build the snapshot, run all enabled checks.
+2. Compare with the state in SQLite: new problem → pending; lasts longer than SMOKEALARM_ALERT_AFTER (default 2m) → firing; gone → resolved (only if it was firing before, otherwise discard silently). This way short flaps are not reported.
+3. Send all changes not yet reported (firing/resolved) as one combined notification. Mark them as reported only after sending succeeded; if sending fails, it is retried in the next run. This also survives restarts.
+4. Delete resolved findings older than SMOKEALARM_RETENTION (default 30d).
 
 ## Checks (v0.1)
 Pods
 - CrashLoopBackOff → critical
 - ImagePullBackOff / ErrImagePull → critical
-- OOMKilled (letzte Termination innerhalb der letzten 15 min) → warning
-- Viele Restarts: restartCount > Schwellwert (Default 5) und letzter Restart innerhalb der letzten Stunde → warning
-- Pending länger als Schwellwert (Default 5m), mit Grund aus Conditions/Events (z. B. Unschedulable) → warning
+- OOMKilled (last termination within the last 15 min) → warning
+- Many restarts: restartCount > threshold (default 5) and last restart within the last hour → warning
+- Pending longer than threshold (default 5m), with the reason from conditions/events (e.g. Unschedulable) → warning
 Workloads
-- Deployment/StatefulSet/DaemonSet mit weniger verfügbaren als gewünschten Replicas → warning; 0 verfügbar bei gewünscht > 0 → critical
+- Deployment/StatefulSet/DaemonSet with fewer available than desired replicas → warning; 0 available with desired > 0 → critical
 Nodes
 - NotReady → critical
 - MemoryPressure / DiskPressure / PIDPressure → warning
 Jobs
-- Job fehlgeschlagen (Condition Failed) → warning. Bei CronJobs zählt nur der jeweils neueste Job, damit alte Fehlschläge nicht dauerhaft alarmieren.
-- CronJob hat einen geplanten Lauf verpasst (laut Cron-Ausdruck fällig, lastScheduleTime älter als erwartet + Toleranz) → warning. Suspendierte CronJobs ignorieren.
+- Job failed (condition Failed) → warning. For CronJobs only the newest job counts, so that old failures do not alarm permanently.
+- CronJob missed a scheduled run (due according to the cron expression, lastScheduleTime older than expected + tolerance) → warning. Ignore suspended CronJobs.
 Storage
-- PVC Pending länger als Schwellwert → warning
-- PVC-Füllstand über Kubelet-Stats (/api/v1/nodes/<node>/proxy/stats/summary): > 85 % warning, > 95 % critical. Abschaltbar, weil dafür die RBAC-Berechtigung nodes/proxy nötig ist.
-Zertifikate (nur wenn cert-manager-CRDs vorhanden)
-- Certificate nicht Ready → warning
-- status.notAfter in < 14 Tagen → warning, < 3 Tagen → critical
-- Keine Secrets lesen.
-Argo CD (nur wenn Argo-CD-CRDs vorhanden)
-- Application Health Degraded oder Missing → critical
-- Sync OutOfSync → warning (ALERT_AFTER dämpft kurze Syncs)
-Optionale CRDs werden beim Start per Discovery-API erkannt. Fehlen sie, wird der Check übersprungen, geloggt und auf der Status-Seite angezeigt.
-Einzelne Checks lassen sich per Env-Variable deaktivieren.
+- PVC Pending longer than threshold → warning
+- PVC usage via kubelet stats (/api/v1/nodes/<node>/proxy/stats/summary): > 85 % warning, > 95 % critical. Can be switched off, because it needs the RBAC permission nodes/proxy.
+Certificates (only if cert-manager CRDs are present)
+- Certificate not Ready → warning
+- status.notAfter in < 14 days → warning, < 3 days → critical
+- Do not read Secrets.
+Argo CD (only if Argo CD CRDs are present)
+- Application health Degraded or Missing → critical
+- Sync OutOfSync → warning (ALERT_AFTER dampens short syncs)
+Optional CRDs are detected at startup via the discovery API. If they are missing, the check is skipped, logged and shown on the status page.
+Individual checks can be disabled via an environment variable.
 
-Ignorieren:
-- Annotation smokealarm.<DOMAIN>/ignore: "true" am Objekt oder an seinem Namespace unterdrückt Findings. Für Pods genügt die Annotation im Pod-Template. Das Annotation-Präfix ist eine einzige Konstante im Code.
-- Zusätzlich Env-Variable mit Liste ignorierter Namespaces.
+Ignoring:
+- The annotation smokealarm.<DOMAIN>/ignore: "true" on an object or on its namespace suppresses findings. For pods, the annotation in the pod template is enough. The annotation prefix is a single constant in the code.
+- In addition, an environment variable with a list of ignored namespaces.
 
-## Benachrichtigung
-- v0.1: nur Mail per SMTP (STARTTLS und implizites TLS auf Port 465, optional mit Auth, mehrere Empfänger).
-- Pro Lauf höchstens eine Mail mit allen neuen Zustandswechseln.
-- Betreff fasst zusammen: bei einem Wechsel konkret, z. B. "[smokealarm] CRITICAL: CrashLoopBackOff media/jellyfin"; bei mehreren z. B. "[smokealarm] 3 new problems, 1 resolved".
-- Body als Plaintext: neue Probleme nach Schwere sortiert, danach behobene; jeweils Objekt, Grund, Message, seit wann; Link zur Web-UI (SMOKEALARM_BASE_URL).
-- Notifier-Interface so schneiden, dass Telegram und generischer Webhook später als eigene Datei dazukommen, ohne die Engine zu ändern. Selbst noch nicht implementieren.
+## Notifications
+- v0.1: mail via SMTP only (STARTTLS and implicit TLS on port 465, optionally with auth, multiple recipients).
+- At most one mail per run, with all new state changes.
+- The subject summarizes: specific for one change, e.g. "[smokealarm] CRITICAL: CrashLoopBackOff media/jellyfin"; for several, e.g. "[smokealarm] 3 new problems, 1 resolved".
+- Body as plain text: new problems sorted by severity, then resolved ones; each with object, reason, message, since when; link to the web UI (SMOKEALARM_BASE_URL).
+- Design the Notifier interface so that Telegram and a generic webhook can be added later as separate files without changing the engine. Do not implement them yet.
 
-## Web-UI
-- Server-gerendertes HTML, kein JavaScript-Framework, kein Build-Schritt. Auto-Refresh per Meta-Tag (30s). Schlichtes eigenes CSS, hell/dunkel per prefers-color-scheme, auf dem Handy gut nutzbar.
-- Seiten:
+## Web UI
+- Server-rendered HTML, no JavaScript framework, no build step. Auto-refresh via meta tag (30s). Plain custom CSS, light/dark via prefers-color-scheme, works well on a phone.
+- Pages:
   - Login
-  - Übersicht: aktuelle Probleme nach Schwere mit Objekt, Grund, Message, seit wann. Leerer Zustand „All good“ mit Zeitpunkt des letzten Laufs.
-  - Historie: behobene Findings, filterbar nach Namespace
-  - Status: letzter Lauf, aktive/übersprungene Checks mit Grund, ob Mail konfiguriert ist, letzter Versandfehler
-- /healthz (Liveness) und /readyz (Informer-Caches synchronisiert, DB erreichbar), beide ohne Auth.
+  - Overview: current problems by severity with object, reason, message, since when. Empty state "All good" with the time of the last run.
+  - History: resolved findings, filterable by namespace
+  - Status: last run, active/skipped checks with reason, whether mail is configured, last sending error
+- /healthz (liveness) and /readyz (informer caches synced, DB reachable), both without auth.
 
-## Authentifizierung
-- v0.1: ein lokaler Admin-User; Username und bcrypt-Hash aus Env (im Cluster aus einem Secret).
-- Login-Formular, serverseitige Sessions in SQLite mit zufälliger Session-ID. Cookie HttpOnly, Secure (für lokale Entwicklung abschaltbar), SameSite=Lax, Ablauf konfigurierbar (Default 7d). Logout. Einfaches Rate-Limiting für fehlgeschlagene Logins.
-- Subcommand `smokealarm hash-password` liest ein Passwort von stdin und gibt den bcrypt-Hash aus (einfacher os.Args-Switch, kein CLI-Framework).
-- Aufbau so, dass OIDC später als zweite Login-Methode dazukommt: Die Middleware prüft nur „gibt es eine gültige Session?“; wie die Session entsteht (Passwort, später OIDC), ist davon getrennt. OIDC selbst nicht implementieren.
+## Authentication
+- v0.1: one local admin user; username and bcrypt hash from the environment (in the cluster from a Secret).
+- Login form, server-side sessions in SQLite with a random session ID. Cookie HttpOnly, Secure (can be switched off for local development), SameSite=Lax, configurable expiry (default 7d). Logout. Simple rate limiting for failed logins.
+- Subcommand `smokealarm hash-password` reads a password from stdin and prints the bcrypt hash (simple os.Args switch, no CLI framework).
+- Structured so that OIDC can be added later as a second login method: the middleware only checks "is there a valid session?"; how the session comes about (password, later OIDC) is separate from that. Do not implement OIDC itself.
 
-## Konfiguration
-- Nur Env-Variablen mit Präfix SMOKEALARM_. Alles hat sinnvolle Defaults außer Pflichtwerten (Admin-User, Passwort-Hash, SMTP-Daten wenn Mail aktiv).
-- Beim Start validieren; bei Fehlern mit klarer Meldung abbrechen.
-- Läuft im Cluster (In-Cluster-Config) und lokal gegen KUBECONFIG – für die Entwicklung auf macOS (Apple Silicon) gegen einen lokalen k3s.
-- Vollständige Tabelle aller Variablen in der README.
+## Configuration
+- Only environment variables with the prefix SMOKEALARM_. Everything has sensible defaults except required values (admin user, password hash, SMTP data if mail is active).
+- Validate at startup; abort with a clear message on errors.
+- Runs in the cluster (in-cluster config) and locally against KUBECONFIG – for development on macOS (Apple Silicon) against a local k3s.
+- Complete table of all variables in the README.
 
-## Sicherheit
-- RBAC: ausschließlich get/list/watch, minimale Ressourcenliste. nodes/proxy nur bei aktivem PVC-Füllstand-Check; CRD-Rechte nur für cert-manager Certificates und Argo CD Applications, jeweils per Helm-Value schaltbar.
-- Container: nonroot, readOnlyRootFilesystem, alle Capabilities gedroppt, seccompProfile RuntimeDefault, allowPrivilegeEscalation false. Nur das PVC ist beschreibbar.
-- Keine Passwörter, Hashes oder Session-IDs im Log.
-- Informer-Speicher klein halten: managedFields und nicht benötigte Felder per SetTransform entfernen.
+## Security
+- RBAC: get/list/watch only, minimal list of resources. nodes/proxy only with an active PVC usage check; CRD permissions only for cert-manager Certificates and Argo CD Applications, each switchable via a Helm value.
+- Container: nonroot, readOnlyRootFilesystem, all capabilities dropped, seccompProfile RuntimeDefault, allowPrivilegeEscalation false. Only the PVC is writable.
+- No passwords, hashes or session IDs in the log.
+- Keep informer memory small: remove managedFields and unneeded fields via SetTransform.
 
-## Packaging & Open-Source-Grundausstattung
-- Dockerfile: Multi-Stage, CGO_ENABLED=0, Ziel gcr.io/distroless/static:nonroot, Multi-Arch (linux/amd64, linux/arm64) per docker buildx.
-- Makefile mit build, test, lint, run (lokal), image.
-- Helm-Chart: Deployment (1 Replica, Strategy Recreate wegen SQLite auf RWO-PVC), PVC, Service, optionales Ingress, ServiceAccount, RBAC mit Schaltern für optionale Checks, Secret oder existingSecret für Passwort-Hash und SMTP-Zugangsdaten, Liveness/Readiness-Probes, Resources (Richtwert requests 64Mi/10m, limit 128Mi), securityContext wie oben.
+## Packaging & open-source basics
+- Dockerfile: multi-stage, CGO_ENABLED=0, target gcr.io/distroless/static:nonroot, multi-arch (linux/amd64, linux/arm64) via docker buildx.
+- Makefile with build, test, lint, run (local), image.
+- Helm chart: Deployment (1 replica, strategy Recreate because of SQLite on an RWO PVC), PVC, Service, optional Ingress, ServiceAccount, RBAC with switches for optional checks, Secret or existingSecret for password hash and SMTP credentials, liveness/readiness probes, resources (guideline requests 64Mi/10m, limit 128Mi), securityContext as above.
 - LICENSE (Apache-2.0)
-- README: Leitbild-Satz, Was/Warum, klare Abgrenzung (kein Prometheus-Ersatz, keine Root-Cause-Analyse, keine Traces – bewusst wenige, zuverlässige Checks), Installation per Helm, Konfigurationstabelle, Liste aller Checks mit Schwere, lokale Entwicklung.
-- ARCHITECTURE.md: eine Seite für Leser ohne Go-Erfahrung – Datenfluss, Pakete und ihre Aufgabe, Schritt-für-Schritt „Wie füge ich einen neuen Check hinzu“.
+- README: motto, what/why, clear scope (no Prometheus replacement, no root-cause analysis, no traces – deliberately few, reliable checks), installation via Helm, configuration table, list of all checks with severity, local development.
+- ARCHITECTURE.md: one page for readers without Go experience – data flow, packages and their purpose, step by step "How do I add a new check".
 - CHANGELOG.md, .gitignore.
-- Git-Workflow siehe CLAUDE.md. 
+- For the Git workflow see CLAUDE.md.
 
 ## Tests
-- Table-driven Tests für jeden Check mit selbst gebauten Objekten (keine echte API), inklusive Grenzfällen: knapp unter/über Schwellwert, per Annotation ignoriert, optionale CRDs fehlen.
-- Tests für die Zustandslogik der Engine gegen eine temporäre SQLite-Datei: pending → firing → resolved, Flap wird unterdrückt, fehlgeschlagener Versand wird wiederholt, Sammel-Mail bei mehreren Wechseln.
-- Golden-Test für Betreff und Body der Mail.
+- Table-driven tests for every check with hand-built objects (no real API), including edge cases: just below/above the threshold, ignored via annotation, optional CRDs missing.
+- Tests for the engine's state logic against a temporary SQLite file: pending → firing → resolved, flap is suppressed, failed sending is retried, combined mail for several changes.
+- Golden test for the subject and body of the mail.
 
-## Vorgehen
-Erstelle zuerst PLAN.md mit Paketaufbau, zentralen Typen, Datenbankschema, Liste der Env-Variablen und Phasenplan. Warte dann auf meine Freigabe.
-Danach in Phasen. Jede Phase endet mit lauffähigem Stand, grünem go build / go vet / go test / golangci-lint und einer kurzen Zusammenfassung: was ist neu, wie probiere ich es lokal aus. Nach jeder Phase anhalten und auf Freigabe warten.
-1. Grundgerüst: main, Config, Logging, Informers, Pod-Checks, Findings ins Log, /healthz. Lokal gegen KUBECONFIG lauffähig.
-2. Restliche Kern-Checks (Workloads, Nodes, Jobs, CronJobs, PVC Pending) mit Tests.
-3. SQLite-Store, Zustandslogik, Retention.
-4. Mail-Benachrichtigung mit Sammel-Mails.
-5. Web-UI und Login.
-6. Optionale Checks: PVC-Füllstand, cert-manager, Argo CD.
-7. Packaging: Dockerfile, Makefile, Helm-Chart, README, ARCHITECTURE.md, LICENSE, CHANGELOG.
-Wenn eine Anforderung unklar ist oder sich widerspricht: nachfragen statt raten. Bewusste Abweichungen vom Auftrag kurz begründen.
+## Procedure
+First create PLAN.md with the package layout, central types, database schema, list of environment variables and phase plan. Then wait for my approval.
+After that, work in phases. Each phase ends with a working state, green go build / go vet / go test / golangci-lint and a short summary: what is new, how do I try it locally. After each phase stop and wait for approval.
+1. Skeleton: main, config, logging, informers, pod checks, findings to the log, /healthz. Runs locally against KUBECONFIG.
+2. Remaining core checks (workloads, nodes, jobs, CronJobs, PVC pending) with tests.
+3. SQLite store, state logic, retention.
+4. Mail notifications with combined mails.
+5. Web UI and login.
+6. Optional checks: PVC usage, cert-manager, Argo CD.
+7. Packaging: Dockerfile, Makefile, Helm chart, README, ARCHITECTURE.md, LICENSE, CHANGELOG.
+If a requirement is unclear or contradictory: ask instead of guessing. Briefly justify deliberate deviations from the brief.
