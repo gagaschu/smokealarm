@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -23,6 +24,8 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/yaml"
+
+	"github.com/gagaschu/smokealarm/internal/checks"
 )
 
 // baseValues is the minimum a user must provide: the password hash.
@@ -35,16 +38,17 @@ type release struct {
 	raw     string
 }
 
-// helmTemplate renders the chart with the given values files content, in
-// order. It returns the helm output and its error.
-func helmTemplate(t *testing.T, releaseName string, values ...string) (string, error) {
+// helmRun runs a helm command on the chart with the given values files
+// content, in order, and returns its output (stderr if it failed) and error.
+// command is "template", or "install" with --dry-run=client.
+func helmRun(t *testing.T, command []string, releaseName string, values ...string) (string, error) {
 	t.Helper()
 	helm, err := exec.LookPath("helm")
 	if err != nil {
 		t.Skip("helm is not installed")
 	}
 
-	args := []string{"template", releaseName, "smokealarm", "--namespace", "monitoring"}
+	args := append(slices.Clone(command), releaseName, "smokealarm", "--namespace", "monitoring")
 	for i, content := range values {
 		file := filepath.Join(t.TempDir(), "values-"+string(rune('a'+i))+".yaml")
 		if err := os.WriteFile(file, []byte(content), 0o600); err != nil {
@@ -62,6 +66,27 @@ func helmTemplate(t *testing.T, releaseName string, values ...string) (string, e
 		return stderr.String(), err
 	}
 	return stdout.String(), nil
+}
+
+// helmTemplate renders the chart. It returns the helm output and its error.
+func helmTemplate(t *testing.T, releaseName string, values ...string) (string, error) {
+	t.Helper()
+	return helmRun(t, []string{"template"}, releaseName, values...)
+}
+
+// helmNotes returns the text that "helm install" prints after the install
+// (NOTES.txt). A dry run on the client side needs no cluster.
+func helmNotes(t *testing.T, values ...string) string {
+	t.Helper()
+	out, err := helmRun(t, []string{"install", "--dry-run=client"}, "smokealarm", append([]string{baseValues}, values...)...)
+	if err != nil {
+		t.Fatalf("helm install --dry-run failed: %v\n%s", err, out)
+	}
+	_, notes, found := strings.Cut(out, "NOTES:\n")
+	if !found {
+		t.Fatalf("helm printed no NOTES:\n%s", out)
+	}
+	return notes
 }
 
 // render renders the chart with the required hash plus extra values and fails
@@ -232,6 +257,21 @@ func TestResourcesAndProbes(t *testing.T) {
 	if c.ReadinessProbe == nil || c.ReadinessProbe.HTTPGet.Path != "/readyz" {
 		t.Errorf("readiness probe = %+v, want /readyz", c.ReadinessProbe)
 	}
+
+	// Start-up (database, migrations, cache sync) can be slow on a Raspberry
+	// Pi: a startup probe protects it from the liveness probe, and a timeout
+	// longer than the default 1s keeps a busy moment from counting as a failure.
+	if c.StartupProbe == nil || c.StartupProbe.HTTPGet.Path != "/healthz" {
+		t.Fatalf("startup probe = %+v, want /healthz", c.StartupProbe)
+	}
+	if window := c.StartupProbe.PeriodSeconds * c.StartupProbe.FailureThreshold; window < 120 {
+		t.Errorf("startup probe allows %ds, want at least 120s", window)
+	}
+	for name, probe := range map[string]*corev1.Probe{"startup": c.StartupProbe, "liveness": c.LivenessProbe, "readiness": c.ReadinessProbe} {
+		if probe.TimeoutSeconds < 3 {
+			t.Errorf("%s probe timeout = %ds, want at least 3s", name, probe.TimeoutSeconds)
+		}
+	}
 }
 
 func TestPasswordHashIsOnlyInTheSecret(t *testing.T) {
@@ -352,6 +392,9 @@ func TestRBACSwitches(t *testing.T) {
 			[]string{"/nodes/proxy:get", "argoproj.io/applications" + readOnly}, "cert-not-ready,cert-expiry"},
 		{"no argocd", "rbac:\n  argocd: false\n",
 			[]string{"/nodes/proxy:get", "cert-manager.io/certificates" + readOnly}, "argocd-health,argocd-sync"},
+		// Switching the check off by name must also drop the permission.
+		{"pvc-usage disabled by the user", "disabledChecks: [pvc-usage]\n",
+			[]string{"argoproj.io/applications" + readOnly, "cert-manager.io/certificates" + readOnly}, "pvc-usage"},
 		{"user list is merged without duplicates", "disabledChecks: [pod-restarts, pvc-usage]\nrbac:\n  nodesProxy: false\n",
 			[]string{"argoproj.io/applications" + readOnly, "cert-manager.io/certificates" + readOnly}, "pod-restarts,pvc-usage"},
 	}
@@ -363,6 +406,107 @@ func TestRBACSwitches(t *testing.T) {
 			}
 			if got := r.env()["SMOKEALARM_DISABLED_CHECKS"]; got != tt.wantDisabled {
 				t.Errorf("SMOKEALARM_DISABLED_CHECKS = %q, want %q", got, tt.wantDisabled)
+			}
+		})
+	}
+}
+
+// rbacSwitches maps each optional permission switch of the chart to the checks
+// that need that permission.
+func rbacSwitches() []struct {
+	value  string
+	covers func(checks.Check) bool
+} {
+	return []struct {
+		value  string
+		covers func(checks.Check) bool
+	}{
+		{"nodesProxy", func(c checks.Check) bool { return c.Name == checks.PVCUsageCheck }},
+		{"certManager", func(c checks.Check) bool { return c.Requires == checks.RequiresCertManager }},
+		{"argocd", func(c checks.Check) bool { return c.Requires == checks.RequiresArgoCD }},
+	}
+}
+
+// The chart lists check names per switch in _helpers.tpl. This test ties that
+// list to checks.All(), so a new check cannot run without its permission.
+func TestRBACSwitchesCoverEveryCheckThatNeedsThem(t *testing.T) {
+	for _, c := range checks.All() {
+		if c.Requires == "" && c.Name != checks.PVCUsageCheck {
+			continue
+		}
+		covered := false
+		for _, sw := range rbacSwitches() {
+			covered = covered || sw.covers(c)
+		}
+		if !covered {
+			t.Errorf("check %s needs an optional permission, but no rbac switch covers it: add one to values.yaml, "+
+				"clusterrole.yaml and smokealarm.disabledChecks in _helpers.tpl, and list it in rbacSwitches", c.Name)
+		}
+	}
+
+	for _, sw := range rbacSwitches() {
+		var want []string
+		for _, c := range checks.All() {
+			if sw.covers(c) {
+				want = append(want, c.Name)
+			}
+		}
+		got := strings.Split(render(t, "rbac:\n  "+sw.value+": false\n").env()["SMOKEALARM_DISABLED_CHECKS"], ",")
+		slices.Sort(got)
+		slices.Sort(want)
+		if !slices.Equal(got, want) {
+			t.Errorf("rbac.%s=false disables %v, want exactly the checks that need it: %v", sw.value, got, want)
+		}
+	}
+}
+
+// The ClusterRole is cluster-wide: its name must not clash when the chart is
+// installed in two namespaces.
+func TestClusterRoleNameIncludesTheNamespace(t *testing.T) {
+	r := render(t, "")
+	var role rbacv1.ClusterRole
+	r.as("ClusterRole", &role)
+	var binding rbacv1.ClusterRoleBinding
+	r.as("ClusterRoleBinding", &binding)
+
+	if role.Name != "monitoring-smokealarm" || binding.Name != role.Name || binding.RoleRef.Name != role.Name {
+		t.Errorf("role %q, binding %q -> %q; want all named monitoring-smokealarm (namespace-release)",
+			role.Name, binding.Name, binding.RoleRef.Name)
+	}
+}
+
+func TestNotes(t *testing.T) {
+	tests := []struct {
+		name    string
+		values  string
+		want    []string
+		notWant []string
+	}{
+		{"port-forward", "",
+			[]string{"port-forward", "config.cookieSecure is true"}, []string{"ingress.tls", "resolved"}},
+		{"port-forward with insecure cookie", "config:\n  cookieSecure: false\n",
+			[]string{"port-forward"}, []string{"cookieSecure"}},
+		{"ingress without tls warns about the cookie", "ingress:\n  enabled: true\n  host: smoke.example.com\n",
+			[]string{"http://smoke.example.com", "ingress.tls.enabled is false", "config.cookieSecure"}, []string{"port-forward"}},
+		{"ingress with tls", "ingress:\n  enabled: true\n  host: smoke.example.com\n  tls:\n    enabled: true\n",
+			[]string{"https://smoke.example.com"}, []string{"cookieSecure", "port-forward"}},
+		{"ingress without tls and insecure cookie", "ingress:\n  enabled: true\n  host: smoke.example.com\nconfig:\n  cookieSecure: false\n",
+			[]string{"http://smoke.example.com"}, []string{"cookieSecure"}},
+		{"disabled checks warn about resolved mails", "disabledChecks: [pod-restarts]\n",
+			[]string{"Disabled checks: pod-restarts", `"resolved"`}, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			notes := helmNotes(t, tt.values)
+			for _, text := range tt.want {
+				if !strings.Contains(notes, text) {
+					t.Errorf("notes do not contain %q:\n%s", text, notes)
+				}
+			}
+			for _, text := range tt.notWant {
+				if strings.Contains(notes, text) {
+					t.Errorf("notes contain %q, which does not apply:\n%s", text, notes)
+				}
 			}
 		})
 	}

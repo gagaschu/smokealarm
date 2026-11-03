@@ -15,6 +15,15 @@ HTTPS. Over a plain-HTTP port-forward, log in works only on http://localhost
 in most browsers; if it does not, install with --set config.cookieSecure=false
 for local use.
 {{- end }}
+{{- if and .Values.ingress.enabled (not .Values.ingress.tls.enabled) .Values.config.cookieSecure }}
+
+NOTE: the ingress has no TLS (ingress.tls.enabled is false) but
+config.cookieSecure is true, so browsers drop the login cookie over plain HTTP
+and send you back to the login page. Enable ingress.tls, or set
+config.cookieSecure=false if you only use plain HTTP on a trusted network. (If
+a load balancer in front of the ingress already serves HTTPS, you can ignore
+this note.)
+{{- end }}
 {{- if not .Values.persistence.enabled }}
 
 WARNING: persistence.enabled is false. The history and login sessions are lost
@@ -28,4 +37,6 @@ the log. Check the log with:  kubectl -n {{ .Release.Namespace }} logs deploy/{{
 {{- with include "smokealarm.disabledChecks" . }}
 
 Disabled checks: {{ . }}
+When a check is switched off, its open problems are closed and reported as
+"resolved" in the next mail, although the cause may still exist.
 {{- end }}

@@ -43,6 +43,15 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- default (include "smokealarm.fullname" .) .Values.existingSecret -}}
 {{- end -}}
 
+{{/*
+Name of the ClusterRole and its binding. They are cluster-wide, so the
+namespace is part of the name: the same release name can be installed in two
+namespaces without a clash.
+*/}}
+{{- define "smokealarm.clusterRoleName" -}}
+{{- printf "%s-%s" .Release.Namespace (include "smokealarm.fullname" .) -}}
+{{- end -}}
+
 {{/* The claim used for /data. */}}
 {{- define "smokealarm.claimName" -}}
 {{- default (include "smokealarm.fullname" .) .Values.persistence.existingClaim -}}
