@@ -238,6 +238,11 @@ func (e *Engine) RunOnce(ctx context.Context) error {
 
 	unknown := e.checksWithUnknownState(skipped)
 	var errs []error
+	// Before saveState, which would otherwise write back the old "reported"
+	// markers from the copy it reads.
+	if err := e.finishDowntimes(ctx, unknown, start); err != nil {
+		errs = append(errs, err)
+	}
 	if err := e.saveState(ctx, findings, unknown, start); err != nil {
 		errs = append(errs, err)
 	}
@@ -361,56 +366,58 @@ func (e *Engine) refresh(record store.Record, f checks.Finding, now time.Time) s
 	return record
 }
 
+// finishDowntimes removes the downtimes that have ended and brings back the
+// alarms they covered. If that fails, the downtime stays in the table and keeps
+// the problem silent; the next run tries again. The downtime of a check whose
+// state is unknown waits until the check runs again: a mail now would claim a
+// problem that may be gone.
+func (e *Engine) finishDowntimes(ctx context.Context, unknown []string, now time.Time) error {
+	expired, err := e.Store.ExpiredDowntimes(ctx, now)
+	if err != nil {
+		return fmt.Errorf("load expired downtimes: %w", err)
+	}
+	for _, d := range expired {
+		if slices.Contains(unknown, d.Check) {
+			continue
+		}
+		if err := e.Store.FinishDowntime(ctx, d.Key, now); err != nil {
+			return fmt.Errorf("finish downtime: %w", err)
+		}
+		e.Logger.Info("downtime finished", "key", d.Key)
+	}
+	return nil
+}
+
 // notify sends one combined notification for everything that has not been
 // reported yet. Records are marked as reported only after the notifier
 // succeeded, so a failed send is simply tried again at the next run, also
 // after a restart. Reminders for critical problems that are due go into the
 // same notification, except for checks whose state is unknown. Of an
 // acknowledged problem only the end is reported; the store leaves out the rest.
+// A problem in a downtime sends nothing at all.
 func (e *Engine) notify(ctx context.Context, unknown []string, now time.Time) error {
 	records, err := e.Store.Unnotified(ctx)
 	if err != nil {
 		return fmt.Errorf("load unreported findings: %w", err)
 	}
-	due, err := e.dueReminders(ctx, unknown, now)
+	silenced, err := e.Store.DowntimeKeys(ctx)
+	if err != nil {
+		return fmt.Errorf("load downtimes: %w", err)
+	}
+	due, err := e.dueReminders(ctx, unknown, silenced, now)
 	if err != nil {
 		return fmt.Errorf("load findings due for a reminder: %w", err)
 	}
 
-	n := notify.Notification{BaseURL: e.BaseURL}
-	var firingIDs, resolvedIDs, silentIDs []int64
-	for _, r := range records {
-		switch {
-		case r.State == store.StateFiring:
-			n.New = append(n.New, alertFor(r))
-			firingIDs = append(firingIDs, r.ID)
-		case r.FiringNotifiedAt == nil && r.AcknowledgedAt == nil:
-			// It was fixed before anybody heard about it. Telling the
-			// reader it is resolved would be confusing. After an
-			// acknowledgement somebody did hear about it, so that case
-			// gets its mail, even if the first mail never went out.
-			silentIDs = append(silentIDs, r.ID)
-		default:
-			n.Resolved = append(n.Resolved, alertFor(r))
-			resolvedIDs = append(resolvedIDs, r.ID)
-		}
-	}
-
-	for _, r := range due {
-		n.Reminders = append(n.Reminders, alertFor(r))
-		firingIDs = append(firingIDs, r.ID)
-	}
-
-	if err := e.Store.MarkResolvedNotified(ctx, silentIDs, now); err != nil {
+	r := e.buildReport(records, due, silenced)
+	n := r.notification
+	if err := e.Store.MarkResolvedNotified(ctx, r.silentIDs, now); err != nil {
 		return fmt.Errorf("mark silently resolved findings: %w", err)
 	}
 	if len(n.New) == 0 && len(n.Reminders) == 0 && len(n.Resolved) == 0 {
 		return nil
 	}
 
-	sortAlerts(n.New)
-	sortAlerts(n.Reminders)
-	sortAlerts(n.Resolved)
 	err = e.Notifier.Send(ctx, n)
 	e.setNotifyResult(err, now)
 	if err != nil {
@@ -418,20 +425,65 @@ func (e *Engine) notify(ctx context.Context, unknown []string, now time.Time) er
 	}
 	e.Logger.Info("notification sent", "notifier", e.Notifier.Name(), "new", len(n.New), "reminders", len(n.Reminders), "resolved", len(n.Resolved))
 
-	if err := e.Store.MarkFiringNotified(ctx, firingIDs, now); err != nil {
+	if err := e.Store.MarkFiringNotified(ctx, r.firingIDs, now); err != nil {
 		return fmt.Errorf("mark new findings as reported: %w", err)
 	}
-	if err := e.Store.MarkResolvedNotified(ctx, resolvedIDs, now); err != nil {
+	if err := e.Store.MarkResolvedNotified(ctx, r.resolvedIDs, now); err != nil {
 		return fmt.Errorf("mark resolved findings as reported: %w", err)
 	}
 	return nil
 }
 
+// report is what one run tells the reader, and which markers to set for it.
+type report struct {
+	notification notify.Notification
+	firingIDs    []int64 // reported as new or as a reminder, once sending worked
+	resolvedIDs  []int64 // reported as resolved, once sending worked
+	silentIDs    []int64 // over without a mail
+}
+
+// buildReport sorts the unreported records and the due reminders into a report.
+func (e *Engine) buildReport(records, due []store.Record, silenced map[string]bool) report {
+	r := report{notification: notify.Notification{BaseURL: e.BaseURL}}
+	n := &r.notification
+	for _, rec := range records {
+		firing := rec.State == store.StateFiring
+		switch {
+		case silenced[rec.Key] && firing:
+			// Not marked as reported: the mail goes out when the downtime ends.
+		case silenced[rec.Key]:
+			// It went away during the downtime, so nothing is sent, not even
+			// after it ends. The downtime also wins over an acknowledgement.
+			r.silentIDs = append(r.silentIDs, rec.ID)
+		case firing:
+			n.New = append(n.New, alertFor(rec))
+			r.firingIDs = append(r.firingIDs, rec.ID)
+		case rec.FiringNotifiedAt == nil && rec.AcknowledgedAt == nil:
+			// It was fixed before anybody heard about it. Telling the
+			// reader it is resolved would be confusing. After an
+			// acknowledgement somebody did hear about it, so that case
+			// gets its mail, even if the first mail never went out.
+			r.silentIDs = append(r.silentIDs, rec.ID)
+		default:
+			n.Resolved = append(n.Resolved, alertFor(rec))
+			r.resolvedIDs = append(r.resolvedIDs, rec.ID)
+		}
+	}
+	for _, rec := range due {
+		n.Reminders = append(n.Reminders, alertFor(rec))
+		r.firingIDs = append(r.firingIDs, rec.ID)
+	}
+	sortAlerts(n.New)
+	sortAlerts(n.Reminders)
+	sortAlerts(n.Resolved)
+	return r
+}
+
 // dueReminders returns the critical problems whose last report is at least
 // one repeat interval old. Problems of checks whose state is unknown are left
 // out, because a reminder would claim they still exist; they are reminded of
-// as soon as the check runs again.
-func (e *Engine) dueReminders(ctx context.Context, unknown []string, now time.Time) ([]store.Record, error) {
+// as soon as the check runs again. Problems in a downtime are left out too.
+func (e *Engine) dueReminders(ctx context.Context, unknown []string, silenced map[string]bool, now time.Time) ([]store.Record, error) {
 	if e.CriticalRepeatInterval <= 0 {
 		return nil, nil
 	}
@@ -440,7 +492,7 @@ func (e *Engine) dueReminders(ctx context.Context, unknown []string, now time.Ti
 		return nil, err
 	}
 	return slices.DeleteFunc(records, func(r store.Record) bool {
-		return slices.Contains(unknown, r.Check)
+		return slices.Contains(unknown, r.Check) || silenced[r.Key]
 	}), nil
 }
 
