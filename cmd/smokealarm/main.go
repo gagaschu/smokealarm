@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"slices"
 	"syscall"
 	"time"
 	_ "time/tzdata" // CronJob time zones must work in the distroless image, which has no zoneinfo
@@ -81,12 +82,22 @@ func run() error {
 		return fmt.Errorf("detect optional features: %w", err)
 	}
 	logger.Info("optional cluster features", "cert-manager", features.CertManager, "argocd", features.ArgoCD)
-	cluster, err := kube.New(clients.Kube, clients.Dynamic, kube.Options{Features: features, VolumeStats: hasCheck(enabledChecks, checks.PVCUsageCheck)}, logger)
+
+	// Checks whose CRDs are missing do not run; the status page tells why.
+	activeChecks, unavailable := splitByFeatures(enabledChecks, features)
+	for _, c := range unavailable {
+		logger.Info("check skipped", "check", c.Name, "reason", c.Reason)
+	}
+
+	cluster, err := kube.New(clients.Kube, clients.Dynamic, kube.Options{
+		Features:    features,
+		VolumeStats: hasCheck(activeChecks, checks.PVCUsageCheck),
+	}, logger)
 	if err != nil {
 		return fmt.Errorf("create cluster: %w", err)
 	}
 
-	loop := newEngine(cfg, logger, cluster, db, enabledChecks)
+	loop := newEngine(cfg, logger, cluster, db, activeChecks, unavailable)
 	handler, err := newHandler(cfg, logger, cluster, db, loop)
 	if err != nil {
 		return fmt.Errorf("create web handler: %w", err)
@@ -129,6 +140,33 @@ func run() error {
 	return nil
 }
 
+// splitByFeatures separates the checks that can run in this cluster from those
+// that need optional CRDs which are not installed. It returns the latter with
+// the reason to show.
+func splitByFeatures(enabled []checks.Check, features kube.Features) ([]checks.Check, []engine.SkippedCheck) {
+	var active []checks.Check
+	var unavailable []engine.SkippedCheck
+	for _, c := range enabled {
+		if features.Has(c.Requires) {
+			active = append(active, c)
+			continue
+		}
+		unavailable = append(unavailable, engine.SkippedCheck{Name: c.Name, Reason: missingFeatureReason(c.Requires)})
+	}
+	return active, unavailable
+}
+
+func missingFeatureReason(requires string) string {
+	switch requires {
+	case checks.RequiresCertManager:
+		return "cert-manager CRDs not installed (certificates.cert-manager.io); checked at startup"
+	case checks.RequiresArgoCD:
+		return "Argo CD CRDs not installed (applications.argoproj.io); checked at startup"
+	default:
+		return "required cluster feature " + requires + " is not available"
+	}
+}
+
 // hasCheck reports whether a check with that name is in the list.
 func hasCheck(list []checks.Check, name string) bool {
 	for _, c := range list {
@@ -142,8 +180,9 @@ func hasCheck(list []checks.Check, name string) bool {
 // newEngine wires the main loop. It is created before the web server because
 // the status page reads from it, but it only starts running after the
 // informer caches are synced.
-func newEngine(cfg config.Config, logger *slog.Logger, cluster *kube.Cluster, db *store.Store, enabled []checks.Check) *engine.Engine {
-	var skipped []engine.SkippedCheck
+func newEngine(cfg config.Config, logger *slog.Logger, cluster *kube.Cluster, db *store.Store,
+	enabled []checks.Check, unavailable []engine.SkippedCheck) *engine.Engine {
+	skipped := slices.Clone(unavailable)
 	for _, name := range cfg.DisabledChecks {
 		skipped = append(skipped, engine.SkippedCheck{Name: name, Reason: "disabled by SMOKEALARM_DISABLED_CHECKS"})
 	}

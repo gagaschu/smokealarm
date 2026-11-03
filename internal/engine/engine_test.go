@@ -41,13 +41,15 @@ func (f *fakeNotifier) Send(_ context.Context, n notify.Notification) error {
 // harness drives an engine with a controllable clock and controllable
 // findings, against a real SQLite file.
 type harness struct {
-	t        *testing.T
-	path     string
-	engine   *Engine
-	notifier *fakeNotifier
-	findings []checks.Finding
-	now      time.Time
-	logs     *bytes.Buffer
+	t         *testing.T
+	path      string
+	engine    *Engine
+	notifier  *fakeNotifier
+	findings  []checks.Finding
+	skipped   map[string]string // what the snapshot reports as unable to run
+	checkRuns int               // how often the fake check was executed
+	now       time.Time
+	logs      *bytes.Buffer
 }
 
 func newHarness(t *testing.T) *harness {
@@ -74,10 +76,15 @@ func (h *harness) start() {
 	h.t.Cleanup(func() { _ = db.Close() })
 
 	h.engine = &Engine{
-		Snapshot: func(_ context.Context, now time.Time) *checks.Snapshot { return &checks.Snapshot{Now: now} },
+		Snapshot: func(_ context.Context, now time.Time) *checks.Snapshot {
+			return &checks.Snapshot{Now: now, Skipped: h.skipped}
+		},
 		Checks: []checks.Check{{
 			Name: "fake",
-			Run:  func(*checks.Snapshot, checks.Options) []checks.Finding { return h.findings },
+			Run: func(*checks.Snapshot, checks.Options) []checks.Finding {
+				h.checkRuns++
+				return h.findings
+			},
 		}},
 		AlertAfter: 2 * time.Minute,
 		Retention:  30 * 24 * time.Hour,
@@ -310,6 +317,101 @@ func TestStatusShowsSendErrorUntilNextSuccess(t *testing.T) {
 	h.mustRun(30 * time.Second)
 	if got := h.engine.Status(); got.LastNotifyError != "" || !got.LastNotifyErrorAt.IsZero() {
 		t.Errorf("status after recovery = %+v, want the error cleared", got)
+	}
+}
+
+func TestSkippedCheckKeepsItsProblems(t *testing.T) {
+	h := newHarness(t)
+	h.findings = []checks.Finding{finding("a", checks.Critical), finding("pending", checks.Warning)}
+	h.mustRun(0)
+	h.mustRun(2 * time.Minute) // "a" and "pending" are both 2 minutes old: both fire
+	if len(h.notifier.sent) != 1 {
+		t.Fatalf("got %d notifications, want the first report", len(h.notifier.sent))
+	}
+
+	// The data of the check becomes unavailable: it is not run, and its
+	// problems must neither resolve nor be reported again.
+	h.skipped = map[string]string{"fake": "kubelet stats unavailable"}
+	h.findings = nil
+	runsBefore := h.checkRuns
+	h.mustRun(time.Minute)
+	h.mustRun(time.Minute)
+
+	if h.checkRuns != runsBefore {
+		t.Error("a skipped check was executed")
+	}
+	if h.countRows("firing") != 2 || h.countRows("resolved") != 0 {
+		t.Errorf("%d firing, %d resolved; want the problems untouched while the check is skipped",
+			h.countRows("firing"), h.countRows("resolved"))
+	}
+	if len(h.notifier.sent) != 1 {
+		t.Errorf("got %d notifications, want no resolved notification caused by missing data", len(h.notifier.sent))
+	}
+
+	// Data is back and the problems are really gone: now they resolve.
+	h.skipped = nil
+	h.mustRun(time.Minute)
+	if h.countRows("resolved") != 2 || len(h.notifier.sent) != 2 || len(h.notifier.sent[1].Resolved) != 2 {
+		t.Errorf("%d resolved, %d notifications; want both problems resolved and reported once data is back",
+			h.countRows("resolved"), len(h.notifier.sent))
+	}
+}
+
+func TestPendingProblemOfSkippedCheckIsNotDropped(t *testing.T) {
+	h := newHarness(t)
+	h.findings = []checks.Finding{finding("a", checks.Warning)}
+	h.mustRun(0) // pending
+
+	h.skipped = map[string]string{"fake": "no data"}
+	h.findings = nil
+	h.mustRun(time.Minute)
+	if h.countRows("pending") != 1 {
+		t.Error("a pending problem was dropped only because its check could not run")
+	}
+
+	h.skipped = nil
+	h.findings = []checks.Finding{finding("a", checks.Warning)}
+	h.mustRun(time.Minute) // still the same problem, now 2 minutes old: fires
+	if len(h.notifier.sent) != 1 || !h.notifier.sent[0].New[0].Since.Equal(testStart) {
+		t.Errorf("sent %+v; want the problem to keep its original start time", h.notifier.sent)
+	}
+}
+
+func TestSkipIsLoggedOnlyWhenItChanges(t *testing.T) {
+	h := newHarness(t)
+	h.skipped = map[string]string{"fake": "kubelet stats unavailable"}
+	h.mustRun(0)
+	h.mustRun(30 * time.Second)
+	h.mustRun(30 * time.Second)
+	if n := strings.Count(h.logs.String(), "check skipped"); n != 1 {
+		t.Errorf("\"check skipped\" logged %d times, want once:\n%s", n, h.logs.String())
+	}
+	if !strings.Contains(h.logs.String(), "kubelet stats unavailable") {
+		t.Error("the reason is missing from the log")
+	}
+
+	h.skipped = nil
+	h.mustRun(30 * time.Second)
+	h.mustRun(30 * time.Second)
+	if n := strings.Count(h.logs.String(), "check runs again"); n != 1 {
+		t.Errorf("\"check runs again\" logged %d times, want once", n)
+	}
+}
+
+func TestStatusShowsTemporarilySkippedCheck(t *testing.T) {
+	h := newHarness(t)
+	h.skipped = map[string]string{"fake": "kubelet stats unavailable", "not-ours": "ignored"}
+	h.mustRun(0)
+
+	want := []CheckStatus{{Name: "fake", Active: false, Reason: "kubelet stats unavailable"}}
+	if got := h.engine.Status().Checks; !slices.Equal(got, want) {
+		t.Errorf("Checks = %+v, want %+v (names the engine does not know are ignored)", got, want)
+	}
+
+	h.skipped = nil
+	h.mustRun(time.Minute)
+	if got := h.engine.Status().Checks; len(got) != 1 || !got[0].Active || got[0].Reason != "" {
+		t.Errorf("Checks = %+v, want the check active again", got)
 	}
 }
 

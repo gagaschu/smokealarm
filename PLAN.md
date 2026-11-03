@@ -137,10 +137,10 @@ type Cluster struct { // created in main
 }
 type Features struct{ CertManager, ArgoCD bool } // from the discovery API at startup
 
-func New(cfg Config, logger) (*Cluster, error)
+func New(client, dynamicClient, Options{Features, VolumeStats}, logger) (*Cluster, error)
 func (c *Cluster) Start(ctx) error          // start informers
 func (c *Cluster) Synced() bool             // for /readyz
-func (c *Cluster) BuildSnapshot(ctx, now, withVolumeStats bool) (*checks.Snapshot, []error)
+func (c *Cluster) BuildSnapshot(ctx, now) *checks.Snapshot // Snapshot.Skipped says which checks could not get their data
 ```
 - `SetTransform` on every informer: strip `managedFields` and the `kubectl.kubernetes.io/last-applied-configuration` annotation; for Pods also strip `spec.volumes`/`env` etc.
 - Events informer only for `type=Warning` (field selector).
@@ -352,3 +352,8 @@ Every phase: own branch from main, unit tests with fake objects, `go build`/`go 
 - **`hash-password` reads stdin with echo on (phase 5):** hiding the typed password needs `golang.org/x/term`, which is not on the allowed list. Use `read -s PW; printf '%s' "$PW" | smokealarm hash-password`.
 - **Sessions (phase 5):** fixed expiry (no sliding renewal); only the SHA-256 hash of the session id is stored; the login handler never accepts a redirect target. The rate limit uses `RemoteAddr` only, so behind an ingress all clients share one limit.
 - **Security headers (phase 5):** CSP `default-src 'self'` (the pages need no inline script or style), `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Cache-Control: no-store` on pages.
+- **Phase 6, skipping checks:** two kinds. *Static*: checks whose CRDs are missing (`Check.Requires`, detected once at startup) are not in `Engine.Checks` and show up as skipped with the reason; problems left over from an earlier run are resolved normally. *Temporary*: `Snapshot.Skipped` (check name → reason) is set by the data collection; the engine does not run those checks and leaves their open problems untouched (this is what the `skipped` parameter of `reconcile` is for). A change in the skipped set is logged once, not every run.
+- **Phase 6, `pvc-usage`:** only Ready nodes are asked for kubelet stats. If any of them fails (403 or other), the whole check is skipped for that run, because a missing node would make its full volumes look "fine again" and resolve their problems. NotReady nodes are not asked and do not cause a skip; their volume findings may resolve (`node-not-ready` reports the node). Without the check enabled no kubelet request is made and `nodes/proxy` is not needed.
+- **Phase 6, memory:** the dynamic informers keep only the fields the checks read (Argo CD Applications are large).
+- **Phase 6, RBAC list for the Helm chart (phase 7), all get/list/watch unless noted:** namespaces, pods, events, nodes, deployments, statefulsets, daemonsets, jobs, cronjobs, persistentvolumeclaims, storageclasses; `nodes/proxy` (`get`, only if `pvc-usage` is enabled); `certificates.cert-manager.io` and `applications.argoproj.io` (each behind its own Helm switch). Discovery needs no extra rule.
+- **Phase 6, CRD detection:** a 404 means "not installed"; any other discovery error aborts startup instead of silently switching checks off. CRDs installed later are noticed after a restart.
