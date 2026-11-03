@@ -107,10 +107,10 @@ Fixed values (constants, per spec): OOM window 15m, restart window 1h, PVC usage
 | File | Check name | Severity / Reason |
 |---|---|---|
 | pods.go | `pod-crashloop` | critical, CrashLoopBackOff |
-| | `pod-image-pull` | critical, ImagePullBackOff / ErrImagePull |
+| | `pod-image-pull` | critical, ImagePullBackOff (also used for ErrImagePull so the key stays stable) |
 | | `pod-oomkilled` | warning, OOMKilled (last termination < 15m ago) |
 | | `pod-restarts` | warning, TooManyRestarts (> threshold and last restart < 1h ago) |
-| | `pod-pending` | warning, reason from condition/event (e.g. Unschedulable) |
+| | `pod-pending` | warning, PodPending (detail such as Unschedulable goes into the message) |
 | workloads.go | `workload-replicas` | warning ReplicasUnavailable / critical NoReplicasAvailable |
 | nodes.go | `node-not-ready` | critical, NotReady |
 | | `node-pressure` | warning, MemoryPressure / DiskPressure / PIDPressure |
@@ -321,7 +321,7 @@ Validation collects all errors and exits with one clear message (e.g. `config: S
 ## 6. Phase plan
 Every phase: own branch from main, unit tests with fake objects, `go build`/`go vet`/`go test`/`golangci-lint` green, PR with "what's new / how to try it locally", then stop.
 
-1. **phase-1-skeleton** – `go.mod`, `.gitignore`, minimal `.golangci.yml` (standard linters), `config` (core variables), slog setup, `kube` (clients, informers with transform, `BuildSnapshot` for core resources), `checks` types + `pods.go` + ignore helper with table-driven tests, `engine` loop that **logs** findings for now, `/healthz` and `/readyz` (cache sync). Try it: `KUBECONFIG=... SMOKEALARM_ADMIN_USER=x SMOKEALARM_ADMIN_PASSWORD_HASH=x go run ./cmd/smokealarm`.
+1. **phase-1-skeleton** – `go.mod`, `.gitignore`, minimal `.golangci.yml` (standard linters), `config` (core variables), slog setup, `kube` (clients, informers with transform, `BuildSnapshot` for core resources), `checks` types + `pods.go` + ignore helper with table-driven tests, `engine` loop that **logs** findings for now, `/healthz` and `/readyz` (cache sync). Try it: `KUBECONFIG=... go run ./cmd/smokealarm` (admin variables are not needed before phase 5).
 2. **phase-2-core-checks** – `workloads.go`, `nodes.go`, `jobs.go` (incl. cronjob-missed with robfig/cron, `time/tzdata` import for distroless), `storage.go` (pvc-pending), `DISABLED_CHECKS`, tests incl. edge cases (just below/above threshold, ignored, suspended).
 3. **phase-3-store** – `store` with migrations, `Reconcile`, retention, `notify.Log` as the notifier. Engine tests against a temp SQLite: pending→firing→resolved, flap suppressed, skipped check does not resolve, failed send gets retried.
 4. **phase-4-mail** – `notify.Mail` (STARTTLS/TLS/auth/multiple recipients), subject/body templates, golden tests (`testdata/*.golden`, `-update` flag), SMTP config validation, last send error in `Status`. Try it locally with Mailpit (`SMTP_TLS=none`).
