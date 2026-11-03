@@ -29,10 +29,11 @@ this note.)
 WARNING: persistence.enabled is false. The history and login sessions are lost
 whenever the pod restarts.
 {{- end }}
-{{- if not .Values.smtp.host }}
+{{- if not (or .Values.smtp.host .Values.existingSecret (include "smokealarm.notificationSecrets" . | trim)) }}
 
-Mail is not configured (smtp.host is empty): state changes are only written to
-the log. Check the log with:  kubectl -n {{ .Release.Namespace }} logs deploy/{{ include "smokealarm.fullname" . }}
+No notification target is configured (smtp.host and notifications are empty):
+state changes are only written to the log. Check the log with:
+  kubectl -n {{ .Release.Namespace }} logs deploy/{{ include "smokealarm.fullname" . }}
 {{- end }}
 {{- with include "smokealarm.disabledChecks" . }}
 

@@ -20,7 +20,7 @@ spec:
       {{- if or (not .Values.existingSecret) .Values.podAnnotations }}
       annotations:
         {{- if not .Values.existingSecret }}
-        # A new password hash or SMTP login restarts the pod.
+        # A new password hash, SMTP login or target secret restarts the pod.
         checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
         {{- end }}
         {{- with .Values.podAnnotations }}
@@ -104,10 +104,28 @@ spec:
             - name: SMOKEALARM_SMTP_TO
               value: {{ join "," .Values.smtp.to | quote }}
             {{- end }}
+            {{- if .Values.notifications.allowHttp }}
+            - name: SMOKEALARM_NOTIFY_ALLOW_HTTP
+              value: "true"
+            {{- end }}
+            {{- with .Values.notifications.ntfy.server }}
+            - name: SMOKEALARM_NTFY_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.notifications.telegram.chatIds }}
+            {{- range . }}
+            {{- if not (kindIs "string" .) }}
+            {{- fail "notifications.telegram.chatIds: write every chat id in quotes, e.g. \"-1001234567890\"; Helm turns bare numbers into floats." }}
+            {{- end }}
+            {{- end }}
+            - name: SMOKEALARM_TELEGRAM_CHAT_IDS
+              value: {{ join "," . | quote }}
+            {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
-          # The password hash and the SMTP login come from a Secret.
+          # The password hash, the SMTP login and the secrets of the
+          # notification targets come from a Secret.
           envFrom:
             - secretRef:
                 name: {{ include "smokealarm.secretName" . }}

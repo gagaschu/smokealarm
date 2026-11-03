@@ -89,3 +89,33 @@ off. Without the permission they could not read their data.
 {{- end -}}
 {{- $list | uniq | join "," -}}
 {{- end -}}
+
+{{/*
+The secrets of the notification targets, one "KEY: value" line each, for the
+chart's Secret. Empty if none is set.
+*/}}
+{{- define "smokealarm.notificationSecrets" -}}
+{{- with .Values.notifications }}
+{{- if .webhook.url }}
+SMOKEALARM_WEBHOOK_URL: {{ .webhook.url | quote }}
+{{- end }}
+{{- if .webhook.header }}
+SMOKEALARM_WEBHOOK_HEADER: {{ .webhook.header | quote }}
+{{- end }}
+{{- if .ntfy.topic }}
+SMOKEALARM_NTFY_TOPIC: {{ .ntfy.topic | quote }}
+{{- end }}
+{{- if .ntfy.token }}
+SMOKEALARM_NTFY_TOKEN: {{ .ntfy.token | quote }}
+{{- end }}
+{{- if .telegram.botToken }}
+SMOKEALARM_TELEGRAM_BOT_TOKEN: {{ .telegram.botToken | quote }}
+{{- end }}
+{{- if .slack.webhookUrl }}
+SMOKEALARM_SLACK_WEBHOOK_URL: {{ .slack.webhookUrl | quote }}
+{{- end }}
+{{- if .teams.webhookUrl }}
+SMOKEALARM_TEAMS_WEBHOOK_URL: {{ .teams.webhookUrl | quote }}
+{{- end }}
+{{- end }}
+{{- end -}}
