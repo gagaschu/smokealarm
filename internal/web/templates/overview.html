@@ -1,41 +1,54 @@
 {{define "content"}}
 {{if .WaitingFirstRun}}
 <section class="state">
+  <span class="state-icon"><span class="spinner"></span></span>
   <h1>Starting up</h1>
   <p>Waiting for the first check run.</p>
 </section>
 {{else if .AllGood}}
 <section class="state good">
+  <span class="state-icon">{{template "icon-check-circle"}}</span>
   <h1>All good</h1>
   <p>Last check: <time title="{{.LastRun}}">{{.LastRunAgo}} ago</time>.</p>
 </section>
 {{else}}
-<h1>{{len .Problems}} current {{if eq (len .Problems) 1}}problem{{else}}problems{{end}}</h1>
+<div class="page-head">
+  <div>
+    <h1>{{len .Problems}} current {{if eq (len .Problems) 1}}problem{{else}}problems{{end}}</h1>
+    <p class="counts">
+      {{if .CriticalCount}}<span class="count critical">{{.CriticalCount}} critical</span>{{end}}
+      {{if .WarningCount}}<span class="count warning">{{.WarningCount}} {{if eq .WarningCount 1}}warning{{else}}warnings{{end}}</span>{{end}}
+    </p>
+  </div>
+  <p class="last-run"><span class="live"></span><span>Last check: <time title="{{.LastRun}}">{{.LastRunAgo}} ago</time></span></p>
+</div>
 <ul class="problems">
   {{range .Problems}}
-  <li class="problem {{.Severity}}">
+  <li class="problem {{.Severity}}{{if .AcknowledgedAt}} is-acknowledged{{end}}">
     <div class="details">
-    <div class="headline">
-      <span class="badge {{.Severity}}">{{.Severity}}</span>
-      {{if .AcknowledgedAt}}<span class="badge acknowledged">acknowledged</span>{{end}}
-      {{if .DowntimeUntil}}<span class="badge downtime">downtime</span>{{end}}
-      <strong>{{.Reason}}</strong>
-      <span class="object">{{.Object}}</span>
-    </div>
-    <p class="message">{{.Message}}</p>
-    <p class="since">since <time title="{{.Since}}">{{.Age}} ago</time>{{if .AcknowledgedAt}}, acknowledged {{.AcknowledgedAt}}{{end}}</p>
-    {{if .DowntimeUntil}}<p class="since">No mails during the downtime until {{.DowntimeUntil}}.</p>{{end}}
+      <div class="badges">
+        <span class="badge {{.Severity}}">{{.Severity}}</span>
+        {{if .AcknowledgedAt}}<span class="badge acknowledged">acknowledged</span>{{end}}
+        {{if .DowntimeUntil}}<span class="badge downtime">downtime</span>{{end}}
+      </div>
+      <h2 class="reason">{{.Reason}}</h2>
+      <p class="object">{{.Object}}</p>
+      <p class="message">{{.Message}}</p>
+      <p class="meta">{{template "icon-clock"}}<span>since <time title="{{.Since}}">{{.Age}} ago</time>{{if .AcknowledgedAt}}, acknowledged {{.AcknowledgedAt}}{{end}}</span></p>
+      {{if .DowntimeUntil}}<p class="meta">{{template "icon-bell-off"}}<span>No mails during the downtime until {{.DowntimeUntil}}.</span></p>{{end}}
     </div>
     <div class="actions">
-      {{if .CanAcknowledge}}<form method="post" action="/problems/{{.ID}}/acknowledge"><button type="submit">Acknowledge</button></form>{{end}}
-      {{if .AcknowledgedAt}}<form method="post" action="/problems/{{.ID}}/unacknowledge"><button type="submit">Remove acknowledgement</button></form>{{end}}
-      <a class="button" href="/downtimes/new?finding={{.ID}}">{{if .DowntimeUntil}}Change downtime{{else}}Set downtime{{end}}</a>
+      {{if .CanAcknowledge}}<form method="post" action="/problems/{{.ID}}/acknowledge"><button class="primary" type="submit">{{template "icon-check"}}Acknowledge</button></form>{{end}}
+      {{if .AcknowledgedAt}}<form method="post" action="/problems/{{.ID}}/unacknowledge"><button type="submit">{{template "icon-undo"}}Remove acknowledgement</button></form>{{end}}
+      <a class="button" href="/downtimes/new?finding={{.ID}}">{{template "icon-bell-off"}}{{if .DowntimeUntil}}Change downtime{{else}}Set downtime{{end}}</a>
     </div>
   </li>
   {{end}}
 </ul>
-{{if .CanAcknowledgeAny}}<p class="footnote">Acknowledge stops the reminders. You still get a mail when it is resolved.</p>
-{{end}}{{if .AcknowledgedAny}}<p class="footnote">Removing an acknowledgement brings the reminders back, so a mail can go out in the next run.</p>
-{{end}}<p class="footnote">Last check: <time title="{{.LastRun}}">{{.LastRunAgo}} ago</time>.</p>
+{{if or .CanAcknowledgeAny .AcknowledgedAny}}<aside class="hint">{{template "icon-info"}}<div>
+{{if .CanAcknowledgeAny}}<p>Acknowledge stops the reminders. You still get a mail when it is resolved.</p>
+{{end}}{{if .AcknowledgedAny}}<p>Removing an acknowledgement brings the reminders back, so a mail can go out in the next run.</p>
+{{end}}</div></aside>
+{{end}}
 {{end}}
 {{end}}

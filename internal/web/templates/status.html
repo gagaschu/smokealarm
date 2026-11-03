@@ -1,17 +1,27 @@
 {{define "content"}}
-<h1>Status</h1>
-<dl>
-  <dt>Last check run</dt>
-  <dd>{{if .Status.LastRun}}{{.Status.LastRun}}{{else}}not yet{{end}}</dd>
+<div class="page-head">
+  <h1>Status</h1>
+</div>
+<dl class="facts">
+  <div>
+    <dt>Last check run</dt>
+    <dd class="time">{{if .Status.LastRun}}{{.Status.LastRun}}{{else}}not yet{{end}}</dd>
+  </div>
   {{if .Status.LastRunError}}
-  <dt>Last run error</dt>
-  <dd class="error">{{.Status.LastRunError}}</dd>
+  <div>
+    <dt>Last run error</dt>
+    <dd class="error">{{.Status.LastRunError}}</dd>
+  </div>
   {{end}}
-  <dt>Notifications</dt>
-  <dd>{{if .Status.MailConfigured}}mail is configured{{else}}mail is not configured (notifications go to the log only){{end}}</dd>
+  <div>
+    <dt>Notifications</dt>
+    <dd>{{if .Status.MailConfigured}}<span class="pill ok">mail is configured</span>{{else}}<span class="pill">mail is not configured (notifications go to the log only)</span>{{end}}</dd>
+  </div>
   {{if .Status.LastNotifyError}}
-  <dt>Last sending error</dt>
-  <dd class="error">{{.Status.LastNotifyError}} <span class="footnote">({{.Status.LastNotifyErrorAt}})</span></dd>
+  <div>
+    <dt>Last sending error</dt>
+    <dd class="error">{{.Status.LastNotifyError}} <span class="footnote">({{.Status.LastNotifyErrorAt}})</span></dd>
+  </div>
   {{end}}
 </dl>
 
@@ -22,8 +32,8 @@
   <tbody>
     {{range .Status.Checks}}
     <tr>
-      <td class="nowrap" data-label="Check">{{.Name}}</td>
-      <td class="nowrap" data-label="State">{{if .Active}}active{{else}}skipped{{end}}</td>
+      <td class="nowrap mono" data-label="Check">{{.Name}}</td>
+      <td class="nowrap" data-label="State">{{if .Active}}<span class="pill ok">active</span>{{else}}<span class="pill">skipped</span>{{end}}</td>
       <td class="wrap" data-label="Reason">{{.Reason}}</td>
     </tr>
     {{end}}

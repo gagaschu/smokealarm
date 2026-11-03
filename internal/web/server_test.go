@@ -365,6 +365,36 @@ func TestOverviewListsFiringProblemsWorstFirst(t *testing.T) {
 	}
 }
 
+func TestOverviewCountsProblemsBySeverity(t *testing.T) {
+	e := newTestEnv(t)
+	cookie := e.login()
+	e.status.LastRun = testNow
+	e.insert(
+		problem("crit-a", "media", checks.Critical, store.StateFiring, testNow.Add(-time.Hour), "c"),
+		problem("crit-b", "media", checks.Critical, store.StateFiring, testNow.Add(-time.Hour), "c"),
+		problem("warn", "media", checks.Warning, store.StateFiring, testNow.Add(-time.Hour), "w"),
+		// Pending problems are not on the page, so they are not counted.
+		problem("pending", "media", checks.Critical, store.StatePending, testNow, "p"),
+	)
+	body := e.do(http.MethodGet, "/", nil, cookie).Body.String()
+	for _, want := range []string{`<span class="count critical">2 critical</span>`, `<span class="count warning">1 warning</span>`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("overview does not contain %q:\n%s", want, body)
+		}
+	}
+
+	only := newTestEnv(t)
+	only.status.LastRun = testNow
+	only.insert(
+		problem("warn-a", "media", checks.Warning, store.StateFiring, testNow, "w"),
+		problem("warn-b", "media", checks.Warning, store.StateFiring, testNow, "w"),
+	)
+	body = only.do(http.MethodGet, "/", nil, only.login()).Body.String()
+	if !strings.Contains(body, ">2 warnings<") || strings.Contains(body, "count critical") {
+		t.Errorf("want only the warning counter, in plural:\n%s", body)
+	}
+}
+
 func TestOverviewEscapesMessages(t *testing.T) {
 	e := newTestEnv(t)
 	e.status.LastRun = testNow
