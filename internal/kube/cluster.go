@@ -45,11 +45,19 @@ type Cluster struct {
 	dynamicFactory dynamicinformer.DynamicSharedInformerFactory
 	certificates   cache.SharedIndexInformer
 	applications   cache.SharedIndexInformer
+
+	// volumeStats switches the kubelet stats collection on. fetchStats reads
+	// the stats of one node; tests replace it.
+	volumeStats bool
+	fetchStats  statsFetcher
 }
 
 // Options tells the cluster which optional parts to use.
 type Options struct {
 	Features Features
+	// VolumeStats collects the volume usage from the kubelets (needs the RBAC
+	// permission nodes/proxy). Leave it off if pvc-usage is disabled.
+	VolumeStats bool
 }
 
 // New prepares the informers but does not start them; call Start for that.
@@ -58,6 +66,8 @@ type Options struct {
 func New(client kubernetes.Interface, dynamicClient dynamic.Interface, options Options, logger *slog.Logger) (*Cluster, error) {
 	c := &Cluster{
 		logger:      logger,
+		volumeStats: options.VolumeStats,
+		fetchStats:  kubeletStatsFetcher(client),
 		coreFactory: informers.NewSharedInformerFactory(client, resyncPeriod),
 		eventFactory: informers.NewSharedInformerFactoryWithOptions(client, resyncPeriod,
 			informers.WithTweakListOptions(onlyWarnings)),

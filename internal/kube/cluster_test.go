@@ -105,7 +105,7 @@ func TestBuildSnapshotReadsFromCache(t *testing.T) {
 	}
 
 	now := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
-	snap := cluster.BuildSnapshot(now)
+	snap := cluster.BuildSnapshot(ctx, now)
 
 	if !snap.Now.Equal(now) {
 		t.Errorf("Now = %v, want %v", snap.Now, now)

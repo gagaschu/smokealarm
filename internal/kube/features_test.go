@@ -243,7 +243,7 @@ func TestBuildSnapshotWithCustomResources(t *testing.T) {
 		t.Fatalf("WaitForSync: %v", err)
 	}
 
-	snap := cluster.BuildSnapshot(time.Now())
+	snap := cluster.BuildSnapshot(context.Background(), time.Now())
 	if len(snap.Certificates) != 1 || snap.Certificates[0].Meta.Name != "site" || snap.Certificates[0].ReadyReason != "Failed" {
 		t.Errorf("Certificates = %+v", snap.Certificates)
 	}
@@ -257,7 +257,7 @@ func TestNewWithoutFeaturesHasNoCustomResources(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	snap := cluster.BuildSnapshot(time.Now())
+	snap := cluster.BuildSnapshot(context.Background(), time.Now())
 	if snap.Certificates != nil || snap.Applications != nil {
 		t.Errorf("got %+v / %+v, want none without the CRDs", snap.Certificates, snap.Applications)
 	}

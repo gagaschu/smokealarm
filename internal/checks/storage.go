@@ -79,6 +79,10 @@ func storageClassOf(snap *Snapshot, pvc *corev1.PersistentVolumeClaim) *storagev
 
 const checkPVCUsage = "pvc-usage"
 
+// PVCUsageCheck is the name of the pvc-usage check. The kube package needs it
+// to say that the check could not run when the kubelet stats are unavailable.
+const PVCUsageCheck = checkPVCUsage
+
 // Usage thresholds from the specification, in percent.
 const (
 	pvcWarnPercent     = 85

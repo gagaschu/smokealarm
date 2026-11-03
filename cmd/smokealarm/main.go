@@ -81,7 +81,7 @@ func run() error {
 		return fmt.Errorf("detect optional features: %w", err)
 	}
 	logger.Info("optional cluster features", "cert-manager", features.CertManager, "argocd", features.ArgoCD)
-	cluster, err := kube.New(clients.Kube, clients.Dynamic, kube.Options{Features: features}, logger)
+	cluster, err := kube.New(clients.Kube, clients.Dynamic, kube.Options{Features: features, VolumeStats: hasCheck(enabledChecks, checks.PVCUsageCheck)}, logger)
 	if err != nil {
 		return fmt.Errorf("create cluster: %w", err)
 	}
@@ -127,6 +127,16 @@ func run() error {
 		return fmt.Errorf("shut down http server: %w", err)
 	}
 	return nil
+}
+
+// hasCheck reports whether a check with that name is in the list.
+func hasCheck(list []checks.Check, name string) bool {
+	for _, c := range list {
+		if c.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // newEngine wires the main loop. It is created before the web server because

@@ -26,7 +26,7 @@ import (
 // and passes them in, so the loop can be tested with fake functions.
 type Engine struct {
 	// Snapshot returns the current cluster objects (the informer caches).
-	Snapshot func(now time.Time) *checks.Snapshot
+	Snapshot func(ctx context.Context, now time.Time) *checks.Snapshot
 	Checks   []checks.Check
 	Options  checks.Options
 	Interval time.Duration
@@ -154,7 +154,7 @@ func (e *Engine) runAndLog(ctx context.Context) {
 // others still run, and all errors are returned together.
 func (e *Engine) RunOnce(ctx context.Context) error {
 	start := e.Now()
-	snap := e.Snapshot(start)
+	snap := e.Snapshot(ctx, start)
 	findings := runChecks(snap, e.Options, e.Checks)
 	for _, f := range findings {
 		e.Logger.Debug("finding",

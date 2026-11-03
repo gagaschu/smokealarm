@@ -1,6 +1,7 @@
 package kube
 
 import (
+	"context"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -17,7 +18,7 @@ import (
 //
 // The loops are written out per type on purpose: without generics, a
 // shared helper would need reflection, which is harder to read.
-func (c *Cluster) BuildSnapshot(now time.Time) *checks.Snapshot {
+func (c *Cluster) BuildSnapshot(ctx context.Context, now time.Time) *checks.Snapshot {
 	snap := &checks.Snapshot{Now: now}
 
 	for _, obj := range c.namespaces.GetStore().List() {
@@ -76,6 +77,7 @@ func (c *Cluster) BuildSnapshot(now time.Time) *checks.Snapshot {
 		}
 	}
 	c.addCustomResourcesToSnapshot(snap)
+	c.addVolumeUsage(ctx, snap)
 	return snap
 }
 

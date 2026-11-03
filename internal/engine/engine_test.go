@@ -74,7 +74,7 @@ func (h *harness) start() {
 	h.t.Cleanup(func() { _ = db.Close() })
 
 	h.engine = &Engine{
-		Snapshot: func(now time.Time) *checks.Snapshot { return &checks.Snapshot{Now: now} },
+		Snapshot: func(_ context.Context, now time.Time) *checks.Snapshot { return &checks.Snapshot{Now: now} },
 		Checks: []checks.Check{{
 			Name: "fake",
 			Run:  func(*checks.Snapshot, checks.Options) []checks.Finding { return h.findings },
@@ -480,7 +480,7 @@ func TestRunOnceLogsTransitions(t *testing.T) {
 func TestRunStopsOnCancel(t *testing.T) {
 	h := newHarness(t)
 	runs := 0
-	h.engine.Snapshot = func(now time.Time) *checks.Snapshot { runs++; return &checks.Snapshot{Now: now} }
+	h.engine.Snapshot = func(_ context.Context, now time.Time) *checks.Snapshot { runs++; return &checks.Snapshot{Now: now} }
 	h.engine.Interval = time.Hour
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
