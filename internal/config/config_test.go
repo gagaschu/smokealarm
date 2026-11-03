@@ -28,6 +28,7 @@ func TestLoadDefaults(t *testing.T) {
 		PodPendingAfter:  5 * time.Minute,
 		PVCPendingAfter:  5 * time.Minute,
 		CronJobGrace:     5 * time.Minute,
+		SMTP:             SMTPConfig{Port: 587, TLS: "starttls"},
 	}
 	if !reflect.DeepEqual(cfg, want) {
 		t.Errorf("got %+v, want %+v", cfg, want)
