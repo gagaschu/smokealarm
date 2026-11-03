@@ -53,6 +53,7 @@ type Snapshot struct {
 	Deployments  []*appsv1.Deployment
 	StatefulSets []*appsv1.StatefulSet
 	DaemonSets   []*appsv1.DaemonSet
+	Nodes        []*corev1.Node
 }
 
 // Options holds the configurable thresholds and the ignore list.
@@ -79,6 +80,8 @@ func All() []Check {
 		{Name: checkPodRestarts, Run: PodRestarts},
 		{Name: checkPodPending, Run: PodPending},
 		{Name: checkWorkloadReplicas, Run: WorkloadReplicas},
+		{Name: checkNodeNotReady, Run: NodeNotReady},
+		{Name: checkNodePressure, Run: NodePressure},
 	}
 }
 
