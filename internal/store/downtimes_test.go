@@ -129,7 +129,7 @@ func TestFinishDowntimeClearsTheMarkerOfFiringProblems(t *testing.T) {
 			s, _ := openTemp(t)
 			ctx := context.Background()
 			id := insertedID(t, s, newRecord("a", tt.state, testNow))
-			if err := s.MarkFiringNotified(ctx, []int64{id}, testNow); err != nil {
+			if err := s.MarkFiringNotified(ctx, testTarget, []int64{id}, testNow); err != nil {
 				t.Fatalf("MarkFiringNotified: %v", err)
 			}
 			if tt.acknowledge {
@@ -164,7 +164,7 @@ func TestFinishDowntimeLeavesAnExtendedDowntimeAlone(t *testing.T) {
 	s, _ := openTemp(t)
 	ctx := context.Background()
 	id := insertedID(t, s, newRecord("a", StateFiring, testNow))
-	if err := s.MarkFiringNotified(ctx, []int64{id}, testNow); err != nil {
+	if err := s.MarkFiringNotified(ctx, testTarget, []int64{id}, testNow); err != nil {
 		t.Fatalf("MarkFiringNotified: %v", err)
 	}
 	mustSetDowntime(t, s, newDowntime("a", testNow.Add(time.Hour)))

@@ -11,6 +11,10 @@ import (
 
 var testNow = time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
 
+// testTarget is the notification target the tests report to, unless a test
+// needs several.
+const testTarget = "mail"
+
 func openTemp(t *testing.T) (*Store, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "test.db")
@@ -191,7 +195,7 @@ func TestUnnotifiedAndMarkers(t *testing.T) {
 		t.Fatalf("Apply: %v", err)
 	}
 
-	got, err := s.Unnotified(ctx)
+	got, err := s.Unnotified(ctx, testTarget)
 	if err != nil {
 		t.Fatalf("Unnotified: %v", err)
 	}
@@ -200,10 +204,10 @@ func TestUnnotifiedAndMarkers(t *testing.T) {
 	}
 
 	notifiedAt := testNow.Add(2 * time.Hour)
-	if err := s.MarkFiringNotified(ctx, []int64{got[0].ID}, notifiedAt); err != nil {
+	if err := s.MarkFiringNotified(ctx, testTarget, []int64{got[0].ID}, notifiedAt); err != nil {
 		t.Fatalf("MarkFiringNotified: %v", err)
 	}
-	got, _ = s.Unnotified(ctx)
+	got, _ = s.Unnotified(ctx, testTarget)
 	if keys := recordKeys(got); keys != "resolved" {
 		t.Fatalf("after marking firing: Unnotified = %s, want resolved", keys)
 	}
@@ -211,10 +215,10 @@ func TestUnnotifiedAndMarkers(t *testing.T) {
 		t.Error("the resolved record never had its firing reported")
 	}
 
-	if err := s.MarkResolvedNotified(ctx, []int64{got[0].ID}, notifiedAt); err != nil {
+	if err := s.MarkResolvedNotified(ctx, testTarget, []int64{got[0].ID}, notifiedAt); err != nil {
 		t.Fatalf("MarkResolvedNotified: %v", err)
 	}
-	if got, _ = s.Unnotified(ctx); len(got) != 0 {
+	if got, _ = s.Unnotified(ctx, testTarget); len(got) != 0 {
 		t.Errorf("after marking everything: Unnotified = %s, want none", recordKeys(got))
 	}
 }
@@ -243,7 +247,7 @@ func TestDeleteResolvedBefore(t *testing.T) {
 	}
 
 	open, _ := s.OpenRecords(ctx)
-	unnotified, _ := s.Unnotified(ctx)
+	unnotified, _ := s.Unnotified(ctx, testTarget)
 	if recordKeys(open) != "open" || recordKeys(unnotified) != "recent,open" {
 		t.Errorf("open = %s, unnotified = %s; want only the old resolved record gone",
 			recordKeys(open), recordKeys(unnotified))
@@ -380,7 +384,7 @@ func TestUpdateWritesReasonAndNotifiedMarker(t *testing.T) {
 		t.Fatalf("insert: %v", err)
 	}
 	open, _ := s.OpenRecords(ctx)
-	if err := s.MarkFiringNotified(ctx, []int64{open[0].ID}, testNow); err != nil {
+	if err := s.MarkFiringNotified(ctx, testTarget, []int64{open[0].ID}, testNow); err != nil {
 		t.Fatal(err)
 	}
 
@@ -402,7 +406,7 @@ func TestUpdateWritesReasonAndNotifiedMarker(t *testing.T) {
 	if got[0].FiringNotifiedAt != nil {
 		t.Error("the notified marker was not reset")
 	}
-	if unnotified, _ := s.Unnotified(ctx); len(unnotified) != 1 {
+	if unnotified, _ := s.Unnotified(ctx, testTarget); len(unnotified) != 1 {
 		t.Errorf("%d unreported records, want the changed one to be reported again", len(unnotified))
 	}
 }
@@ -450,12 +454,12 @@ func TestCriticalDueForReminder(t *testing.T) {
 		"resolved": before.Add(-time.Minute),
 	}
 	for key, at := range marks {
-		if err := s.MarkFiringNotified(ctx, []int64{ids[key]}, at); err != nil {
+		if err := s.MarkFiringNotified(ctx, testTarget, []int64{ids[key]}, at); err != nil {
 			t.Fatalf("MarkFiringNotified(%s): %v", key, err)
 		}
 	}
 
-	got, err := s.CriticalDueForReminder(ctx, before)
+	got, err := s.CriticalDueForReminder(ctx, testTarget, before)
 	if err != nil {
 		t.Fatalf("CriticalDueForReminder: %v", err)
 	}
@@ -574,7 +578,7 @@ func TestAcknowledgedProblemsAreNotReported(t *testing.T) {
 
 	unreported := insertedID(t, s, newRecord("unreported", StateFiring, testNow))
 	reported := insertedID(t, s, newRecord("reported", StateFiring, testNow))
-	if err := s.MarkFiringNotified(ctx, []int64{reported}, testNow); err != nil {
+	if err := s.MarkFiringNotified(ctx, testTarget, []int64{reported}, testNow); err != nil {
 		t.Fatalf("MarkFiringNotified: %v", err)
 	}
 	for _, id := range []int64{unreported, reported} {
@@ -583,11 +587,11 @@ func TestAcknowledgedProblemsAreNotReported(t *testing.T) {
 		}
 	}
 
-	unnotified, err := s.Unnotified(ctx)
+	unnotified, err := s.Unnotified(ctx, testTarget)
 	if err != nil || len(unnotified) != 0 {
 		t.Errorf("Unnotified = %v, %v, want nothing", recordKeys(unnotified), err)
 	}
-	due, err := s.CriticalDueForReminder(ctx, testNow.Add(time.Hour))
+	due, err := s.CriticalDueForReminder(ctx, testTarget, testNow.Add(time.Hour))
 	if err != nil || len(due) != 0 {
 		t.Errorf("CriticalDueForReminder = %v, %v, want nothing", recordKeys(due), err)
 	}

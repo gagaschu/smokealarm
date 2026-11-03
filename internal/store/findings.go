@@ -24,7 +24,10 @@ const (
 // Record is a finding as stored in the database, with its life cycle times.
 // The *NotifiedAt fields remember what has already been reported, so nothing
 // is sent twice by accident and failed notifications are retried.
-// FiringNotifiedAt holds the latest report, which may be a reminder.
+// FiringNotifiedAt holds the latest report, which may be a reminder. Records
+// read for one notification target (see Unnotified) carry that target's
+// markers; all other records carry the summary over all targets: the latest
+// report to any of them, empty if no target has been told.
 // AcknowledgedAt is set once somebody has acknowledged the problem in the web
 // UI; from then on only its end is reported.
 type Record struct {
@@ -70,29 +73,6 @@ func (s *Store) Record(ctx context.Context, id int64) (Record, bool, error) {
 	return records[0], true, nil
 }
 
-// Unnotified returns what still has to be reported: firing problems whose
-// start was not reported yet, and resolved problems whose end was not
-// reported yet. An acknowledged problem is left out while it fires, because
-// somebody already knows about it, even if its first mail never went out.
-func (s *Store) Unnotified(ctx context.Context) ([]Record, error) {
-	return s.query(ctx, `SELECT `+selectColumns+` FROM findings
-		WHERE (state = 'firing' AND firing_notified_at IS NULL AND acknowledged_at IS NULL)
-		   OR (state = 'resolved' AND resolved_notified_at IS NULL)
-		ORDER BY id`)
-}
-
-// CriticalDueForReminder returns critical problems that are still firing and
-// were last reported at or before the given time. Problems not reported yet
-// are left out; Unnotified returns those. Acknowledged problems get no
-// reminders.
-func (s *Store) CriticalDueForReminder(ctx context.Context, before time.Time) ([]Record, error) {
-	return s.query(ctx, `SELECT `+selectColumns+` FROM findings
-		WHERE state = 'firing' AND severity = 'critical'
-		  AND firing_notified_at IS NOT NULL AND firing_notified_at <= ?
-		  AND acknowledged_at IS NULL
-		ORDER BY id`, unix(before))
-}
-
 // Resolved returns resolved problems, newest first, for the history page. An
 // empty namespace means all namespaces. At most limit records are returned.
 func (s *Store) Resolved(ctx context.Context, namespace string, limit int) ([]Record, error) {
@@ -130,7 +110,10 @@ func (s *Store) Namespaces(ctx context.Context) ([]string, error) {
 // change during a life cycle (severity, reason, message, state, last_seen,
 // firing_at, resolved_at). firing_notified_at is written too, so that a
 // problem that got worse can be reported again; the markers are otherwise set
-// by MarkFiringNotified and MarkResolvedNotified. acknowledged_at is not
+// by MarkFiringNotified and MarkResolvedNotified. An empty firing_notified_at
+// also clears the marker of every notification target, so all of them hear
+// about it again. Otherwise that changes nothing: the summary is only empty if
+// no target has the marker. acknowledged_at is not
 // written: the engine works on a copy it read earlier, and writing that copy
 // back could undo an acknowledgement made in the web UI in the meantime.
 func (s *Store) Apply(ctx context.Context, changes Changes) error {
@@ -161,10 +144,18 @@ func (s *Store) Apply(ctx context.Context, changes Changes) error {
 		if err != nil {
 			return fmt.Errorf("update finding %s: %w", r.Key, err)
 		}
+		if r.FiringNotifiedAt == nil {
+			if err := clearFiringDeliveries(ctx, tx, r.ID); err != nil {
+				return err
+			}
+		}
 	}
 	for _, id := range changes.Delete {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM findings WHERE id = ?`, id); err != nil {
 			return fmt.Errorf("delete finding %d: %w", id, err)
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM deliveries WHERE finding_id = ?`, id); err != nil {
+			return fmt.Errorf("delete deliveries of finding %d: %w", id, err)
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -210,45 +201,31 @@ func (s *Store) Unacknowledge(ctx context.Context, id int64) (string, bool, erro
 	return key, true, nil
 }
 
-// MarkFiringNotified remembers that these firing problems were just reported,
-// for the first time or as a reminder.
-func (s *Store) MarkFiringNotified(ctx context.Context, ids []int64, at time.Time) error {
-	return s.markNotified(ctx, `UPDATE findings SET firing_notified_at = ? WHERE id = ?`, ids, at)
-}
-
-// MarkResolvedNotified remembers that the end of these problems was reported.
-func (s *Store) MarkResolvedNotified(ctx context.Context, ids []int64, at time.Time) error {
-	return s.markNotified(ctx, `UPDATE findings SET resolved_notified_at = ? WHERE id = ?`, ids, at)
-}
-
-func (s *Store) markNotified(ctx context.Context, statement string, ids []int64, at time.Time) error {
+// DeleteResolvedBefore removes resolved findings that ended before the given
+// time (retention), together with what the targets were told about them, and
+// returns how many findings were removed.
+func (s *Store) DeleteResolvedBefore(ctx context.Context, before time.Time) (int64, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin transaction: %w", err)
+		return 0, fmt.Errorf("begin transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }() // no-op after a successful commit
 
-	for _, id := range ids {
-		if _, err := tx.ExecContext(ctx, statement, unix(at), id); err != nil {
-			return fmt.Errorf("mark finding %d as notified: %w", id, err)
-		}
+	_, err = tx.ExecContext(ctx, `DELETE FROM deliveries WHERE finding_id IN
+		(SELECT id FROM findings WHERE state = 'resolved' AND resolved_at < ?)`, unix(before))
+	if err != nil {
+		return 0, fmt.Errorf("delete old deliveries: %w", err)
 	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit notified markers: %w", err)
-	}
-	return nil
-}
-
-// DeleteResolvedBefore removes resolved findings that ended before the given
-// time (retention) and returns how many were removed.
-func (s *Store) DeleteResolvedBefore(ctx context.Context, before time.Time) (int64, error) {
-	result, err := s.db.ExecContext(ctx, `DELETE FROM findings WHERE state = 'resolved' AND resolved_at < ?`, unix(before))
+	result, err := tx.ExecContext(ctx, `DELETE FROM findings WHERE state = 'resolved' AND resolved_at < ?`, unix(before))
 	if err != nil {
 		return 0, fmt.Errorf("delete old findings: %w", err)
 	}
 	n, err := result.RowsAffected()
 	if err != nil {
 		return 0, fmt.Errorf("count deleted findings: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit deleted findings: %w", err)
 	}
 	return n, nil
 }
