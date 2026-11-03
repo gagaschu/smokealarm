@@ -18,6 +18,8 @@ import (
 	"github.com/gagaschu/smokealarm/internal/config"
 	"github.com/gagaschu/smokealarm/internal/engine"
 	"github.com/gagaschu/smokealarm/internal/kube"
+	"github.com/gagaschu/smokealarm/internal/notify"
+	"github.com/gagaschu/smokealarm/internal/store"
 	"github.com/gagaschu/smokealarm/internal/web"
 )
 
@@ -47,6 +49,16 @@ func run() error {
 	// Stop cleanly on Ctrl-C locally and on SIGTERM from Kubernetes.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	db, err := store.Open(cfg.DBPath, time.Now)
+	if err != nil {
+		return fmt.Errorf("open store: %w", err)
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			logger.Error("close store", "error", err)
+		}
+	}()
 
 	client, err := kube.NewClient()
 	if err != nil {
@@ -85,7 +97,13 @@ func run() error {
 			CronJobGrace:      cfg.CronJobGrace,
 			IgnoredNamespaces: cfg.IgnoreNamespaces,
 		},
-		Interval: cfg.CheckInterval,
+		Interval:   cfg.CheckInterval,
+		AlertAfter: cfg.AlertAfter,
+		Retention:  cfg.Retention,
+		Store:      db,
+		// Mail replaces this in a later phase; until then state changes
+		// only show up in the log.
+		Notifier: &notify.Log{Logger: logger},
 		Now:      time.Now,
 		Logger:   logger,
 	}
