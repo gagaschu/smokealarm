@@ -192,6 +192,24 @@ func (s *Store) Acknowledge(ctx context.Context, id int64, at time.Time) (string
 	return key, true, nil
 }
 
+// Unacknowledge takes an acknowledgement back while the problem is firing. The
+// problem then behaves like any other: a reminder that is overdue goes out in
+// the next run, and so does a first mail that was held back. It returns the key
+// of the problem and whether anything changed.
+func (s *Store) Unacknowledge(ctx context.Context, id int64) (string, bool, error) {
+	var key string
+	err := s.db.QueryRowContext(ctx, `UPDATE findings SET acknowledged_at = NULL
+		WHERE id = ? AND state = 'firing' AND acknowledged_at IS NOT NULL
+		RETURNING key`, id).Scan(&key)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("remove acknowledgement of finding %d: %w", id, err)
+	}
+	return key, true, nil
+}
+
 // MarkFiringNotified remembers that these firing problems were just reported,
 // for the first time or as a reminder.
 func (s *Store) MarkFiringNotified(ctx context.Context, ids []int64, at time.Time) error {

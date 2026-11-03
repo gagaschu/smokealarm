@@ -626,3 +626,50 @@ func TestAcknowledgeMigrationKeepsExistingRows(t *testing.T) {
 		t.Errorf("AcknowledgedAt = %v, want nil for an existing row", records[0].AcknowledgedAt)
 	}
 }
+
+func TestUnacknowledge(t *testing.T) {
+	s, _ := openTemp(t)
+	ctx := context.Background()
+	id := insertedID(t, s, newRecord("a", StateFiring, testNow))
+
+	if _, changed, err := s.Unacknowledge(ctx, id); err != nil || changed {
+		t.Errorf("not acknowledged: changed = %v, %v, want false, nil", changed, err)
+	}
+	if _, changed, err := s.Unacknowledge(ctx, 42); err != nil || changed {
+		t.Errorf("unknown id: changed = %v, %v, want false, nil", changed, err)
+	}
+
+	if _, _, err := s.Acknowledge(ctx, id, testNow); err != nil {
+		t.Fatalf("Acknowledge: %v", err)
+	}
+	key, changed, err := s.Unacknowledge(ctx, id)
+	if err != nil || !changed || key != "a" {
+		t.Fatalf("Unacknowledge = %q, %v, %v, want a, true, nil", key, changed, err)
+	}
+	record, _, err := s.Record(ctx, id)
+	if err != nil || record.AcknowledgedAt != nil {
+		t.Errorf("record = %+v, %v, want no acknowledgement", record, err)
+	}
+}
+
+func TestUnacknowledgeLeavesAResolvedProblemAlone(t *testing.T) {
+	s, _ := openTemp(t)
+	ctx := context.Background()
+	id := insertedID(t, s, newRecord("a", StateFiring, testNow))
+	if _, _, err := s.Acknowledge(ctx, id, testNow); err != nil {
+		t.Fatalf("Acknowledge: %v", err)
+	}
+	record, _, err := s.Record(ctx, id)
+	if err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+	record.State = StateResolved
+	record.ResolvedAt = &testNow
+	if err := s.Apply(ctx, Changes{Update: []Record{record}}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	if _, changed, err := s.Unacknowledge(ctx, id); err != nil || changed {
+		t.Errorf("changed = %v, %v, want false, nil", changed, err)
+	}
+}
