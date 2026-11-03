@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -17,6 +18,7 @@ import (
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
+	clienttesting "k8s.io/client-go/testing"
 
 	"github.com/gagaschu/smokealarm/internal/checks"
 )
@@ -29,32 +31,94 @@ func apiResources(groupVersion string, names ...string) *metav1.APIResourceList 
 	return list
 }
 
+// clusterWith builds fake clients: discovery knows the given resources, and
+// listing the resources named in "forbidden" fails with 403.
+func clusterWith(resources []*metav1.APIResourceList, forbidden ...string) (*fake.Clientset, *dynamicfake.FakeDynamicClient) {
+	client := fake.NewClientset()
+	client.Resources = resources
+
+	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
+		map[schema.GroupVersionResource]string{
+			certificateGVR(): "CertificateList",
+			applicationGVR(): "ApplicationList",
+		})
+	for _, resource := range forbidden {
+		dyn.PrependReactor("list", resource, func(action clienttesting.Action) (bool, runtime.Object, error) {
+			gr := schema.GroupResource{Resource: resource}
+			return true, nil, apierrors.NewForbidden(gr, "", errors.New("RBAC: access denied"))
+		})
+	}
+	return client, dyn
+}
+
 func TestDetectFeatures(t *testing.T) {
 	certManager := apiResources("cert-manager.io/v1", "certificates", "issuers")
 	argo := apiResources("argoproj.io/v1alpha1", "applications", "appprojects")
 	argoWithoutApps := apiResources("argoproj.io/v1alpha1", "appprojects")
+	both := []string{checks.RequiresCertManager, checks.RequiresArgoCD}
 
 	tests := []struct {
 		name      string
 		resources []*metav1.APIResourceList
+		forbidden []string // resources the service account may not list
+		needed    []string
 		want      Features
+		// wantUnavailable maps a Requires name to a text its reason must contain.
+		wantUnavailable map[string]string
 	}{
-		{"nothing installed", nil, Features{}},
-		{"cert-manager only", []*metav1.APIResourceList{certManager}, Features{CertManager: true}},
-		{"argo only", []*metav1.APIResourceList{argo}, Features{ArgoCD: true}},
-		{"both", []*metav1.APIResourceList{certManager, argo}, Features{CertManager: true, ArgoCD: true}},
-		{"group exists without the resource", []*metav1.APIResourceList{argoWithoutApps}, Features{}},
+		{"nothing installed", nil, nil, both, Features{},
+			map[string]string{checks.RequiresCertManager: "not installed", checks.RequiresArgoCD: "not installed"}},
+		{"cert-manager only", []*metav1.APIResourceList{certManager}, nil, both, Features{CertManager: true},
+			map[string]string{checks.RequiresArgoCD: "not installed"}},
+		{"argo only", []*metav1.APIResourceList{argo}, nil, both, Features{ArgoCD: true},
+			map[string]string{checks.RequiresCertManager: "not installed"}},
+		{"both", []*metav1.APIResourceList{certManager, argo}, nil, both, Features{CertManager: true, ArgoCD: true}, nil},
+		{"group exists without the resource", []*metav1.APIResourceList{argoWithoutApps}, nil,
+			[]string{checks.RequiresArgoCD}, Features{},
+			map[string]string{checks.RequiresArgoCD: "not installed"}},
+		{"installed but not allowed to list certificates", []*metav1.APIResourceList{certManager, argo}, []string{"certificates"},
+			both, Features{ArgoCD: true},
+			map[string]string{checks.RequiresCertManager: "missing RBAC permission to list certificates.cert-manager.io"}},
+		{"installed but not allowed to list applications", []*metav1.APIResourceList{certManager, argo}, []string{"applications"},
+			both, Features{CertManager: true},
+			map[string]string{checks.RequiresArgoCD: "rbac.argocd"}},
+		{"nothing needed", []*metav1.APIResourceList{certManager, argo}, []string{"certificates", "applications"},
+			nil, Features{}, nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			client := fake.NewClientset()
-			client.Resources = tt.resources
+			client, dyn := clusterWith(tt.resources, tt.forbidden...)
 
-			got, err := DetectFeatures(client)
+			got, unavailable, err := DetectFeatures(context.Background(), client, dyn, tt.needed)
 			if err != nil || got != tt.want {
-				t.Errorf("DetectFeatures = %+v, %v; want %+v", got, err, tt.want)
+				t.Fatalf("DetectFeatures = %+v, %v; want %+v", got, err, tt.want)
+			}
+			if len(unavailable) != len(tt.wantUnavailable) {
+				t.Errorf("unavailable = %v, want %d entries", unavailable, len(tt.wantUnavailable))
+			}
+			for requires, text := range tt.wantUnavailable {
+				if !strings.Contains(unavailable[requires], text) {
+					t.Errorf("reason for %s = %q, want it to contain %q", requires, unavailable[requires], text)
+				}
 			}
 		})
+	}
+}
+
+// A feature that no active check needs must not be touched at all: no
+// request, and therefore no need for the permission.
+func TestDetectFeaturesOnlyLooksAtWhatIsNeeded(t *testing.T) {
+	client, dyn := clusterWith([]*metav1.APIResourceList{
+		apiResources("cert-manager.io/v1", "certificates"),
+		apiResources("argoproj.io/v1alpha1", "applications"),
+	})
+
+	if _, _, err := DetectFeatures(context.Background(), client, dyn, []string{checks.RequiresCertManager}); err != nil {
+		t.Fatal(err)
+	}
+	actions := dyn.Actions()
+	if len(actions) != 1 || actions[0].GetResource().Resource != "certificates" {
+		t.Errorf("dynamic requests = %v, want exactly one list of certificates and nothing about Argo CD", actions)
 	}
 }
 
@@ -73,19 +137,56 @@ func (failingDiscovery) ServerResourcesForGroupVersion(string) (*metav1.APIResou
 }
 
 func TestDetectFeaturesFailsOnOtherErrors(t *testing.T) {
-	_, err := DetectFeatures(failingClient{fake.NewClientset()})
+	_, dyn := clusterWith(nil)
+	needed := []string{checks.RequiresArgoCD}
+
+	// Discovery fails.
+	_, _, err := DetectFeatures(context.Background(), failingClient{fake.NewClientset()}, dyn, needed)
 	if err == nil || !strings.Contains(err.Error(), "connection refused") {
 		t.Errorf("got %v, want the discovery error to be returned (not treated as \"not installed\")", err)
 	}
+
+	// Listing fails with something other than 403.
+	client, dyn := clusterWith([]*metav1.APIResourceList{apiResources("argoproj.io/v1alpha1", "applications")})
+	dyn.PrependReactor("list", "applications", func(clienttesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("connection reset")
+	})
+	_, _, err = DetectFeatures(context.Background(), client, dyn, needed)
+	if err == nil || !strings.Contains(err.Error(), "connection reset") {
+		t.Errorf("got %v, want the list error to be returned (not treated as \"no permission\")", err)
+	}
 }
 
-func TestFeaturesHas(t *testing.T) {
-	f := Features{CertManager: true}
-	for requires, want := range map[string]bool{
-		"": true, checks.RequiresCertManager: true, checks.RequiresArgoCD: false, "unknown": false,
-	} {
-		if got := f.Has(requires); got != want {
-			t.Errorf("Has(%q) = %v, want %v", requires, got, want)
+func TestDetectFeaturesRejectsUnknownRequirements(t *testing.T) {
+	client, dyn := clusterWith(nil)
+	if _, _, err := DetectFeatures(context.Background(), client, dyn, []string{"unknown"}); err == nil {
+		t.Error("expected an error for a requirement the kube package does not know")
+	}
+}
+
+func TestDetectFeaturesNeedsADynamicClient(t *testing.T) {
+	client, _ := clusterWith([]*metav1.APIResourceList{apiResources("argoproj.io/v1alpha1", "applications")})
+	if _, _, err := DetectFeatures(context.Background(), client, nil, []string{checks.RequiresArgoCD}); err == nil {
+		t.Error("expected an error: the permission check needs the dynamic client")
+	}
+}
+
+// Adding a check with a new Requires name must not be forgotten here: every
+// name used by a check has to be known and has to switch a feature on.
+func TestEveryCheckRequirementIsKnown(t *testing.T) {
+	client, dyn := clusterWith([]*metav1.APIResourceList{
+		apiResources("cert-manager.io/v1", "certificates"),
+		apiResources("argoproj.io/v1alpha1", "applications"),
+	})
+	for _, c := range checks.All() {
+		if c.Requires == "" {
+			continue
+		}
+		features, unavailable, err := DetectFeatures(context.Background(), client, dyn, []string{c.Requires})
+		if err != nil {
+			t.Errorf("%s requires %q: %v (add it to optionalResourceFor)", c.Name, c.Requires, err)
+		} else if features == (Features{}) || len(unavailable) != 0 {
+			t.Errorf("%s requires %q, but DetectFeatures does not switch a feature on (add it to the switch)", c.Name, c.Requires)
 		}
 	}
 }

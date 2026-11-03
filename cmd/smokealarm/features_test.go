@@ -5,7 +5,11 @@ import (
 	"testing"
 
 	"github.com/gagaschu/smokealarm/internal/checks"
-	"github.com/gagaschu/smokealarm/internal/kube"
+)
+
+const (
+	certManagerReason = "cert-manager CRDs not installed (certificates.cert-manager.io); checked at startup"
+	argoReason        = "missing RBAC permission to list applications.argoproj.io"
 )
 
 func TestSplitByFeatures(t *testing.T) {
@@ -13,23 +17,28 @@ func TestSplitByFeatures(t *testing.T) {
 
 	tests := []struct {
 		name            string
-		features        kube.Features
+		notUsable       map[string]string
 		wantUnavailable []string
 	}{
-		{"nothing installed", kube.Features{}, []string{"cert-not-ready", "cert-expiry", "argocd-health", "argocd-sync"}},
-		{"cert-manager only", kube.Features{CertManager: true}, []string{"argocd-health", "argocd-sync"}},
-		{"argo only", kube.Features{ArgoCD: true}, []string{"cert-not-ready", "cert-expiry"}},
-		{"both", kube.Features{CertManager: true, ArgoCD: true}, nil},
+		{"everything usable", nil, nil},
+		{"cert-manager missing", map[string]string{checks.RequiresCertManager: certManagerReason},
+			[]string{"cert-not-ready", "cert-expiry"}},
+		{"argo missing", map[string]string{checks.RequiresArgoCD: argoReason},
+			[]string{"argocd-health", "argocd-sync"}},
+		{"both missing", map[string]string{checks.RequiresCertManager: certManagerReason, checks.RequiresArgoCD: argoReason},
+			[]string{"cert-not-ready", "cert-expiry", "argocd-health", "argocd-sync"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			active, unavailable := splitByFeatures(enabled, tt.features)
+			active, unavailable := splitByFeatures(enabled, tt.notUsable)
 
 			var names []string
 			for _, c := range unavailable {
 				names = append(names, c.Name)
-				if !strings.Contains(c.Reason, "not installed") {
-					t.Errorf("%s: reason %q does not say what is missing", c.Name, c.Reason)
+				// Each skipped check shows the reason of its own feature.
+				check := findCheck(t, c.Name)
+				if c.Reason != tt.notUsable[check.Requires] {
+					t.Errorf("%s: reason %q, want %q", c.Name, c.Reason, tt.notUsable[check.Requires])
 				}
 			}
 			if strings.Join(names, ",") != strings.Join(tt.wantUnavailable, ",") {
@@ -46,12 +55,23 @@ func TestSplitByFeatures(t *testing.T) {
 	}
 }
 
+func findCheck(t *testing.T, name string) checks.Check {
+	t.Helper()
+	for _, c := range checks.All() {
+		if c.Name == name {
+			return c
+		}
+	}
+	t.Fatalf("no check named %s", name)
+	return checks.Check{}
+}
+
 func TestSplitByFeaturesKeepsDisabledChecksOut(t *testing.T) {
 	enabled, err := checks.Select([]string{"pvc-usage", "cert-expiry"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	active, unavailable := splitByFeatures(enabled, kube.Features{CertManager: true})
+	active, unavailable := splitByFeatures(enabled, map[string]string{checks.RequiresArgoCD: argoReason})
 	if hasCheck(active, checks.PVCUsageCheck) || hasCheck(active, "cert-expiry") {
 		t.Error("checks disabled by configuration must not come back")
 	}
@@ -60,21 +80,19 @@ func TestSplitByFeaturesKeepsDisabledChecksOut(t *testing.T) {
 	}
 }
 
-func TestFeaturesInUse(t *testing.T) {
-	all := kube.Features{CertManager: true, ArgoCD: true}
-
+// requirements decides which optional CRDs are looked at, and therefore which
+// ones get an informer. A CRD whose checks are all disabled must not be listed.
+func TestRequirements(t *testing.T) {
 	tests := []struct {
 		name     string
 		disabled []string
-		detected kube.Features
-		want     kube.Features
+		want     string
 	}{
-		{"all checks active", nil, all, all},
-		{"cert-manager checks disabled", []string{"cert-not-ready", "cert-expiry"}, all, kube.Features{ArgoCD: true}},
-		{"only one of the two cert-manager checks disabled", []string{"cert-expiry"}, all, all},
-		{"all Argo CD checks disabled", []string{"argocd-health", "argocd-sync"}, all, kube.Features{CertManager: true}},
-		{"everything disabled", []string{"cert-not-ready", "cert-expiry", "argocd-health", "argocd-sync"}, all, kube.Features{}},
-		{"CRDs not installed", nil, kube.Features{}, kube.Features{}},
+		{"all checks enabled", nil, "cert-manager,argocd"},
+		{"cert-manager checks disabled", []string{"cert-not-ready", "cert-expiry"}, "argocd"},
+		{"only one of the two cert-manager checks disabled", []string{"cert-expiry"}, "cert-manager,argocd"},
+		{"all Argo CD checks disabled", []string{"argocd-health", "argocd-sync"}, "cert-manager"},
+		{"everything optional disabled", []string{"cert-not-ready", "cert-expiry", "argocd-health", "argocd-sync"}, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -82,10 +100,8 @@ func TestFeaturesInUse(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			active, _ := splitByFeatures(enabled, tt.detected)
-
-			if got := featuresInUse(active, tt.detected); got != tt.want {
-				t.Errorf("featuresInUse = %+v, want %+v", got, tt.want)
+			if got := strings.Join(requirements(enabled), ","); got != tt.want {
+				t.Errorf("requirements = %q, want %q", got, tt.want)
 			}
 		})
 	}
