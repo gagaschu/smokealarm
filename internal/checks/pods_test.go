@@ -278,7 +278,7 @@ func TestPodChecksRespectIgnore(t *testing.T) {
 			// Crash loop, OOM and restarts all fire for this pod. Pending
 			// does not (the container status has no pull problem but the
 			// pod is Pending), so check them individually.
-			for _, check := range []Check{{"crashloop", PodCrashLoop}, {"oom", PodOOMKilled}, {"restarts", PodRestarts}, {"pending", PodPending}} {
+			for _, check := range []Check{{Name: "crashloop", Run: PodCrashLoop}, {Name: "oom", Run: PodOOMKilled}, {Name: "restarts", Run: PodRestarts}, {Name: "pending", Run: PodPending}} {
 				if got := len(check.Run(tt.snap, tt.opts)); got != tt.want {
 					t.Errorf("%s: got %d findings, want %d", check.Name, got, tt.want)
 				}

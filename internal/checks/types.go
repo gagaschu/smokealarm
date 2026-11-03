@@ -14,6 +14,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // Severity says how urgent a finding is.
@@ -60,6 +61,42 @@ type Snapshot struct {
 	CronJobs       []*batchv1.CronJob
 	PVCs           []*corev1.PersistentVolumeClaim
 	StorageClasses []*storagev1.StorageClass
+
+	// Filled only if the CRDs are installed (see Check.Requires).
+	Certificates []Certificate
+	Applications []Application
+
+	// VolumeUsage comes from the kubelet stats, keyed "namespace/pvcName".
+	VolumeUsage map[string]VolumeUsage
+
+	// Skipped names checks that cannot run in this run because their data
+	// could not be collected, with the reason. The engine does not run them
+	// and leaves their open problems alone: "no data" is not "all fine".
+	Skipped map[string]string
+}
+
+// Certificate is the part of a cert-manager Certificate the checks need. The
+// kube package converts the unstructured object, so checks never handle
+// untyped maps.
+type Certificate struct {
+	Meta         metav1.ObjectMeta
+	Ready        bool
+	ReadyReason  string // empty if the object has no Ready condition yet
+	ReadyMessage string
+	NotAfter     *time.Time // nil if the certificate was not issued yet
+}
+
+// Application is the part of an Argo CD Application the checks need.
+type Application struct {
+	Meta         metav1.ObjectMeta
+	HealthStatus string // Healthy, Degraded, Missing, Progressing, ...
+	SyncStatus   string // Synced, OutOfSync, ...
+}
+
+// VolumeUsage is how full a volume is, as reported by the kubelet.
+type VolumeUsage struct {
+	UsedBytes     int64
+	CapacityBytes int64
 }
 
 // Options holds the configurable thresholds and the ignore list.
@@ -75,8 +112,19 @@ type Options struct {
 // used in findings and, later, to disable a check by configuration.
 type Check struct {
 	Name string
-	Run  func(snap *Snapshot, opts Options) []Finding
+	// Requires names an optional feature of the cluster that must be present
+	// for the check to make sense (one of the Requires* constants); empty
+	// for checks that always work.
+	Requires string
+	Run      func(snap *Snapshot, opts Options) []Finding
 }
+
+// Optional cluster features that a check can require. The kube package
+// detects them at startup.
+const (
+	RequiresCertManager = "cert-manager"
+	RequiresArgoCD      = "argocd"
+)
 
 // All returns every check that exists. It is a function rather than a
 // package variable so the package has no global state.
@@ -93,6 +141,11 @@ func All() []Check {
 		{Name: checkJobFailed, Run: JobFailed},
 		{Name: checkCronJobMissed, Run: CronJobMissed},
 		{Name: checkPVCPending, Run: PVCPending},
+		{Name: checkPVCUsage, Run: PVCUsage},
+		{Name: checkCertNotReady, Requires: RequiresCertManager, Run: CertNotReady},
+		{Name: checkCertExpiry, Requires: RequiresCertManager, Run: CertExpiry},
+		{Name: checkArgoCDHealth, Requires: RequiresArgoCD, Run: ArgoCDHealth},
+		{Name: checkArgoCDSync, Requires: RequiresArgoCD, Run: ArgoCDSync},
 	}
 }
 
