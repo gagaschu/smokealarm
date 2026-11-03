@@ -159,3 +159,69 @@ func states(records []store.Record) []store.State {
 	}
 	return result
 }
+
+func TestReconcileEscalation(t *testing.T) {
+	now := testStart
+	notifiedAt := now.Add(-time.Hour)
+	warning := func(state store.State) store.Record {
+		r := openRecord(1, "k", "fake", state, now.Add(-time.Hour))
+		r.Severity = checks.Warning
+		r.Reason = "WarnReason"
+		r.FiringNotifiedAt = &notifiedAt
+		return r
+	}
+	finding := func(severity checks.Severity, reason string) checks.Finding {
+		return checks.Finding{Key: "k", Check: "fake", Severity: severity, Reason: reason, Message: "m"}
+	}
+
+	tests := []struct {
+		name         string
+		record       store.Record
+		finding      checks.Finding
+		wantReported bool // FiringNotifiedAt still set
+	}{
+		{"firing warning gets critical: reported again", warning(store.StateFiring), finding(checks.Critical, "CritReason"), false},
+		{"firing critical gets better: stays reported", func() store.Record {
+			r := warning(store.StateFiring)
+			r.Severity = checks.Critical
+			return r
+		}(), finding(checks.Warning, "WarnReason"), true},
+		{"firing, same severity: stays reported", warning(store.StateFiring), finding(checks.Warning, "WarnReason"), true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			changes := reconcileEngine(2*time.Minute).reconcile([]store.Record{tt.record}, []checks.Finding{tt.finding}, nil, now)
+
+			if len(changes.Update) != 1 || len(changes.Insert) != 0 || len(changes.Delete) != 0 {
+				t.Fatalf("changes = %+v, want exactly one update", changes)
+			}
+			got := changes.Update[0]
+			if got.Severity != tt.finding.Severity || got.Reason != tt.finding.Reason {
+				t.Errorf("severity %s, reason %s; want the new values", got.Severity, got.Reason)
+			}
+			if (got.FiringNotifiedAt != nil) != tt.wantReported {
+				t.Errorf("FiringNotifiedAt = %v, want reported = %v", got.FiringNotifiedAt, tt.wantReported)
+			}
+			if got.State != store.StateFiring {
+				t.Errorf("state = %s, want firing: the problem did not go away", got.State)
+			}
+		})
+	}
+}
+
+func TestReconcileEscalationWhilePending(t *testing.T) {
+	now := testStart
+	record := openRecord(1, "k", "fake", store.StatePending, now.Add(-time.Minute))
+	record.Severity = checks.Warning
+	f := checks.Finding{Key: "k", Check: "fake", Severity: checks.Critical, Reason: "CritReason", Message: "m"}
+
+	changes := reconcileEngine(2*time.Minute).reconcile([]store.Record{record}, []checks.Finding{f}, nil, now)
+
+	got := changes.Update[0]
+	if got.State != store.StatePending || got.Severity != checks.Critical || got.Reason != "CritReason" {
+		t.Errorf("got %+v, want still pending, with the new severity and reason", got)
+	}
+	if !got.FirstSeen.Equal(record.FirstSeen) {
+		t.Error("the escalation must not restart the timer")
+	}
+}

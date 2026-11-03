@@ -183,7 +183,7 @@ func TestPVCUsageThresholds(t *testing.T) {
 				}
 				return
 			}
-			wantKey := "pvc-usage/PersistentVolumeClaim/media/data/" + tt.wantReason
+			wantKey := "pvc-usage/PersistentVolumeClaim/media/data/usage"
 			if len(got) != 1 || got[0].Key != wantKey || got[0].Severity != tt.wantSev {
 				t.Errorf("got %+v, want %s %s", got, tt.wantSev, wantKey)
 			}
@@ -268,5 +268,25 @@ func TestFormatBytes(t *testing.T) {
 		if got := formatBytes(tt.n); got != tt.want {
 			t.Errorf("formatBytes(%d) = %q, want %q", tt.n, got, tt.want)
 		}
+	}
+}
+
+func TestPVCUsageKeyIsStableAcrossSeverities(t *testing.T) {
+	keyFor := func(used int64) (string, Severity, string) {
+		snap := &Snapshot{Now: testNow, VolumeUsage: map[string]VolumeUsage{"media/data": {UsedBytes: used, CapacityBytes: 100}}}
+		got := PVCUsage(snap, testOptions())
+		if len(got) != 1 {
+			t.Fatalf("used %d: got %+v, want one finding", used, got)
+		}
+		return got[0].Key, got[0].Severity, got[0].Reason
+	}
+
+	warnKey, warnSeverity, warnReason := keyFor(90)
+	critKey, critSeverity, critReason := keyFor(97)
+	if warnSeverity != Warning || critSeverity != Critical || warnReason != "VolumeAlmostFull" || critReason != "VolumeFull" {
+		t.Fatalf("got %s/%s and %s/%s; the reason must still say what is going on", warnSeverity, warnReason, critSeverity, critReason)
+	}
+	if warnKey != critKey {
+		t.Errorf("key changed with the severity: %q vs %q", warnKey, critKey)
 	}
 }

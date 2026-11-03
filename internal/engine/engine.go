@@ -314,9 +314,21 @@ func (e *Engine) newRecord(f checks.Finding, now time.Time) store.Record {
 // refresh updates a known problem with the latest details and lets it fire
 // once it has lasted long enough.
 func (e *Engine) refresh(record store.Record, f checks.Finding, now time.Time) store.Record {
+	escalated := record.Severity == checks.Warning && f.Severity == checks.Critical
 	record.Severity = f.Severity
+	record.Reason = f.Reason
 	record.Message = f.Message
 	record.LastSeen = now
+
+	// A problem that gets worse is still the same problem, so it is not
+	// resolved and restarted. But somebody who read "warning" must hear that
+	// it is critical now: clearing the marker lists it as new again. If it is
+	// still pending, it is simply reported with the higher severity when it
+	// fires. Getting better again is not reported; the resolution will be.
+	if escalated && record.State == store.StateFiring {
+		record.FiringNotifiedAt = nil
+		e.Logger.Info("finding escalated", "key", f.Key, "severity", f.Severity, "reason", f.Reason)
+	}
 	if record.State == store.StatePending && now.Sub(record.FirstSeen) >= e.AlertAfter {
 		record.State = store.StateFiring
 		record.FiringAt = &now

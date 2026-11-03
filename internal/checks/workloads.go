@@ -49,9 +49,9 @@ func replicaFinding(kind string, meta metav1.ObjectMeta, desired, available int3
 	case desired == 0 || available >= desired:
 		return Finding{}, false
 	case available == 0:
-		return newFinding(checkWorkloadReplicas, Critical, ref, "NoReplicasAvailable", msg), true
+		return newEscalatingFinding(checkWorkloadReplicas, Critical, ref, "replicas", "NoReplicasAvailable", msg), true
 	default:
-		return newFinding(checkWorkloadReplicas, Warning, ref, "ReplicasUnavailable", msg), true
+		return newEscalatingFinding(checkWorkloadReplicas, Warning, ref, "replicas", "ReplicasUnavailable", msg), true
 	}
 }
 

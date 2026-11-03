@@ -179,3 +179,25 @@ func TestHumanDuration(t *testing.T) {
 		}
 	}
 }
+
+func TestCertExpiryKeyIsStableAcrossSeverities(t *testing.T) {
+	keyFor := func(remaining time.Duration) (string, string) {
+		snap := &Snapshot{Now: testNow, Certificates: []Certificate{{Meta: certMeta(), Ready: true, NotAfter: expiresIn(remaining)}}}
+		got := CertExpiry(snap, testOptions())
+		if len(got) != 1 {
+			t.Fatalf("remaining %v: got %+v, want one finding", remaining, got)
+		}
+		return got[0].Key, got[0].Reason
+	}
+
+	soonKey, soonReason := keyFor(10 * 24 * time.Hour)
+	verySoonKey, verySoonReason := keyFor(2 * 24 * time.Hour)
+	expiredKey, expiredReason := keyFor(-time.Hour)
+
+	if soonReason != "ExpiresSoon" || verySoonReason != "ExpiresVerySoon" || expiredReason != "Expired" {
+		t.Fatalf("reasons = %s, %s, %s", soonReason, verySoonReason, expiredReason)
+	}
+	if soonKey != verySoonKey || soonKey != expiredKey {
+		t.Errorf("key changed with the severity: %q, %q, %q", soonKey, verySoonKey, expiredKey)
+	}
+}

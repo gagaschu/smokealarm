@@ -36,10 +36,10 @@ func CertNotReady(snap *Snapshot, opts Options) []Finding {
 }
 
 // CertExpiry reports certificates that expire soon: warning below 14 days,
-// critical below 3 days, and critical (reason Expired) once expired. The
-// reason changes with the severity on purpose, so an escalation is reported
-// as a new problem. Certificates without notAfter (not issued yet) are left
-// to CertNotReady.
+// critical below 3 days, and critical (reason Expired) once expired. It is
+// one problem that gets worse, so the finding key does not change with the
+// reason. Certificates without notAfter (not issued yet) are left to
+// CertNotReady.
 func CertExpiry(snap *Snapshot, opts Options) []Finding {
 	var findings []Finding
 	for _, cert := range snap.Certificates {
@@ -53,13 +53,13 @@ func CertExpiry(snap *Snapshot, opts Options) []Finding {
 		switch {
 		case remaining <= 0:
 			msg := fmt.Sprintf("expired %s ago (%s)", humanDuration(-remaining), when)
-			findings = append(findings, newFinding(checkCertExpiry, Critical, ref, "Expired", msg))
+			findings = append(findings, newEscalatingFinding(checkCertExpiry, Critical, ref, "expiry", "Expired", msg))
 		case remaining < certCriticalBefore:
 			msg := fmt.Sprintf("expires in %s (%s)", humanDuration(remaining), when)
-			findings = append(findings, newFinding(checkCertExpiry, Critical, ref, "ExpiresVerySoon", msg))
+			findings = append(findings, newEscalatingFinding(checkCertExpiry, Critical, ref, "expiry", "ExpiresVerySoon", msg))
 		case remaining < certWarnBefore:
 			msg := fmt.Sprintf("expires in %s (%s)", humanDuration(remaining), when)
-			findings = append(findings, newFinding(checkCertExpiry, Warning, ref, "ExpiresSoon", msg))
+			findings = append(findings, newEscalatingFinding(checkCertExpiry, Warning, ref, "expiry", "ExpiresSoon", msg))
 		}
 	}
 	return findings

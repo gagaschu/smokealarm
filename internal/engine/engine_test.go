@@ -145,6 +145,14 @@ func finding(key string, severity checks.Severity) checks.Finding {
 	}
 }
 
+// escalating builds the same problem (same key) in a given severity, with a
+// reason that says how bad it is, like pvc-usage does.
+func escalating(severity checks.Severity) checks.Finding {
+	f := finding("vol", severity)
+	f.Reason = "Volume-" + string(severity)
+	return f
+}
+
 func alertKeys(alerts []notify.Alert) string {
 	var keys []string
 	for _, a := range alerts {
@@ -317,6 +325,82 @@ func TestStatusShowsSendErrorUntilNextSuccess(t *testing.T) {
 	h.mustRun(30 * time.Second)
 	if got := h.engine.Status(); got.LastNotifyError != "" || !got.LastNotifyErrorAt.IsZero() {
 		t.Errorf("status after recovery = %+v, want the error cleared", got)
+	}
+}
+
+func TestEscalationIsReportedAgainWithoutResolving(t *testing.T) {
+	h := newHarness(t)
+	h.findings = []checks.Finding{escalating(checks.Warning)}
+	h.mustRun(0)
+	h.mustRun(2 * time.Minute) // fires as a warning
+	if len(h.notifier.sent) != 1 || h.notifier.sent[0].New[0].Severity != checks.Warning {
+		t.Fatalf("sent %+v, want the warning reported", h.notifier.sent)
+	}
+
+	h.findings = []checks.Finding{escalating(checks.Critical)}
+	h.mustRun(30 * time.Second)
+
+	// Same problem, still firing: nothing resolved, nothing pending.
+	if h.countRows("resolved") != 0 || h.countRows("pending") != 0 || h.countRows("firing") != 1 {
+		t.Errorf("%d resolved, %d pending, %d firing; want just the one firing problem",
+			h.countRows("resolved"), h.countRows("pending"), h.countRows("firing"))
+	}
+	// ... and the reader hears about it at once, as a new critical problem
+	// with the original start time, without a "resolved" for the warning.
+	if len(h.notifier.sent) != 2 {
+		t.Fatalf("got %d notifications, want one more for the escalation", len(h.notifier.sent))
+	}
+	last := h.notifier.sent[1]
+	if len(last.Resolved) != 0 || len(last.New) != 1 || last.New[0].Severity != checks.Critical ||
+		last.New[0].Reason != "Volume-critical" || !last.New[0].Since.Equal(testStart) {
+		t.Errorf("escalation notification = %+v", last)
+	}
+	if !strings.Contains(h.logs.String(), "finding escalated") {
+		t.Error("the escalation is not logged")
+	}
+
+	// It is reported once, not at every run.
+	h.mustRun(30 * time.Second)
+	if len(h.notifier.sent) != 2 {
+		t.Errorf("got %d notifications, want the escalation reported once", len(h.notifier.sent))
+	}
+}
+
+func TestDeEscalationIsSilentAndResolutionIsReported(t *testing.T) {
+	h := newHarness(t)
+	h.findings = []checks.Finding{escalating(checks.Critical)}
+	h.mustRun(0)
+	h.mustRun(2 * time.Minute) // fires as critical
+	h.findings = []checks.Finding{escalating(checks.Warning)}
+	h.mustRun(30 * time.Second)
+
+	if len(h.notifier.sent) != 1 || h.countRows("firing") != 1 {
+		t.Fatalf("%d notifications, %d firing; want getting better to be silent", len(h.notifier.sent), h.countRows("firing"))
+	}
+
+	h.findings = nil
+	h.mustRun(30 * time.Second)
+	if len(h.notifier.sent) != 2 || len(h.notifier.sent[1].Resolved) != 1 || h.notifier.sent[1].Resolved[0].Severity != checks.Warning {
+		t.Errorf("sent %+v, want the resolution reported with the last known severity", h.notifier.sent)
+	}
+}
+
+func TestEscalationWhilePendingIsReportedOnceAsCritical(t *testing.T) {
+	h := newHarness(t)
+	h.findings = []checks.Finding{escalating(checks.Warning)}
+	h.mustRun(0) // pending
+	h.findings = []checks.Finding{escalating(checks.Critical)}
+	h.mustRun(time.Minute) // still pending, now critical
+	if len(h.notifier.sent) != 0 {
+		t.Fatalf("sent %+v, want nothing before ALERT_AFTER", h.notifier.sent)
+	}
+
+	h.mustRun(time.Minute) // 2 minutes after the first sighting: fires
+	if len(h.notifier.sent) != 1 || h.notifier.sent[0].New[0].Severity != checks.Critical {
+		t.Errorf("sent %+v, want one notification, critical", h.notifier.sent)
+	}
+	if !h.notifier.sent[0].New[0].Since.Equal(testStart) {
+		t.Errorf("Since = %v, want the first sighting %v", h.notifier.sent[0].New[0].Since, testStart)
 	}
 }
 

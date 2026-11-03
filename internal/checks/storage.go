@@ -127,7 +127,7 @@ func PVCUsage(snap *Snapshot, opts Options) []Finding {
 		msg := fmt.Sprintf("%.1f%% full (%s of %s used)",
 			float64(usage.UsedBytes)*100/float64(usage.CapacityBytes), formatBytes(usage.UsedBytes), formatBytes(usage.CapacityBytes))
 		ref := ObjectRef{Kind: "PersistentVolumeClaim", Namespace: namespace, Name: name}
-		findings = append(findings, newFinding(checkPVCUsage, severity, ref, reason, msg))
+		findings = append(findings, newEscalatingFinding(checkPVCUsage, severity, ref, "usage", reason, msg))
 	}
 	return findings
 }

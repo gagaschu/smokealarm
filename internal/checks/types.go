@@ -174,9 +174,21 @@ func Select(disabled []string) ([]Check, error) {
 	return enabled, nil
 }
 
-// newFinding fills in the key so every check builds it the same way.
+// newFinding fills in the key so every check builds it the same way. The
+// reason is part of the key, so it must stay the same while the problem lasts.
 func newFinding(check string, severity Severity, ref ObjectRef, reason, message string) Finding {
-	key := strings.Join([]string{check, ref.Kind, ref.Namespace, ref.Name, reason}, "/")
+	return newEscalatingFinding(check, severity, ref, reason, reason, message)
+}
+
+// newEscalatingFinding is for problems that can get worse while they last
+// (a volume fills up, a certificate comes closer to its expiry). The reason
+// then changes with the severity ("VolumeAlmostFull", "VolumeFull"), but it
+// is still the same problem, so the key is built from keyPart, which stays
+// the same. Otherwise an escalation would look like the old problem
+// disappearing and a new one starting: "resolved" and "All good" while things
+// are getting worse.
+func newEscalatingFinding(check string, severity Severity, ref ObjectRef, keyPart, reason, message string) Finding {
+	key := strings.Join([]string{check, ref.Kind, ref.Namespace, ref.Name, keyPart}, "/")
 	return Finding{
 		Key:      key,
 		Check:    check,
