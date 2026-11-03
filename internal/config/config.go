@@ -26,7 +26,8 @@ type Config struct {
 	DisabledChecks         []string
 	BaseURL                string // public URL of the web UI, linked in mails
 
-	SMTP SMTPConfig
+	SMTP   SMTPConfig
+	Notify NotifyConfig // the other notification targets
 
 	AdminUser         string
 	AdminPasswordHash string // bcrypt hash, see "smokealarm hash-password"
@@ -58,6 +59,7 @@ func Load(getenv func(string) string) (Config, error) {
 		DisabledChecks:         r.list("SMOKEALARM_DISABLED_CHECKS"),
 		BaseURL:                r.text("SMOKEALARM_BASE_URL", ""),
 		SMTP:                   loadSMTP(&r),
+		Notify:                 loadNotify(&r),
 
 		AdminUser:         r.required("SMOKEALARM_ADMIN_USER"),
 		AdminPasswordHash: r.required("SMOKEALARM_ADMIN_PASSWORD_HASH"),
@@ -91,6 +93,7 @@ func Load(getenv func(string) string) (Config, error) {
 	validatePasswordHash(&r, cfg.AdminPasswordHash)
 	validateBaseURL(&r, cfg.BaseURL)
 	validateSMTP(&r, cfg.SMTP)
+	validateNotify(&r, cfg.Notify)
 	if cfg.RestartThreshold < 0 {
 		r.fail("SMOKEALARM_RESTART_THRESHOLD: must not be negative")
 	}
