@@ -33,6 +33,9 @@ existingSecret: ""
 config:
   checkInterval: 30s        # SMOKEALARM_CHECK_INTERVAL
   alertAfter: 2m            # SMOKEALARM_ALERT_AFTER: how long a problem must last before it is reported
+  # SMOKEALARM_CRITICAL_REPEAT_INTERVAL: how often a critical problem that is
+  # still open is reported again, for example 4h. 0s means never.
+  criticalRepeatInterval: 0s
   retention: 30d            # SMOKEALARM_RETENTION: how long resolved problems stay in the history
   logLevel: info            # SMOKEALARM_LOG_LEVEL: debug, info, warn, error
   # SMOKEALARM_BASE_URL: link to the web UI in mails. If empty and the ingress

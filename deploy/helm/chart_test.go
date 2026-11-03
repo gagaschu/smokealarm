@@ -688,6 +688,7 @@ const everySetting = `auth:
 config:
   checkInterval: 45s
   alertAfter: 5m
+  criticalRepeatInterval: 4h
   retention: 14d
   logLevel: debug
   baseUrl: https://alarm.example.org
@@ -715,30 +716,31 @@ smtp:
 func TestEverySettingBecomesAnEnvironmentVariable(t *testing.T) {
 	got := render(t, everySetting).environment()
 	want := map[string]string{
-		"SMOKEALARM_LISTEN_ADDR":         ":8080",
-		"SMOKEALARM_DB_PATH":             "/data/smokealarm.db",
-		"SMOKEALARM_ADMIN_USER":          "ops",
-		"SMOKEALARM_ADMIN_PASSWORD_HASH": baseHash,
-		"SMOKEALARM_CHECK_INTERVAL":      "45s",
-		"SMOKEALARM_ALERT_AFTER":         "5m",
-		"SMOKEALARM_RETENTION":           "14d",
-		"SMOKEALARM_LOG_LEVEL":           "debug",
-		"SMOKEALARM_BASE_URL":            "https://alarm.example.org",
-		"SMOKEALARM_SESSION_TTL":         "3d",
-		"SMOKEALARM_COOKIE_SECURE":       "false",
-		"SMOKEALARM_IGNORE_NAMESPACES":   "kube-system,monitoring",
-		"SMOKEALARM_RESTART_THRESHOLD":   "10",
-		"SMOKEALARM_POD_PENDING_AFTER":   "7m",
-		"SMOKEALARM_PVC_PENDING_AFTER":   "8m",
-		"SMOKEALARM_CRONJOB_GRACE":       "9m",
-		"SMOKEALARM_DISABLED_CHECKS":     "pod-restarts",
-		"SMOKEALARM_SMTP_HOST":           "mail.example.com",
-		"SMOKEALARM_SMTP_PORT":           "465",
-		"SMOKEALARM_SMTP_TLS":            "tls",
-		"SMOKEALARM_SMTP_FROM":           "smokealarm@example.com",
-		"SMOKEALARM_SMTP_TO":             "me@example.com,ops@example.com",
-		"SMOKEALARM_SMTP_USERNAME":       "alice",
-		"SMOKEALARM_SMTP_PASSWORD":       "s3cret",
+		"SMOKEALARM_LISTEN_ADDR":              ":8080",
+		"SMOKEALARM_DB_PATH":                  "/data/smokealarm.db",
+		"SMOKEALARM_ADMIN_USER":               "ops",
+		"SMOKEALARM_ADMIN_PASSWORD_HASH":      baseHash,
+		"SMOKEALARM_CHECK_INTERVAL":           "45s",
+		"SMOKEALARM_ALERT_AFTER":              "5m",
+		"SMOKEALARM_CRITICAL_REPEAT_INTERVAL": "4h",
+		"SMOKEALARM_RETENTION":                "14d",
+		"SMOKEALARM_LOG_LEVEL":                "debug",
+		"SMOKEALARM_BASE_URL":                 "https://alarm.example.org",
+		"SMOKEALARM_SESSION_TTL":              "3d",
+		"SMOKEALARM_COOKIE_SECURE":            "false",
+		"SMOKEALARM_IGNORE_NAMESPACES":        "kube-system,monitoring",
+		"SMOKEALARM_RESTART_THRESHOLD":        "10",
+		"SMOKEALARM_POD_PENDING_AFTER":        "7m",
+		"SMOKEALARM_PVC_PENDING_AFTER":        "8m",
+		"SMOKEALARM_CRONJOB_GRACE":            "9m",
+		"SMOKEALARM_DISABLED_CHECKS":          "pod-restarts",
+		"SMOKEALARM_SMTP_HOST":                "mail.example.com",
+		"SMOKEALARM_SMTP_PORT":                "465",
+		"SMOKEALARM_SMTP_TLS":                 "tls",
+		"SMOKEALARM_SMTP_FROM":                "smokealarm@example.com",
+		"SMOKEALARM_SMTP_TO":                  "me@example.com,ops@example.com",
+		"SMOKEALARM_SMTP_USERNAME":            "alice",
+		"SMOKEALARM_SMTP_PASSWORD":            "s3cret",
 	}
 	for name, value := range want {
 		if got[name] != value {
