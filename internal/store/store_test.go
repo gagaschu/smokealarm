@@ -463,3 +463,166 @@ func TestCriticalDueForReminder(t *testing.T) {
 		t.Errorf("got %s, want old,boundary", keys)
 	}
 }
+
+// insertedID stores a record and returns its id.
+func insertedID(t *testing.T, s *Store, r Record) int64 {
+	t.Helper()
+	ctx := context.Background()
+	if err := s.Apply(ctx, Changes{Insert: []Record{r}}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	records, err := s.query(ctx, `SELECT `+selectColumns+` FROM findings WHERE key = ?`, r.Key)
+	if err != nil || len(records) != 1 {
+		t.Fatalf("load %s = %v, %v", r.Key, records, err)
+	}
+	return records[0].ID
+}
+
+func TestAcknowledgeOnlyFiringCritical(t *testing.T) {
+	warning := newRecord("warning", StateFiring, testNow)
+	warning.Severity = checks.Warning
+
+	tests := []struct {
+		name   string
+		record Record
+		want   bool
+	}{
+		{"firing critical", newRecord("firing", StateFiring, testNow), true},
+		{"firing warning", warning, false},
+		{"pending critical", newRecord("pending", StatePending, testNow), false},
+		{"resolved critical", newRecord("resolved", StateResolved, testNow), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, _ := openTemp(t)
+			id := insertedID(t, s, tt.record)
+
+			key, changed, err := s.Acknowledge(context.Background(), id, testNow)
+			if err != nil {
+				t.Fatalf("Acknowledge: %v", err)
+			}
+			if changed != tt.want {
+				t.Errorf("changed = %v, want %v", changed, tt.want)
+			}
+			if changed && key != tt.record.Key {
+				t.Errorf("key = %q, want %q", key, tt.record.Key)
+			}
+		})
+	}
+}
+
+func TestAcknowledgeUnknownIDChangesNothing(t *testing.T) {
+	s, _ := openTemp(t)
+	_, changed, err := s.Acknowledge(context.Background(), 42, testNow)
+	if err != nil || changed {
+		t.Errorf("Acknowledge = %v, %v, want false, nil", changed, err)
+	}
+}
+
+func TestAcknowledgeTwiceKeepsTheFirstTime(t *testing.T) {
+	s, _ := openTemp(t)
+	ctx := context.Background()
+	id := insertedID(t, s, newRecord("a", StateFiring, testNow))
+
+	if _, _, err := s.Acknowledge(ctx, id, testNow); err != nil {
+		t.Fatalf("Acknowledge: %v", err)
+	}
+	_, changed, err := s.Acknowledge(ctx, id, testNow.Add(time.Hour))
+	if err != nil || changed {
+		t.Errorf("second Acknowledge = %v, %v, want false, nil", changed, err)
+	}
+
+	records, err := s.OpenRecords(ctx)
+	if err != nil || len(records) != 1 {
+		t.Fatalf("OpenRecords = %v, %v", records, err)
+	}
+	if at := records[0].AcknowledgedAt; at == nil || !at.Equal(testNow) {
+		t.Errorf("AcknowledgedAt = %v, want the first time %v", at, testNow)
+	}
+}
+
+// The engine writes back a copy it read before the acknowledgement. That must
+// not undo it.
+func TestApplyDoesNotUndoAcknowledgement(t *testing.T) {
+	s, _ := openTemp(t)
+	ctx := context.Background()
+	id := insertedID(t, s, newRecord("a", StateFiring, testNow))
+
+	before, err := s.OpenRecords(ctx)
+	if err != nil || len(before) != 1 {
+		t.Fatalf("OpenRecords = %v, %v", before, err)
+	}
+	if _, _, err := s.Acknowledge(ctx, id, testNow); err != nil {
+		t.Fatalf("Acknowledge: %v", err)
+	}
+	if err := s.Apply(ctx, Changes{Update: before}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	after, err := s.OpenRecords(ctx)
+	if err != nil || len(after) != 1 {
+		t.Fatalf("OpenRecords = %v, %v", after, err)
+	}
+	if after[0].AcknowledgedAt == nil {
+		t.Error("Apply removed the acknowledgement")
+	}
+}
+
+func TestAcknowledgedProblemsAreNotReported(t *testing.T) {
+	s, _ := openTemp(t)
+	ctx := context.Background()
+
+	unreported := insertedID(t, s, newRecord("unreported", StateFiring, testNow))
+	reported := insertedID(t, s, newRecord("reported", StateFiring, testNow))
+	if err := s.MarkFiringNotified(ctx, []int64{reported}, testNow); err != nil {
+		t.Fatalf("MarkFiringNotified: %v", err)
+	}
+	for _, id := range []int64{unreported, reported} {
+		if _, _, err := s.Acknowledge(ctx, id, testNow); err != nil {
+			t.Fatalf("Acknowledge: %v", err)
+		}
+	}
+
+	unnotified, err := s.Unnotified(ctx)
+	if err != nil || len(unnotified) != 0 {
+		t.Errorf("Unnotified = %v, %v, want nothing", recordKeys(unnotified), err)
+	}
+	due, err := s.CriticalDueForReminder(ctx, testNow.Add(time.Hour))
+	if err != nil || len(due) != 0 {
+		t.Errorf("CriticalDueForReminder = %v, %v, want nothing", recordKeys(due), err)
+	}
+}
+
+// The column is added to a table that already has data, as on an upgrade.
+func TestAcknowledgeMigrationKeepsExistingRows(t *testing.T) {
+	s, path := openTemp(t)
+	ctx := context.Background()
+	insertedID(t, s, newRecord("a", StateFiring, testNow))
+
+	// Back to the schema before the migration.
+	for _, statement := range []string{
+		`ALTER TABLE findings DROP COLUMN acknowledged_at`,
+		`DELETE FROM schema_migrations WHERE version = 3`,
+	} {
+		if _, err := s.db.ExecContext(ctx, statement); err != nil {
+			t.Fatalf("%s: %v", statement, err)
+		}
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	again, err := Open(path, func() time.Time { return testNow })
+	if err != nil {
+		t.Fatalf("Open after upgrade: %v", err)
+	}
+	defer func() { _ = again.Close() }()
+
+	records, err := again.OpenRecords(ctx)
+	if err != nil || len(records) != 1 {
+		t.Fatalf("OpenRecords = %v, %v, want the existing row", records, err)
+	}
+	if records[0].AcknowledgedAt != nil {
+		t.Errorf("AcknowledgedAt = %v, want nil for an existing row", records[0].AcknowledgedAt)
+	}
+}

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -24,6 +25,8 @@ const (
 // The *NotifiedAt fields remember what has already been reported, so nothing
 // is sent twice by accident and failed notifications are retried.
 // FiringNotifiedAt holds the latest report, which may be a reminder.
+// AcknowledgedAt is set once somebody has acknowledged the problem in the web
+// UI; from then on only its end is reported.
 type Record struct {
 	ID int64
 	checks.Finding
@@ -34,6 +37,7 @@ type Record struct {
 	ResolvedAt         *time.Time
 	FiringNotifiedAt   *time.Time
 	ResolvedNotifiedAt *time.Time
+	AcknowledgedAt     *time.Time
 }
 
 // Changes is a set of modifications that is written in one transaction.
@@ -45,7 +49,7 @@ type Changes struct {
 
 // selectColumns lists the columns in the order scanRecord reads them.
 const selectColumns = `id, key, check_name, severity, kind, namespace, name, reason, message,
-	state, first_seen, last_seen, firing_at, resolved_at, firing_notified_at, resolved_notified_at`
+	state, first_seen, last_seen, firing_at, resolved_at, firing_notified_at, resolved_notified_at, acknowledged_at`
 
 // OpenRecords returns all problems that are pending or firing.
 func (s *Store) OpenRecords(ctx context.Context) ([]Record, error) {
@@ -55,21 +59,24 @@ func (s *Store) OpenRecords(ctx context.Context) ([]Record, error) {
 
 // Unnotified returns what still has to be reported: firing problems whose
 // start was not reported yet, and resolved problems whose end was not
-// reported yet.
+// reported yet. An acknowledged problem is left out while it fires, because
+// somebody already knows about it, even if its first mail never went out.
 func (s *Store) Unnotified(ctx context.Context) ([]Record, error) {
 	return s.query(ctx, `SELECT `+selectColumns+` FROM findings
-		WHERE (state = 'firing' AND firing_notified_at IS NULL)
+		WHERE (state = 'firing' AND firing_notified_at IS NULL AND acknowledged_at IS NULL)
 		   OR (state = 'resolved' AND resolved_notified_at IS NULL)
 		ORDER BY id`)
 }
 
 // CriticalDueForReminder returns critical problems that are still firing and
 // were last reported at or before the given time. Problems not reported yet
-// are left out; Unnotified returns those.
+// are left out; Unnotified returns those. Acknowledged problems get no
+// reminders.
 func (s *Store) CriticalDueForReminder(ctx context.Context, before time.Time) ([]Record, error) {
 	return s.query(ctx, `SELECT `+selectColumns+` FROM findings
 		WHERE state = 'firing' AND severity = 'critical'
 		  AND firing_notified_at IS NOT NULL AND firing_notified_at <= ?
+		  AND acknowledged_at IS NULL
 		ORDER BY id`, unix(before))
 }
 
@@ -110,7 +117,9 @@ func (s *Store) Namespaces(ctx context.Context) ([]string, error) {
 // change during a life cycle (severity, reason, message, state, last_seen,
 // firing_at, resolved_at). firing_notified_at is written too, so that a
 // problem that got worse can be reported again; the markers are otherwise set
-// by MarkFiringNotified and MarkResolvedNotified.
+// by MarkFiringNotified and MarkResolvedNotified. acknowledged_at is not
+// written: the engine works on a copy it read earlier, and writing that copy
+// back could undo an acknowledgement made in the web UI in the meantime.
 func (s *Store) Apply(ctx context.Context, changes Changes) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -149,6 +158,25 @@ func (s *Store) Apply(ctx context.Context, changes Changes) error {
 		return fmt.Errorf("commit changes: %w", err)
 	}
 	return nil
+}
+
+// Acknowledge records that somebody knows about this problem. Only a firing
+// critical problem that is not acknowledged yet can be acknowledged. The rule
+// is part of the statement, so a page that is out of date cannot acknowledge a
+// problem that has changed since. It returns the key of the problem and whether
+// anything changed.
+func (s *Store) Acknowledge(ctx context.Context, id int64, at time.Time) (string, bool, error) {
+	var key string
+	err := s.db.QueryRowContext(ctx, `UPDATE findings SET acknowledged_at = ?
+		WHERE id = ? AND state = 'firing' AND severity = 'critical' AND acknowledged_at IS NULL
+		RETURNING key`, unix(at), id).Scan(&key)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("acknowledge finding %d: %w", id, err)
+	}
+	return key, true, nil
 }
 
 // MarkFiringNotified remembers that these firing problems were just reported,
@@ -219,11 +247,11 @@ func (s *Store) query(ctx context.Context, statement string, args ...any) ([]Rec
 func scanRecord(rows *sql.Rows) (Record, error) {
 	var r Record
 	var firstSeen, lastSeen int64
-	var firingAt, resolvedAt, firingNotifiedAt, resolvedNotifiedAt sql.NullInt64
+	var firingAt, resolvedAt, firingNotifiedAt, resolvedNotifiedAt, acknowledgedAt sql.NullInt64
 
 	err := rows.Scan(&r.ID, &r.Key, &r.Check, &r.Severity, &r.Object.Kind, &r.Object.Namespace, &r.Object.Name,
 		&r.Reason, &r.Message, &r.State, &firstSeen, &lastSeen,
-		&firingAt, &resolvedAt, &firingNotifiedAt, &resolvedNotifiedAt)
+		&firingAt, &resolvedAt, &firingNotifiedAt, &resolvedNotifiedAt, &acknowledgedAt)
 	if err != nil {
 		return Record{}, fmt.Errorf("scan finding: %w", err)
 	}
@@ -233,6 +261,7 @@ func scanRecord(rows *sql.Rows) (Record, error) {
 	r.ResolvedAt = fromNullable(resolvedAt)
 	r.FiringNotifiedAt = fromNullable(firingNotifiedAt)
 	r.ResolvedNotifiedAt = fromNullable(resolvedNotifiedAt)
+	r.AcknowledgedAt = fromNullable(acknowledgedAt)
 	return r, nil
 }
 
