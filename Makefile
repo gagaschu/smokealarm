@@ -5,6 +5,9 @@ TAG        ?= dev
 PLATFORMS  ?= linux/amd64,linux/arm64
 GO_VERSION := $(shell awk '/^go /{print $$2}' go.mod)
 
+# "make hash-password" uses "read -s", which is not in plain POSIX sh.
+SHELL := bash
+
 .DEFAULT_GOAL := help
 
 .PHONY: help
