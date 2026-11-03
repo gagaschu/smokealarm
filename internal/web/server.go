@@ -89,6 +89,7 @@ func (s *Server) Handler() (http.Handler, error) {
 		return crossOrigin.Handler(s.Sessions.Require(handler))
 	}
 	mux.Handle("POST /problems/{id}/acknowledge", action(s.acknowledge))
+	mux.Handle("POST /problems/{id}/unacknowledge", action(s.unacknowledge))
 	mux.Handle("POST /downtimes", action(s.createDowntime))
 	mux.Handle("POST /downtimes/{id}/end", action(s.endDowntime))
 
