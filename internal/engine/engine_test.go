@@ -922,3 +922,159 @@ func TestSkippedCheckGetsNoReminderUntilItRunsAgain(t *testing.T) {
 		t.Fatalf("sent %+v, want the reminder once the check runs again", h.notifier.sent)
 	}
 }
+
+// acknowledge does what the button in the web UI does, for the open problem
+// with this key.
+func (h *harness) acknowledge(key string) {
+	h.t.Helper()
+	ctx := context.Background()
+	records, err := h.engine.Store.OpenRecords(ctx)
+	if err != nil {
+		h.t.Fatalf("OpenRecords: %v", err)
+	}
+	for _, r := range records {
+		if r.Key != key {
+			continue
+		}
+		_, changed, err := h.engine.Store.Acknowledge(ctx, r.ID, h.now)
+		if err != nil || !changed {
+			h.t.Fatalf("Acknowledge(%s) = %v, %v, want true, nil", key, changed, err)
+		}
+		return
+	}
+	h.t.Fatalf("no open problem with key %s", key)
+}
+
+func TestAcknowledgedProblemGetsNoRemindersButItsResolution(t *testing.T) {
+	h := firingCritical(t)
+	h.acknowledge("a")
+
+	h.mustRun(3 * time.Hour) // several intervals, also after a restart
+	h.restart()
+	h.engine.CriticalRepeatInterval = time.Hour
+	h.mustRun(3 * time.Hour)
+	if len(h.notifier.sent) != 1 {
+		t.Fatalf("sent %+v, want only the first mail", h.notifier.sent)
+	}
+
+	h.findings = nil
+	h.mustRun(time.Minute)
+	if len(h.notifier.sent) != 2 || alertKeys(h.notifier.sent[1].Resolved) != "a" {
+		t.Fatalf("sent %+v, want a resolved mail for a", h.notifier.sent)
+	}
+}
+
+func TestReminderStillDueForOtherProblems(t *testing.T) {
+	h := firingCritical(t)
+	h.findings = append(h.findings, finding("b", checks.Critical))
+	h.mustRun(time.Minute)     // b is pending
+	h.mustRun(2 * time.Minute) // b fires and is reported
+	h.acknowledge("a")
+	sent := len(h.notifier.sent)
+
+	h.mustRun(time.Hour)
+	if len(h.notifier.sent) != sent+1 || alertKeys(h.notifier.sent[sent].Reminders) != "b" {
+		t.Fatalf("sent %+v, want a reminder for b only", h.notifier.sent[sent:])
+	}
+}
+
+func TestAcknowledgedProblemStaysAcknowledgedAfterWarningAndCriticalAgain(t *testing.T) {
+	h := newHarness(t)
+	h.findings = []checks.Finding{escalating(checks.Critical)}
+	h.mustRun(0)
+	h.mustRun(2 * time.Minute)
+	h.acknowledge("vol")
+	sent := len(h.notifier.sent)
+
+	h.findings = []checks.Finding{escalating(checks.Warning)}
+	h.mustRun(time.Minute)
+	h.findings = []checks.Finding{escalating(checks.Critical)}
+	h.mustRun(time.Minute)
+	if len(h.notifier.sent) != sent {
+		t.Fatalf("sent %+v, want no mail", h.notifier.sent[sent:])
+	}
+
+	records, err := h.engine.Store.OpenRecords(context.Background())
+	if err != nil || len(records) != 1 {
+		t.Fatalf("OpenRecords = %v, %v", records, err)
+	}
+	if records[0].AcknowledgedAt == nil || records[0].Severity != checks.Critical {
+		t.Errorf("record = %+v, want critical and still acknowledged", records[0])
+	}
+	if records[0].FiringNotifiedAt == nil {
+		t.Error("the escalation cleared the marker of the last report")
+	}
+
+	h.findings = nil
+	h.mustRun(time.Minute)
+	if len(h.notifier.sent) != sent+1 || alertKeys(h.notifier.sent[sent].Resolved) != "vol" {
+		t.Fatalf("sent %+v, want a resolved mail for vol", h.notifier.sent[sent:])
+	}
+}
+
+func TestProblemAfterResolvedIsNewAndNotAcknowledged(t *testing.T) {
+	h := firingCritical(t)
+	h.acknowledge("a")
+	h.findings = nil
+	h.mustRun(time.Minute)
+	sent := len(h.notifier.sent)
+
+	h.findings = []checks.Finding{finding("a", checks.Critical)}
+	h.mustRun(time.Minute)
+	h.mustRun(2 * time.Minute)
+	if len(h.notifier.sent) != sent+1 || alertKeys(h.notifier.sent[sent].New) != "a" {
+		t.Fatalf("sent %+v, want a new mail for a", h.notifier.sent[sent:])
+	}
+
+	h.mustRun(time.Hour)
+	if len(h.notifier.sent) != sent+2 || alertKeys(h.notifier.sent[sent+1].Reminders) != "a" {
+		t.Fatalf("sent %+v, want reminders again for the new alarm", h.notifier.sent[sent:])
+	}
+}
+
+func TestAcknowledgedBeforeFirstMailDropsItAndReportsTheResolution(t *testing.T) {
+	h := newHarness(t)
+	h.findings = []checks.Finding{finding("a", checks.Critical)}
+	h.mustRun(0)
+
+	h.notifier.fail = true
+	_ = h.run(2 * time.Minute) // fires, but the notifier is down
+	h.notifier.fail = false
+	h.acknowledge("a")
+
+	h.mustRun(time.Minute) // the notifier works again
+	if len(h.notifier.sent) != 0 {
+		t.Fatalf("sent %+v, want no late first mail", h.notifier.sent)
+	}
+
+	h.findings = nil
+	h.mustRun(time.Minute)
+	if len(h.notifier.sent) != 1 || alertKeys(h.notifier.sent[0].Resolved) != "a" || len(h.notifier.sent[0].New) != 0 {
+		t.Fatalf("sent %+v, want only a resolved mail for a", h.notifier.sent)
+	}
+
+	// It is reported once, not in every run.
+	h.mustRun(time.Minute)
+	if len(h.notifier.sent) != 1 {
+		t.Fatalf("sent %d notifications, want the resolved mail only once", len(h.notifier.sent))
+	}
+}
+
+func TestFailedResolvedMailOfAcknowledgedProblemIsRetried(t *testing.T) {
+	h := firingCritical(t)
+	h.acknowledge("a")
+	sent := len(h.notifier.sent)
+
+	h.findings = nil
+	h.notifier.fail = true
+	if err := h.run(time.Minute); err == nil {
+		t.Fatal("RunOnce: want the send error")
+	}
+	h.notifier.fail = false
+	h.restart()
+
+	h.mustRun(time.Minute)
+	if len(h.notifier.sent) != sent+1 || alertKeys(h.notifier.sent[sent].Resolved) != "a" {
+		t.Fatalf("sent %+v, want the resolved mail after the restart", h.notifier.sent[sent:])
+	}
+}

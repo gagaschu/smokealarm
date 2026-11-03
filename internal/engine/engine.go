@@ -347,7 +347,9 @@ func (e *Engine) refresh(record store.Record, f checks.Finding, now time.Time) s
 	// it is critical now: clearing the marker lists it as new again. If it is
 	// still pending, it is simply reported with the higher severity when it
 	// fires. Getting better again is not reported; the resolution will be.
-	if escalated && record.State == store.StateFiring {
+	// An acknowledged problem stays acknowledged: somebody already knows, so
+	// the escalation is not reported.
+	if escalated && record.State == store.StateFiring && record.AcknowledgedAt == nil {
 		record.FiringNotifiedAt = nil
 		e.Logger.Info("finding escalated", "key", f.Key, "severity", f.Severity, "reason", f.Reason)
 	}
@@ -363,7 +365,8 @@ func (e *Engine) refresh(record store.Record, f checks.Finding, now time.Time) s
 // reported yet. Records are marked as reported only after the notifier
 // succeeded, so a failed send is simply tried again at the next run, also
 // after a restart. Reminders for critical problems that are due go into the
-// same notification, except for checks whose state is unknown.
+// same notification, except for checks whose state is unknown. Of an
+// acknowledged problem only the end is reported; the store leaves out the rest.
 func (e *Engine) notify(ctx context.Context, unknown []string, now time.Time) error {
 	records, err := e.Store.Unnotified(ctx)
 	if err != nil {
@@ -381,9 +384,11 @@ func (e *Engine) notify(ctx context.Context, unknown []string, now time.Time) er
 		case r.State == store.StateFiring:
 			n.New = append(n.New, alertFor(r))
 			firingIDs = append(firingIDs, r.ID)
-		case r.FiringNotifiedAt == nil:
+		case r.FiringNotifiedAt == nil && r.AcknowledgedAt == nil:
 			// It was fixed before anybody heard about it. Telling the
-			// reader it is resolved would be confusing.
+			// reader it is resolved would be confusing. After an
+			// acknowledgement somebody did hear about it, so that case
+			// gets its mail, even if the first mail never went out.
 			silentIDs = append(silentIDs, r.ID)
 		default:
 			n.Resolved = append(n.Resolved, alertFor(r))
