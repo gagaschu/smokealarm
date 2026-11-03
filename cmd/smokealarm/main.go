@@ -90,7 +90,11 @@ func run() error {
 		return fmt.Errorf("create cluster: %w", err)
 	}
 
-	loop := newEngine(cfg, logger, cluster, db, activeChecks, unavailable)
+	notifiers := newNotifiers(cfg, logger, notify.NewHTTPClient(), time.Now)
+	if err := syncTargets(ctx, logger, db, notifiers); err != nil {
+		return err
+	}
+	loop := newEngine(cfg, logger, cluster, db, activeChecks, unavailable, notifiers)
 	handler, err := newHandler(cfg, logger, cluster, db, loop)
 	if err != nil {
 		return fmt.Errorf("create web handler: %w", err)
@@ -200,7 +204,7 @@ func hasCheck(list []checks.Check, name string) bool {
 // the status page reads from it, but it only starts running after the
 // informer caches are synced.
 func newEngine(cfg config.Config, logger *slog.Logger, cluster *kube.Cluster, db *store.Store,
-	enabled []checks.Check, unavailable []engine.SkippedCheck) *engine.Engine {
+	enabled []checks.Check, unavailable []engine.SkippedCheck, notifiers []notify.Notifier) *engine.Engine {
 	skipped := slices.Clone(unavailable)
 	for _, name := range cfg.DisabledChecks {
 		skipped = append(skipped, engine.SkippedCheck{Name: name, Reason: "disabled by SMOKEALARM_DISABLED_CHECKS"})
@@ -221,7 +225,7 @@ func newEngine(cfg config.Config, logger *slog.Logger, cluster *kube.Cluster, db
 		Retention:              cfg.Retention,
 		SkippedChecks:          skipped,
 		Store:                  db,
-		Notifiers:              []notify.Notifier{newNotifier(cfg, logger)},
+		Notifiers:              notifiers,
 		BaseURL:                cfg.BaseURL,
 		Now:                    time.Now,
 		Logger:                 logger,
@@ -252,28 +256,6 @@ func newHandler(cfg config.Config, logger *slog.Logger, cluster *kube.Cluster, d
 		Logger:  logger,
 	}
 	return server.Handler()
-}
-
-// newNotifier sends mail if SMTP is configured; otherwise state changes only
-// show up in the log. Never log the password.
-func newNotifier(cfg config.Config, logger *slog.Logger) notify.Notifier {
-	smtp := cfg.SMTP
-	if !smtp.Enabled() {
-		logger.Info("mail not configured, notifications go to the log only")
-		return &notify.Log{Logger: logger}
-	}
-	logger.Info("mail notifications enabled",
-		"host", smtp.Host, "port", smtp.Port, "tls", smtp.TLS, "recipients", len(smtp.To))
-	return &notify.Mail{
-		Host:     smtp.Host,
-		Port:     smtp.Port,
-		TLS:      smtp.TLS,
-		Username: smtp.Username,
-		Password: smtp.Password,
-		From:     smtp.From,
-		To:       smtp.To,
-		Now:      time.Now,
-	}
 }
 
 // newLogger builds the slog logger. "auto" means JSON inside a cluster (easy
