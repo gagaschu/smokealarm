@@ -4,6 +4,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"time"
@@ -34,6 +35,14 @@ func Open(path string, now func() time.Time) (*Store, error) {
 		return nil, fmt.Errorf("migrate database %s: %w", path, err)
 	}
 	return &Store{db: db}, nil
+}
+
+// Ping checks that the database answers. It backs /readyz.
+func (s *Store) Ping(ctx context.Context) error {
+	if err := s.db.PingContext(ctx); err != nil {
+		return fmt.Errorf("ping database: %w", err)
+	}
+	return nil
 }
 
 // Close releases the database.
