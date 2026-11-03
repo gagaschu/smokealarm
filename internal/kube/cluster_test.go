@@ -2,8 +2,10 @@ package kube
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,8 +13,13 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes/fake"
+	clienttesting "k8s.io/client-go/testing"
 )
 
 func TestTrimObjectStripsUnusedFields(t *testing.T) {
@@ -130,5 +137,55 @@ func TestBuildSnapshotReadsFromCache(t *testing.T) {
 	}
 	if len(snap.Pods[0].ManagedFields) != 0 {
 		t.Error("transform was not applied to cached pod")
+	}
+}
+
+// A cache that cannot be filled (typically a missing RBAC permission) must end
+// in an error that names the resource, not in a pod that waits forever.
+func TestWaitForSyncNamesTheCachesThatNeverSync(t *testing.T) {
+	client := fake.NewClientset()
+	forbidden := func(action clienttesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: "storageclasses"}, "", errors.New("RBAC: access denied"))
+	}
+	client.PrependReactor("list", "storageclasses", forbidden)
+	client.PrependWatchReactor("storageclasses", func(clienttesting.Action) (bool, watch.Interface, error) {
+		return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: "storageclasses"}, "", errors.New("RBAC: access denied"))
+	})
+
+	cluster, err := New(client, nil, Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	cluster.syncTimeout = 500 * time.Millisecond
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cluster.Start(ctx)
+
+	err = cluster.WaitForSync(ctx)
+	if err == nil {
+		t.Fatal("WaitForSync succeeded although storageclasses cannot be listed")
+	}
+	// Only the broken cache is named, the others did sync.
+	if !strings.Contains(err.Error(), "within 500ms: storageclasses;") || !strings.Contains(err.Error(), "forbidden") {
+		t.Errorf("error = %q, want the timeout, the name storageclasses and the hint about forbidden", err)
+	}
+	if cluster.Synced() {
+		t.Error("Synced() = true although a cache is missing")
+	}
+}
+
+func TestWaitForSyncStopsOnShutdown(t *testing.T) {
+	cluster, err := New(fake.NewClientset(), nil, Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	// The caches are never started, so they cannot sync; shutdown comes first.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err = cluster.WaitForSync(ctx)
+	if err == nil || !strings.Contains(err.Error(), "before shutdown") {
+		t.Errorf("error = %v, want the shutdown message, not the timeout message", err)
 	}
 }

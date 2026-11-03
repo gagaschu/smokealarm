@@ -114,7 +114,7 @@ func run() error {
 
 	cluster.Start(ctx)
 	if err := cluster.WaitForSync(ctx); err != nil {
-		return err
+		return fmt.Errorf("wait for informer caches: %w", err)
 	}
 	go loop.Run(ctx)
 
