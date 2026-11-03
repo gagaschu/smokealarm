@@ -35,11 +35,12 @@ type page struct {
 	Error string
 
 	// overview
-	Problems        []problemView
-	WaitingFirstRun bool
-	AllGood         bool
-	LastRun         string
-	LastRunAgo      string
+	Problems          []problemView
+	CanAcknowledgeAny bool // explains the button once, not on every problem
+	WaitingFirstRun   bool
+	AllGood           bool
+	LastRun           string
+	LastRunAgo        string
 
 	// history
 	History    []historyView
@@ -198,6 +199,7 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 		view := newProblemView(rec, now)
 		view.DowntimeUntil = downtimeEnds[rec.Key]
 		data.Problems = append(data.Problems, view)
+		data.CanAcknowledgeAny = data.CanAcknowledgeAny || view.CanAcknowledge
 	}
 
 	lastRun := s.Status().LastRun

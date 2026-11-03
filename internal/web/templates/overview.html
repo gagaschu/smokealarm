@@ -14,6 +14,7 @@
 <ul class="problems">
   {{range .Problems}}
   <li class="problem {{.Severity}}">
+    <div class="details">
     <div class="headline">
       <span class="badge {{.Severity}}">{{.Severity}}</span>
       {{if .AcknowledgedAt}}<span class="badge acknowledged">acknowledged</span>{{end}}
@@ -24,14 +25,15 @@
     <p class="message">{{.Message}}</p>
     <p class="since">since <time title="{{.Since}}">{{.Age}} ago</time>{{if .AcknowledgedAt}}, acknowledged {{.AcknowledgedAt}}{{end}}</p>
     {{if .DowntimeUntil}}<p class="since">No mails during the downtime until {{.DowntimeUntil}}.</p>{{end}}
+    </div>
     <div class="actions">
       {{if .CanAcknowledge}}<form method="post" action="/problems/{{.ID}}/acknowledge"><button type="submit">Acknowledge</button></form>{{end}}
       <a class="button" href="/downtimes/new?finding={{.ID}}">{{if .DowntimeUntil}}Change downtime{{else}}Set downtime{{end}}</a>
     </div>
-    {{if .CanAcknowledge}}<p class="since">Acknowledge stops the reminders. You still get a mail when it is resolved.</p>{{end}}
   </li>
   {{end}}
 </ul>
-<p class="footnote">Last check: <time title="{{.LastRun}}">{{.LastRunAgo}} ago</time>.</p>
+{{if .CanAcknowledgeAny}}<p class="footnote">Acknowledge stops the reminders. You still get a mail when it is resolved.</p>
+{{end}}<p class="footnote">Last check: <time title="{{.LastRun}}">{{.LastRunAgo}} ago</time>.</p>
 {{end}}
 {{end}}
