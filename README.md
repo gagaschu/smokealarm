@@ -205,13 +205,14 @@ metadata:
 
 A target hears about a problem if the problem's severity is high enough for it **and** the targets annotation, if there is one, names it. Good to know:
 
-- **A typo does not silence an alarm.** If the targets annotation names no target that is configured (`slak`), the problem goes to every target. Names that are not configured are logged as a warning, once, and so is a severity that is neither `warning` nor `critical`; that one is ignored and the check's severity counts.
-- **The end goes to whoever heard the start.** The filter applies to new problems and reminders. A target that was told about a problem is also told when it is resolved, even if the problem has become a warning or the annotation has changed since.
+- **A typo does not silence an alarm.** If the targets annotation names no target that is configured (`slak`), the problem goes to every target. Names that are not configured are logged as a warning, once, naming the object or namespace that carries the annotation, and so is a severity that is neither `warning` nor `critical`; that one is ignored and the check's severity counts.
+- **A warning can reach nobody, on purpose.** With `targets: ntfy` and `SMOKEALARM_NTFY_MIN_SEVERITY=critical`, warnings of that object go nowhere. That is allowed, but logged once as a warning, and the overview says "Notifies nobody".
+- **The end goes to whoever heard the start.** The filter applies to new problems and reminders. A target that was told about a problem is also told when it is resolved, even if the problem has become a warning or the annotation has changed since. That also holds when the problem gets worse or a downtime ends: only the targets it is meant for now hear it again as new, the others still hear the end.
 - **Changing an annotation does not create a new problem.** It counts from the next run. A target that now gets the problem and has not heard of it yet hears about it as new; one that no longer gets it gets no more reminders.
 - **Getting worse reaches more targets.** A warning that becomes critical (`pvc-usage`, `cert-expiry`, `workload-replicas`, or `severity: critical` set later) is reported as new to the critical-only targets.
 - The severity annotation goes through all the usual rules: `critical` brings reminders and the acknowledge button, `warning` means a `pvc-usage` or `cert-expiry` problem stays a warning however bad it gets.
-- Like the ignore annotation, a problem reads the annotations of its own object: a pod problem those of the pod, a `workload-replicas` problem those of the Deployment (its `metadata`, not the pod template). The namespace is the easy way to cover both.
-- Acknowledgements and downtimes work as before. The overview and the history show the targets of a problem that has a targets annotation, and the status page shows which targets get critical problems only.
+- Like the ignore annotation, a problem reads the annotations of its own object: a pod problem those of the pod, a `workload-replicas` problem those of the Deployment (its `metadata`, not the pod template). For a CronJob, those of its job template count too. The namespace is the easy way to cover all of them.
+- Acknowledgements and downtimes work as before. The overview and the history say who is notified when it is not every target ("Notifies only: slack" or "Notifies nobody"), and the status page shows which targets get critical problems only.
 
 ### ntfy
 
