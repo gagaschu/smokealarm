@@ -73,6 +73,8 @@ func TestTargetValidation(t *testing.T) {
 		{"ntfy topic with slash", map[string]string{"SMOKEALARM_NTFY_TOPIC": "a/b"}, "SMOKEALARM_NTFY_TOPIC: may only contain"},
 		{"ntfy topic too long", map[string]string{"SMOKEALARM_NTFY_TOPIC": strings.Repeat("a", 65)}, "SMOKEALARM_NTFY_TOPIC: may only contain"},
 		{"ntfy token without topic", map[string]string{"SMOKEALARM_NTFY_TOKEN": "tk"}, "SMOKEALARM_NTFY_TOKEN: is set, but SMOKEALARM_NTFY_TOPIC is not"},
+		{"ntfy token on two lines", map[string]string{"SMOKEALARM_NTFY_TOPIC": "alerts", "SMOKEALARM_NTFY_TOKEN": "tk_a\nb"}, "SMOKEALARM_NTFY_TOKEN: must be one word"},
+		{"ntfy token with a space", map[string]string{"SMOKEALARM_NTFY_TOPIC": "alerts", "SMOKEALARM_NTFY_TOKEN": "tk_a b"}, "SMOKEALARM_NTFY_TOKEN: must be one word"},
 		{"ntfy url ignored without topic", map[string]string{"SMOKEALARM_NTFY_URL": "nonsense"}, ""},
 		{"telegram without chats", map[string]string{"SMOKEALARM_TELEGRAM_BOT_TOKEN": "1:abc"}, "SMOKEALARM_TELEGRAM_CHAT_IDS: required when SMOKEALARM_TELEGRAM_BOT_TOKEN is set"},
 		{"telegram chats without token", map[string]string{"SMOKEALARM_TELEGRAM_CHAT_IDS": "42"}, "SMOKEALARM_TELEGRAM_CHAT_IDS: is set, but SMOKEALARM_TELEGRAM_BOT_TOKEN is not"},

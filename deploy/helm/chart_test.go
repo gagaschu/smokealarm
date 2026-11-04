@@ -663,8 +663,30 @@ func TestNotificationSecretsWithExistingSecret(t *testing.T) {
 	}
 }
 
+// Settings that make no sense alone fail the install, not the pod.
+func TestIncompleteNotificationTargetFailsTheInstall(t *testing.T) {
+	tests := []struct{ name, values, want string }{
+		{"telegram token without chats", "notifications:\n  telegram:\n    botToken: 1:abc\n", "chatIds"},
+		{"telegram chats without token", "notifications:\n  telegram:\n    chatIds: [\"42\"]\n", "botToken"},
+		{"ntfy token without topic", "notifications:\n  ntfy:\n    token: tk_abc\n", "ntfy.topic"},
+		{"webhook header without url", "notifications:\n  webhook:\n    header: \"X-Key: abc\"\n", "webhook.url"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := helmTemplate(t, "smokealarm", baseValues, tt.values)
+			if err == nil || !strings.Contains(out, tt.want) {
+				t.Errorf("err = %v, output %q; want an error about %s", err, out, tt.want)
+			}
+		})
+	}
+	// With an existing Secret, the token of the chats is in there.
+	if _, err := helmTemplate(t, "smokealarm", "existingSecret: my-secret\nnotifications:\n  telegram:\n    chatIds: [\"42\"]\n"); err != nil {
+		t.Errorf("chat ids with an existing Secret: %v", err)
+	}
+}
+
 func TestTelegramChatIDsMustBeQuoted(t *testing.T) {
-	out, err := helmTemplate(t, "smokealarm", baseValues, "notifications:\n  telegram:\n    chatIds: [-1001234567890]\n")
+	out, err := helmTemplate(t, "smokealarm", baseValues, "notifications:\n  telegram:\n    botToken: 1:abc\n    chatIds: [-1001234567890]\n")
 	if err == nil || !strings.Contains(out, "in quotes") {
 		t.Errorf("err = %v, output %q; want an error about the bare number", err, out)
 	}

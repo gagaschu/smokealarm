@@ -128,6 +128,10 @@ func validateNtfy(r *reader, c NotifyConfig) {
 	if !regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`).MatchString(c.NtfyTopic) {
 		r.fail("%s: may only contain letters, digits, \"-\" and \"_\" (at most 64)", envNtfyTopic)
 	}
+	// It goes into a header; otherwise every send would fail, not the start.
+	if c.NtfyToken != "" && !regexp.MustCompile(`^[\x21-\x7e]+$`).MatchString(c.NtfyToken) {
+		r.fail("%s: must be one word of plain characters", envNtfyToken)
+	}
 	checkTargetURL(r, envNtfyURL, c.NtfyServer, c.AllowHTTP)
 }
 
