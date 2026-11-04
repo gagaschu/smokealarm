@@ -17,7 +17,7 @@ import (
 // summary. It is used together with targetJoin, whose parameter is the target.
 const targetColumns = `f.id, f.key, f.check_name, f.severity, f.kind, f.namespace, f.name, f.reason, f.message,
 	f.state, f.first_seen, f.last_seen, f.firing_at, f.resolved_at,
-	d.firing_notified_at, d.resolved_notified_at, f.acknowledged_at`
+	d.firing_notified_at, d.resolved_notified_at, f.acknowledged_at, f.targets`
 
 const targetJoin = ` FROM findings f LEFT JOIN deliveries d ON d.finding_id = f.id AND d.target = ?`
 
