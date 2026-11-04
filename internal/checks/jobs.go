@@ -50,7 +50,7 @@ func JobFailed(snap *Snapshot, opts Options) []Finding {
 			continue
 		}
 		if cond := failedCondition(job); cond != nil {
-			ref := ObjectRef{Kind: "CronJob", Namespace: cj.Namespace, Name: cj.Name}
+			ref := ObjectRef{Kind: KindCronJob, Namespace: cj.Namespace, Name: cj.Name}
 			findings = append(findings, newFinding(checkJobFailed, Warning, ref, "LastJobFailed", failedMessage(job, cond)))
 		}
 	}
@@ -62,7 +62,7 @@ func standaloneJobFinding(snap *Snapshot, opts Options, job *batchv1.Job) (Findi
 	if cond == nil || isIgnored(snap, opts, job.ObjectMeta) {
 		return Finding{}, false
 	}
-	ref := ObjectRef{Kind: "Job", Namespace: job.Namespace, Name: job.Name}
+	ref := ObjectRef{Kind: KindJob, Namespace: job.Namespace, Name: job.Name}
 	return newFinding(checkJobFailed, Warning, ref, "JobFailed", failedMessage(job, cond)), true
 }
 
@@ -88,7 +88,7 @@ func CronJobMissed(snap *Snapshot, opts Options) []Finding {
 		if cj.Spec.ConcurrencyPolicy == batchv1.ForbidConcurrent && len(cj.Status.Active) > 0 {
 			continue
 		}
-		ref := ObjectRef{Kind: "CronJob", Namespace: cj.Namespace, Name: cj.Name}
+		ref := ObjectRef{Kind: KindCronJob, Namespace: cj.Namespace, Name: cj.Name}
 
 		schedule, err := parseSchedule(cj)
 		if err != nil {

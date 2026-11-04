@@ -20,12 +20,19 @@ const SeverityAnnotation = AnnotationPrefix + "/severity"
 // ApplyAnnotations sets the severity and the targets of the findings from the
 // annotations of their objects. The annotation on the object wins over the one
 // on its namespace; each annotation is looked up on its own. For pods the
-// annotations of the pod count, which it gets from the pod template.
+// annotations of the pod count, which it gets from the pod template; for
+// CronJobs also those of the job template.
 //
 // It runs after the checks, so the checks themselves stay unaware of it. It
-// returns a sentence for every annotation value it could not use; the problem
-// keeps the severity of the check then, so a typo never hides an alarm.
+// returns a sentence for every severity value it could not use, naming the
+// object or namespace that carries it; the problem keeps the severity of the
+// check then, so a typo never hides an alarm. Which target names are
+// configured is the engine's business; Finding.TargetsFrom tells it where the
+// list came from.
 func ApplyAnnotations(snap *Snapshot, findings []Finding) ([]Finding, []string) {
+	if len(findings) == 0 {
+		return findings, nil // a healthy cluster: no need to collect anything
+	}
 	objects := objectAnnotations(snap)
 	namespaces := map[string]map[string]string{}
 	for _, ns := range snap.Namespaces {
@@ -35,42 +42,46 @@ func ApplyAnnotations(snap *Snapshot, findings []Finding) ([]Finding, []string) 
 	var problems []string
 	out := make([]Finding, 0, len(findings))
 	for _, f := range findings {
-		own := objects[objectKey(f.Object)]
-		var inherited map[string]string
+		sources := []annotationSource{{f.Object.Label(), objects[objectKey(f.Object)]}}
 		if f.Object.Namespace != "" {
-			inherited = namespaces[f.Object.Namespace]
+			sources = append(sources, annotationSource{"Namespace " + f.Object.Namespace, namespaces[f.Object.Namespace]})
 		}
 
-		if value, found := lookup(own, inherited, SeverityAnnotation); found {
-			severity, ok := parseSeverity(value)
-			if ok {
+		if value, from, found := lookup(sources, SeverityAnnotation); found {
+			if severity, ok := parseSeverity(value); ok {
 				f.Severity = severity
 			} else {
 				problems = append(problems, fmt.Sprintf("%s: %s %q is neither %q nor %q",
-					f.Object.Label(), SeverityAnnotation, value, Warning, Critical))
+					from, SeverityAnnotation, value, Warning, Critical))
 			}
 		}
-		// A list without names (" , ") counts as not set, like an empty value.
-		if targets := ParseTargets(own[TargetsAnnotation]); len(targets) > 0 {
-			f.Targets = targets
-		} else if targets := ParseTargets(inherited[TargetsAnnotation]); len(targets) > 0 {
-			f.Targets = targets
+		if value, from, found := lookup(sources, TargetsAnnotation); found {
+			f.Targets, f.TargetsFrom = ParseTargets(value), from
 		}
 		out = append(out, f)
 	}
 	return out, problems
 }
 
-// lookup returns the value of the annotation on the object, or else on its
-// namespace. An empty value counts as not set.
-func lookup(own, inherited map[string]string, name string) (string, bool) {
-	if value := strings.TrimSpace(own[name]); value != "" {
-		return value, true
+// annotationSource is where annotations can come from: the object itself or
+// its namespace, with the label used in log messages.
+type annotationSource struct {
+	label       string // "Pod media/jellyfin", "Namespace media"
+	annotations map[string]string
+}
+
+// lookup returns the value of the annotation from the first source that has
+// it, and that source's label. An empty value counts as not set, and so does a
+// targets list without names (" , ").
+func lookup(sources []annotationSource, name string) (value, from string, found bool) {
+	for _, src := range sources {
+		value := strings.TrimSpace(src.annotations[name])
+		if value == "" || (name == TargetsAnnotation && len(ParseTargets(value)) == 0) {
+			continue
+		}
+		return value, src.label, true
 	}
-	if value := strings.TrimSpace(inherited[name]); value != "" {
-		return value, true
-	}
-	return "", false
+	return "", "", false
 }
 
 func parseSeverity(value string) (Severity, bool) {
@@ -108,36 +119,53 @@ func objectAnnotations(snap *Snapshot) map[string]map[string]string {
 		}
 	}
 	for _, o := range snap.Pods {
-		add("Pod", o.Namespace, o.Name, o.Annotations)
+		add(KindPod, o.Namespace, o.Name, o.Annotations)
 	}
 	for _, o := range snap.Deployments {
-		add("Deployment", o.Namespace, o.Name, o.Annotations)
+		add(KindDeployment, o.Namespace, o.Name, o.Annotations)
 	}
 	for _, o := range snap.StatefulSets {
-		add("StatefulSet", o.Namespace, o.Name, o.Annotations)
+		add(KindStatefulSet, o.Namespace, o.Name, o.Annotations)
 	}
 	for _, o := range snap.DaemonSets {
-		add("DaemonSet", o.Namespace, o.Name, o.Annotations)
+		add(KindDaemonSet, o.Namespace, o.Name, o.Annotations)
 	}
 	for _, o := range snap.Nodes {
-		add("Node", "", o.Name, o.Annotations)
+		add(KindNode, "", o.Name, o.Annotations)
 	}
 	for _, o := range snap.Jobs {
-		add("Job", o.Namespace, o.Name, o.Annotations)
+		add(KindJob, o.Namespace, o.Name, o.Annotations)
 	}
 	for _, o := range snap.CronJobs {
-		add("CronJob", o.Namespace, o.Name, o.Annotations)
+		add(KindCronJob, o.Namespace, o.Name, withTemplate(o.Annotations, o.Spec.JobTemplate.Annotations))
 	}
 	for _, o := range snap.PVCs {
-		add("PersistentVolumeClaim", o.Namespace, o.Name, o.Annotations)
+		add(KindPVC, o.Namespace, o.Name, o.Annotations)
 	}
 	for _, o := range snap.Certificates {
-		add("Certificate", o.Meta.Namespace, o.Meta.Name, o.Meta.Annotations)
+		add(KindCertificate, o.Meta.Namespace, o.Meta.Name, o.Meta.Annotations)
 	}
 	for _, o := range snap.Applications {
-		add("Application", o.Meta.Namespace, o.Meta.Name, o.Meta.Annotations)
+		add(KindApplication, o.Meta.Namespace, o.Meta.Name, o.Meta.Annotations)
 	}
 	return objects
+}
+
+// withTemplate merges the annotations of a CronJob with those of its job
+// template, which every Job it creates gets; the CronJob's own win. That is
+// what the ignore annotation sees on the newest Job (see JobFailed).
+func withTemplate(own, template map[string]string) map[string]string {
+	if len(template) == 0 {
+		return own
+	}
+	merged := map[string]string{}
+	for name, value := range template {
+		merged[name] = value
+	}
+	for name, value := range own {
+		merged[name] = value
+	}
+	return merged
 }
 
 func objectKey(ref ObjectRef) string {

@@ -66,7 +66,7 @@ func CertExpiry(snap *Snapshot, opts Options) []Finding {
 }
 
 func certRef(cert Certificate) ObjectRef {
-	return ObjectRef{Kind: "Certificate", Namespace: cert.Meta.Namespace, Name: cert.Meta.Name}
+	return ObjectRef{Kind: KindCertificate, Namespace: cert.Meta.Namespace, Name: cert.Meta.Name}
 }
 
 // humanDuration writes a duration as "9d 3h", "5h 20m" or "12m".

@@ -34,6 +34,22 @@ type ObjectRef struct {
 	Name      string
 }
 
+// The kinds of objects the checks report on, as in ObjectRef.Kind. Checks and
+// ApplyAnnotations use these constants, so a typo does not compile. A check
+// that reports on a new kind adds it here and to objectAnnotations.
+const (
+	KindPod         = "Pod"
+	KindDeployment  = "Deployment"
+	KindStatefulSet = "StatefulSet"
+	KindDaemonSet   = "DaemonSet"
+	KindNode        = "Node"
+	KindJob         = "Job"
+	KindCronJob     = "CronJob"
+	KindPVC         = "PersistentVolumeClaim"
+	KindCertificate = "Certificate"
+	KindApplication = "Application"
+)
+
 // Label is "Pod media/jellyfin", or "Node pi-1" for cluster-scoped objects.
 func (r ObjectRef) Label() string {
 	if r.Namespace == "" {
@@ -59,6 +75,9 @@ type Finding struct {
 	// ApplyAnnotations). Empty means every target. It is not part of the
 	// key: changing the annotation does not turn it into a new problem.
 	Targets []string
+	// TargetsFrom names where the targets annotation was found ("Namespace
+	// media"), for log messages. It is not stored.
+	TargetsFrom string
 }
 
 // Snapshot is a read-only copy of the cluster objects the checks need.
