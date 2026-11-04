@@ -58,7 +58,9 @@ type harness struct {
 	findings   []checks.Finding
 	skipped    map[string]string   // what the snapshot reports as unable to run
 	namespaces []*corev1.Namespace // in the snapshot, for the annotations
-	checkRuns  int                 // how often the fake check was executed
+	nodes      []*corev1.Node      // in the snapshot, for the node causes
+	pods       []*corev1.Pod
+	checkRuns  int // how often the fake check was executed
 	now        time.Time
 	logs       *bytes.Buffer
 }
@@ -89,7 +91,7 @@ func (h *harness) start() {
 
 	h.engine = &Engine{
 		Snapshot: func(_ context.Context, now time.Time) *checks.Snapshot {
-			return &checks.Snapshot{Now: now, Skipped: h.skipped, Namespaces: h.namespaces}
+			return &checks.Snapshot{Now: now, Skipped: h.skipped, Namespaces: h.namespaces, Nodes: h.nodes, Pods: h.pods}
 		},
 		Checks: []checks.Check{{
 			Name: "fake",
@@ -774,7 +776,7 @@ func TestRunChecksSortsByKey(t *testing.T) {
 		{Name: "none", Run: func(*checks.Snapshot, checks.Options) []checks.Finding { return nil }},
 	}
 
-	got, _ := runChecks(&checks.Snapshot{Now: testStart}, checks.Options{}, list)
+	got, _ := runChecks(&checks.Snapshot{Now: testStart}, checks.Options{}, list, nil)
 
 	var keys []string
 	for _, f := range got {

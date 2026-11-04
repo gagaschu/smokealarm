@@ -50,6 +50,24 @@ func nodeNotReady() Alert {
 	}
 }
 
+// nodeDownWithAffected is the node pi-3, newly down, holding back two problems.
+func nodeDownWithAffected() Alert {
+	a := nodeNotReady()
+	a.Key = "node-not-ready/Node//pi-3/NotReady"
+	a.Object.Name = "pi-3"
+	a.Affected = []AffectedProblem{
+		{Object: checks.ObjectRef{Kind: "Deployment", Namespace: "media", Name: "sonarr"}, Reason: "ReplicasUnavailable"},
+		{Object: checks.ObjectRef{Kind: "Pod", Namespace: "media", Name: "sonarr-7d9f-x2k4"}, Reason: "CrashLoopBackOff"},
+	}
+	return a
+}
+
+// withAffected gives an alert one held-back problem.
+func withAffected(a Alert) Alert {
+	a.Affected = []AffectedProblem{{Object: checks.ObjectRef{Kind: "DaemonSet", Namespace: "kube-system", Name: "svclb"}, Reason: "ReplicasUnavailable"}}
+	return a
+}
+
 func resolved(a Alert) Alert {
 	a.ResolvedAt = t1
 	return a
@@ -79,12 +97,12 @@ func TestSubjectAndBodyGolden(t *testing.T) {
 		{
 			name:        "cluster_scoped_node",
 			n:           Notification{New: []Alert{nodeNotReady()}},
-			wantSubject: "[smokealarm] CRITICAL: NotReady pi-2",
+			wantSubject: "[smokealarm] NODE DOWN: pi-2",
 		},
 		{
 			name:        "several_new_without_url",
 			n:           Notification{New: []Alert{crashLoop(), nodeNotReady(), replicasUnavailable()}},
-			wantSubject: "[smokealarm] 3 new problems",
+			wantSubject: "[smokealarm] NODE DOWN: pi-2 (+ 2 new problems)",
 		},
 		{
 			name: "mixed_with_url",
@@ -93,7 +111,7 @@ func TestSubjectAndBodyGolden(t *testing.T) {
 				Resolved: []Alert{resolved(replicasUnavailable())},
 				BaseURL:  "https://smokealarm.example.com",
 			},
-			wantSubject: "[smokealarm] 3 new problems, 1 resolved",
+			wantSubject: "[smokealarm] NODE DOWN: pi-2 (+ 2 new problems, 1 resolved)",
 		},
 		{
 			name:        "one_new_and_one_resolved",
@@ -118,6 +136,20 @@ func TestSubjectAndBodyGolden(t *testing.T) {
 				Resolved:  []Alert{resolved(replicasUnavailable())},
 			},
 			wantSubject: "[smokealarm] 1 new problem, 2 still critical, 1 resolved",
+		},
+		{
+			name: "node_down_with_affected",
+			n: Notification{
+				New:       []Alert{nodeDownWithAffected(), nodeNotReady(), crashLoop()},
+				Reminders: []Alert{withAffected(nodeNotReady())},
+				BaseURL:   "https://smokealarm.example.com",
+			},
+			wantSubject: "[smokealarm] NODE DOWN: pi-3, pi-2 (+ 1 new problem, 1 still critical)",
+		},
+		{
+			name:        "node_reminder_keeps_the_old_subject",
+			n:           Notification{Reminders: []Alert{withAffected(nodeNotReady())}},
+			wantSubject: "[smokealarm] STILL CRITICAL: NotReady pi-2",
 		},
 		{
 			name:        "several_resolved",
@@ -159,6 +191,23 @@ func checkGolden(t *testing.T, name, got string) {
 	}
 	if got != string(want) {
 		t.Errorf("body differs from %s:\n--- got ---\n%s\n--- want ---\n%s", path, got, want)
+	}
+}
+
+func TestSubjectNamesAtMostThreeNodes(t *testing.T) {
+	var n Notification
+	for _, name := range []string{"pi-1", "pi-2", "pi-3", "pi-4", "pi-5"} {
+		a := nodeNotReady()
+		a.Object.Name = name
+		n.New = append(n.New, a)
+	}
+	want := "[smokealarm] NODE DOWN: pi-1, pi-2, pi-3, and 2 more"
+	if got := Subject(n); got != want {
+		t.Errorf("Subject = %q, want %q", got, want)
+	}
+	n.New = n.New[:3]
+	if got := Subject(n); got != "[smokealarm] NODE DOWN: pi-1, pi-2, pi-3" {
+		t.Errorf("Subject = %q, want all three names", got)
 	}
 }
 

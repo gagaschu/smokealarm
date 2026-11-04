@@ -37,7 +37,8 @@ type page struct {
 
 	// overview
 	Problems          []problemView
-	CriticalCount     int // for the counters below the heading
+	HeldBack          []heldBackView // problems waiting for a down node, by node
+	CriticalCount     int            // for the counters below the heading
 	WarningCount      int
 	CanAcknowledgeAny bool // explains the button once, not on every problem
 	AcknowledgedAny   bool // the same for removing an acknowledgement
@@ -74,6 +75,14 @@ type problemView struct {
 	DowntimeUntil  string // end of the running downtime, empty if there is none
 	NotifiesOnly   string // "slack, mail" if not every target hears about it
 	NotifiesNobody bool   // no target hears about it (a warning for critical-only targets)
+	HoldsBack      int    // for a node that is down: how many problems it holds back
+}
+
+// heldBackView is a node that is down and the problems it holds back. It is
+// shown also when the node itself is ignored and so not on the page.
+type heldBackView struct {
+	Node     string
+	Problems []problemView // only Severity, Object, Reason, Message, Since and Age are set
 }
 
 type historyView struct {
@@ -195,7 +204,10 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Pending problems are not shown: they have not lasted long enough to
-	// be reported, so listing them here would contradict the mails.
+	// be reported, so listing them here would contradict the mails. Those
+	// held back by a down node are the exception: they are known, they just
+	// are not reported on their own.
+	held := engine.HeldBack(records)
 	var firing []store.Record
 	for _, rec := range records {
 		if rec.State == store.StateFiring {
@@ -215,6 +227,9 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 		view := newProblemView(rec, now)
 		view.NotifiesOnly, view.NotifiesNobody = s.audience(rec)
 		view.DowntimeUntil = downtimeEnds[rec.Key]
+		if rec.IsNodeDown() {
+			view.HoldsBack = len(held[rec.Object.Name])
+		}
 		data.Problems = append(data.Problems, view)
 		if rec.Severity == checks.Critical {
 			data.CriticalCount++
@@ -225,9 +240,11 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 		data.AcknowledgedAny = data.AcknowledgedAny || view.AcknowledgedAt != ""
 	}
 
+	data.HeldBack = heldBackViews(held, now)
+
 	lastRun := s.Status().LastRun
 	data.WaitingFirstRun = lastRun.IsZero()
-	data.AllGood = !data.WaitingFirstRun && len(data.Problems) == 0
+	data.AllGood = !data.WaitingFirstRun && len(data.Problems) == 0 && len(data.HeldBack) == 0
 	if !lastRun.IsZero() {
 		data.LastRun = lastRun.UTC().Format(timeFormat)
 		data.LastRunAgo = formatAge(now.Sub(lastRun))
@@ -249,6 +266,22 @@ func (s *Server) audience(rec store.Record) (only string, nobody bool) {
 		return "", true
 	}
 	return strings.Join(targets, ", "), false
+}
+
+// heldBackViews sorts the held-back problems by node name, and within a node
+// like the problems.
+func heldBackViews(held map[string][]store.Record, now time.Time) []heldBackView {
+	var views []heldBackView
+	for node, records := range held {
+		sortProblems(records)
+		view := heldBackView{Node: node}
+		for _, rec := range records {
+			view.Problems = append(view.Problems, newProblemView(rec, now))
+		}
+		views = append(views, view)
+	}
+	sort.Slice(views, func(i, j int) bool { return views[i].Node < views[j].Node })
+	return views
 }
 
 // newProblemView prepares one firing problem for the overview.
@@ -308,10 +341,16 @@ func (s *Server) unacknowledge(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
-// sortProblems puts critical first, then the longest-lasting problems.
+// sortProblems puts nodes that are down first, because the problems around
+// them are often their consequences, then critical problems, then the
+// longest-lasting ones.
 func sortProblems(records []store.Record) {
 	sort.Slice(records, func(i, j int) bool {
 		a, b := records[i], records[j]
+		aNode, bNode := a.IsNodeDown(), b.IsNodeDown()
+		if aNode != bNode {
+			return aNode
+		}
 		if a.Severity != b.Severity {
 			return a.Severity == checks.Critical
 		}

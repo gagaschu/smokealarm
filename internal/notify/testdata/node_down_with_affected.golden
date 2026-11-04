@@ -1,0 +1,34 @@
+NODE DOWN: pi-3, pi-2 (+ 1 new problem, 1 still critical)
+
+NODE DOWN
+
+[CRITICAL] NotReady
+  Object:  Node pi-3
+  Message: node is not ready for 10m0s (status Unknown): Kubelet stopped posting node status.
+  Since:   2026-11-03 10:00:00 UTC
+  Affected, not reported on their own while the node is down:
+    - Deployment media/sonarr: ReplicasUnavailable
+    - Pod media/sonarr-7d9f-x2k4: CrashLoopBackOff
+
+[CRITICAL] NotReady
+  Object:  Node pi-2
+  Message: node is not ready for 10m0s (status Unknown): Kubelet stopped posting node status.
+  Since:   2026-11-03 10:00:00 UTC
+
+NEW PROBLEMS
+
+[CRITICAL] CrashLoopBackOff
+  Object:  Pod media/jellyfin
+  Message: container jellyfin keeps crashing (7 restarts), last exit code 137 (Error)
+  Since:   2026-11-03 10:00:00 UTC
+
+STILL CRITICAL
+
+[CRITICAL] NotReady
+  Object:  Node pi-2
+  Message: node is not ready for 10m0s (status Unknown): Kubelet stopped posting node status.
+  Since:   2026-11-03 10:00:00 UTC
+  Affected, not reported on their own while the node is down:
+    - DaemonSet kube-system/svclb: ReplicasUnavailable
+
+Details: https://smokealarm.example.com

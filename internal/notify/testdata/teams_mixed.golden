@@ -13,13 +13,25 @@
         "body": [
           {
             "size": "Medium",
-            "text": "[smokealarm] 2 new problems, 1 still critical, 1 resolved",
+            "text": "[smokealarm] NODE DOWN: pi-3 (+ 2 new problems, 1 still critical, 1 resolved)",
             "type": "TextBlock",
             "weight": "Bolder",
             "wrap": true
           },
           {
             "spacing": "Small",
+            "text": "Node down:",
+            "type": "TextBlock",
+            "wrap": true
+          },
+          {
+            "spacing": "None",
+            "text": "- Node pi-3 (since 2026-11-03 10:00 UTC), 2 affected",
+            "type": "TextBlock",
+            "wrap": true
+          },
+          {
+            "spacing": "None",
             "text": "New:",
             "type": "TextBlock",
             "wrap": true

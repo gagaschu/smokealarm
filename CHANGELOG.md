@@ -18,6 +18,7 @@ All notable changes to this project are documented here. The format is based on
 - The status page lists every notification target with the time of its last message and its last error.
 - Helm chart: `notifications.*` values; tokens and webhook URLs go into the Secret only. New example `notify-targets.yaml`.
 - **Routing**: `SMOKEALARM_<TARGET>_MIN_SEVERITY=critical` sends only critical problems to a target (for example ntfy), while the others still get everything. The annotations `smokealarm.gagaschu.github.io/targets` (e.g. `"slack,mail"`) and `smokealarm.gagaschu.github.io/severity` (`warning` or `critical`) on an object or its namespace choose the targets and the severity of its problems. A target that heard about a problem always hears its end; an annotation that names no configured target sends to all of them. The status page shows which targets get critical problems only; the overview and the history show the targets of a problem. Helm chart: `minSeverity` per target.
+- **A node that is down is the alarm**: the problems of the pods and workloads on it are held back while it is down, instead of arriving one by one. The notification starts with `NODE DOWN: <node>` and lists the affected problems; the overview shows them below the node. When the node is back, they get `SMOKEALARM_ALERT_AFTER` again and are reported only if they last. A test node can be silenced with the ignore annotation on the node; its consequences stay quiet too. The webhook gets an `affected` list on every alert.
 
 ### Changed
 
@@ -25,6 +26,8 @@ All notable changes to this project are documented here. The format is based on
 - The README shows screenshots of the web interface.
 - Database migration `005_deliveries.sql`. On the upgrade, the configured targets start from the current state, so nothing is sent twice.
 - Database migration `006_targets.sql` (the targets of a problem). Existing problems go to every target, as before.
+- Notifications list nodes that are not ready first, and a new one gives the subject (`[smokealarm] NODE DOWN: pi-2 (+ 1 new problem)`). The overview lists them first too.
+- Database migration `007_node_cause.sql` (the node that holds a problem back, and when its clock started). Existing problems are not affected.
 
 ## [0.1.0] - not released yet
 

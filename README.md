@@ -22,6 +22,8 @@ If you already know about a critical problem, press **Acknowledge** on the overv
 
 To silence one problem until a fixed time, for example during planned work or while it flaps, set a [downtime](#downtimes).
 
+When a node goes down, the node is the alarm: the problems of the pods and workloads on it are held back instead of arriving one by one. See [When a node is down](#when-a-node-is-down).
+
 [ARCHITECTURE.md](ARCHITECTURE.md) has the details.
 
 ## The web interface
@@ -305,7 +307,8 @@ notifications:
       "reason": "CrashLoopBackOff",
       "message": "container jellyfin keeps crashing (7 restarts), last exit code 137 (Error)",
       "since": "2026-11-03T10:00:00Z",
-      "resolved_at": null
+      "resolved_at": null,
+      "affected": []
     }
   ],
   "reminders": [],
@@ -318,7 +321,8 @@ notifications:
       "reason": "NotReady",
       "message": "node is not ready for 10m0s (status Unknown): Kubelet stopped posting node status.",
       "since": "2026-11-03T10:00:00Z",
-      "resolved_at": "2026-11-03T12:30:00Z"
+      "resolved_at": "2026-11-03T12:30:00Z",
+      "affected": []
     }
   ]
 }
@@ -327,7 +331,24 @@ notifications:
 - `version` changes only if a field is removed or changes its meaning. New fields may be added at any time, so ignore the ones you don't know.
 - `new`, `reminders` and `resolved` are always lists, possibly empty. `reminders` are critical problems that are still open (see `SMOKEALARM_CRITICAL_REPEAT_INTERVAL`).
 - `key` identifies the problem across messages; the same key in `resolved` ends what an earlier `new` started.
+- `affected` is always a list. For a `node-not-ready` problem in `new` or `reminders`, it holds the problems the node holds back (`object` and `reason`, see [When a node is down](#when-a-node-is-down)); otherwise it is empty.
 - Times are RFC 3339 in UTC. `resolved_at` is `null` unless the problem is resolved. `namespace` is empty for cluster-scoped objects such as nodes. `base_url` is empty if `SMOKEALARM_BASE_URL` is not set.
+
+## When a node is down
+
+A node that fails takes its pods with it, and their Deployments, StatefulSets and DaemonSets soon miss replicas. smokealarm reports the cause, not the noise:
+
+- The mail subject starts with the node: `[smokealarm] NODE DOWN: pi-2`, with any other changes counted after it, e.g. `[smokealarm] NODE DOWN: pi-2 (+ 1 new problem, 1 resolved)`. The body starts with a section **NODE DOWN**; chat messages start with "Node down:". Up to three nodes are named, the rest are counted.
+- **Problems caused by the node are held back.** A problem of a pod on the node, or of a Deployment, StatefulSet or DaemonSet that misses no more replicas than it has pods on the node, is not reported while the node is down, however long that takes. The NotReady message lists them as "Affected" (as far as the target would hear about them), a reminder lists the current ones, and the overview shows them grouped below the node.
+- **When the node is back**, or the node no longer explains a held-back problem (a DaemonSet that now fails on the healthy nodes too), it gets the usual `SMOKEALARM_ALERT_AFTER` from then on. Pods usually become ready again in that time, and nothing more is sent than the "resolved" of the node. A problem that lasts longer is reported as a problem of its own.
+- **Not held back:** pods that have no node yet (Pending, for example because the other nodes have no room left for them). That is a problem of its own and reported as usual. A problem that was already reported before the node went down also goes on as before, with its reminders and its "resolved".
+- **The node's own annotations decide about its alarm**, not those of the pods on it. A test node can be silenced with `smokealarm.gagaschu.github.io/ignore: "true"`, or sent elsewhere with the [routing](#routing) annotations. Its consequences are held back all the same, so a test node that fails does not alarm through its pods either.
+
+```
+kubectl annotate node pi-test smokealarm.gagaschu.github.io/ignore=true
+```
+
+A node counts as down when its Ready condition is `False` or `Unknown`, as for the `node-not-ready` check. Being held back is decided per problem and in every run: a Deployment that misses only its pod on the failed node is held back, while a pod of it that crashes on another node is reported. If `node-not-ready` is switched off, nothing is held back, because nobody would hear about the node. A node that is removed from the cluster counts as back.
 
 ## Acknowledging a problem
 

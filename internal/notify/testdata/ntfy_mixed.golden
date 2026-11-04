@@ -1,3 +1,5 @@
+Node down:
+- Node pi-3 (since 2026-11-03 10:00 UTC), 2 affected
 New:
 - CRITICAL Pod media/jellyfin: CrashLoopBackOff (since 2026-11-03 10:00 UTC)
 - WARNING Deployment media/sonarr: ReplicasUnavailable (since 2026-11-03 10:30 UTC)

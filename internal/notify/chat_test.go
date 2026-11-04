@@ -8,10 +8,11 @@ import (
 
 const testBaseURL = "https://smokealarm.example.com"
 
-// mixed is a notification with something in every list.
+// mixed is a notification with something in every list, and a node that is
+// newly down with the problems it holds back.
 func mixed() Notification {
 	return Notification{
-		New:       []Alert{crashLoop(), replicasUnavailable()},
+		New:       []Alert{nodeDownWithAffected(), crashLoop(), replicasUnavailable()},
 		Reminders: []Alert{nodeNotReady()},
 		Resolved:  []Alert{resolved(replicasUnavailable())},
 		BaseURL:   testBaseURL,

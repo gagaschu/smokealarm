@@ -325,6 +325,7 @@ input:focus, select:focus { outline: none; border-color: var(--accent); box-shad
 .badge.warning { color: var(--warning-text); background: var(--warning-soft); }
 .badge.acknowledged { color: var(--muted); background: var(--surface-muted); box-shadow: inset 0 0 0 1px var(--border-strong); }
 .badge.downtime { color: var(--accent-text); background: var(--accent-soft); }
+.badge.held-back { color: var(--muted); background: var(--surface-muted); box-shadow: inset 0 0 0 1px var(--border-strong); }
 
 /* Pills show a state in a table or on the status page. */
 .pill {
@@ -386,6 +387,12 @@ input:focus, select:focus { outline: none; border-color: var(--accent); box-shad
 .problem.warning::before { background: var(--warning); }
 /* Somebody knows about an acknowledged problem, so its stripe is quieter. */
 .problem.is-acknowledged::before { opacity: 0.4; }
+.problem.is-held-back::before { opacity: 0.4; }
+
+/* Problems that wait for a node that is down. */
+.held-back { margin-top: 2rem; }
+.held-back h2 { font-size: 1.125rem; margin: 0; }
+.held-back > .footnote { margin: 0.25rem 0 0.75rem; }
 
 .details { flex: 1 1 24rem; min-width: 0; overflow-wrap: anywhere; }
 .badges { display: flex; flex-wrap: wrap; gap: 0.375rem; margin-bottom: 0.5rem; }

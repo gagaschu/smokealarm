@@ -18,12 +18,14 @@ const subjectPrefix = "[smokealarm] "
 // reader's time zone.
 const timeFormat = "2006-01-02 15:04:05 UTC"
 
-// Subject summarizes the notification in one line. A single change is named
-// ("CRITICAL: CrashLoopBackOff media/jellyfin"); several changes are counted
-// ("3 new problems, 1 resolved").
+// Subject summarizes the notification in one line. A node that is newly down
+// comes first ("NODE DOWN: pi-2 (+ 1 resolved)"), because the problems around
+// it are its consequences. Otherwise a single change is named ("CRITICAL:
+// CrashLoopBackOff media/jellyfin") and several changes are counted ("3 new
+// problems, 1 resolved").
 func Subject(n Notification) string {
-	if len(n.New)+len(n.Reminders)+len(n.Resolved) != 1 {
-		return subjectPrefix + summary(n)
+	if nodes, _ := splitNodesDown(n.New); len(nodes) > 0 || len(n.New)+len(n.Reminders)+len(n.Resolved) != 1 {
+		return subjectPrefix + summaryLine(n)
 	}
 	switch {
 	case len(n.New) == 1:
@@ -38,26 +40,72 @@ func Subject(n Notification) string {
 	}
 }
 
-// summary counts the changes: "2 new problems, 1 resolved".
+// maxNodeNames is how many down nodes the subject names; the rest are
+// counted, so the subject stays one line when a whole rack fails.
+const maxNodeNames = 3
+
+// summary counts the changes: "2 new problems, 1 resolved". Nodes that are
+// newly down are named first: "NODE DOWN: pi-2, pi-3 (+ 1 new problem)".
 func summary(n Notification) string {
+	nodes, others := splitNodesDown(n.New)
+	counted := counts(len(others), len(n.Reminders), len(n.Resolved))
+	if len(nodes) == 0 {
+		return counted
+	}
+	var names []string
+	for _, a := range nodes {
+		if len(names) == maxNodeNames {
+			names = append(names, fmt.Sprintf("and %d more", len(nodes)-maxNodeNames))
+			break
+		}
+		names = append(names, a.Object.Name)
+	}
+	headline := "NODE DOWN: " + strings.Join(names, ", ")
+	if counted == "" {
+		return headline
+	}
+	return headline + " (+ " + counted + ")"
+}
+
+// summaryLine is summary, or "no changes" for an empty notification.
+func summaryLine(n Notification) string {
+	if line := summary(n); line != "" {
+		return line
+	}
+	return "no changes"
+}
+
+// counts is "2 new problems, 1 still critical, 1 resolved", or "" if all are
+// zero.
+func counts(newCount, reminders, resolved int) string {
 	var parts []string
-	switch len(n.New) {
+	switch newCount {
 	case 0:
 	case 1:
 		parts = append(parts, "1 new problem")
 	default:
-		parts = append(parts, fmt.Sprintf("%d new problems", len(n.New)))
+		parts = append(parts, fmt.Sprintf("%d new problems", newCount))
 	}
-	if len(n.Reminders) > 0 {
-		parts = append(parts, fmt.Sprintf("%d still critical", len(n.Reminders)))
+	if reminders > 0 {
+		parts = append(parts, fmt.Sprintf("%d still critical", reminders))
 	}
-	if len(n.Resolved) > 0 {
-		parts = append(parts, fmt.Sprintf("%d resolved", len(n.Resolved)))
-	}
-	if len(parts) == 0 {
-		return "no changes"
+	if resolved > 0 {
+		parts = append(parts, fmt.Sprintf("%d resolved", resolved))
 	}
 	return strings.Join(parts, ", ")
+}
+
+// splitNodesDown separates the alerts about nodes that are down from the rest,
+// keeping the order of each.
+func splitNodesDown(alerts []Alert) (nodes, others []Alert) {
+	for _, a := range alerts {
+		if a.IsNodeDown() {
+			nodes = append(nodes, a)
+		} else {
+			others = append(others, a)
+		}
+	}
+	return nodes, others
 }
 
 // objectName is "namespace/name", or just "name" for cluster-scoped objects
@@ -69,10 +117,20 @@ func objectName(ref checks.ObjectRef) string {
 	return ref.Namespace + "/" + ref.Name
 }
 
-// bodyTemplate is the plaintext mail body. New problems come first, then
+// bodyTemplate is the plaintext mail body. Nodes that are newly down come
+// first, with the problems they hold back, then the other new problems, then
 // reminders, then resolved ones; the engine has already sorted each list.
-const bodyTemplate = `{{.Summary}}
-{{if .New}}
+const bodyTemplate = `{{define "affected"}}{{if .Affected}}  Affected, not reported on their own while the node is down:
+{{range .Affected}}    - {{.}}
+{{end}}{{end}}{{end}}{{.Summary}}
+{{if .NodesDown}}
+NODE DOWN
+{{range .NodesDown}}
+[{{.Severity}}] {{.Reason}}
+  Object:  {{.Object}}
+  Message: {{.Message}}
+  Since:   {{.Since}}
+{{template "affected" .}}{{end}}{{end}}{{if .New}}
 NEW PROBLEMS
 {{range .New}}
 [{{.Severity}}] {{.Reason}}
@@ -86,7 +144,7 @@ STILL CRITICAL
   Object:  {{.Object}}
   Message: {{.Message}}
   Since:   {{.Since}}
-{{end}}{{end}}{{if .Resolved}}
+{{template "affected" .}}{{end}}{{end}}{{if .Resolved}}
 RESOLVED
 {{range .Resolved}}
 [RESOLVED] {{.Reason}}
@@ -102,6 +160,7 @@ Details: {{.BaseURL}}
 // stays free of logic.
 type bodyData struct {
 	Summary   string
+	NodesDown []bodyEntry
 	New       []bodyEntry
 	Reminders []bodyEntry
 	Resolved  []bodyEntry
@@ -115,6 +174,7 @@ type bodyEntry struct {
 	Message    string
 	Since      string
 	ResolvedAt string
+	Affected   []string // "Deployment media/sonarr: ReplicasUnavailable"
 }
 
 // Body renders the plaintext mail body.
@@ -123,9 +183,11 @@ func Body(n Notification) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("parse body template: %w", err)
 	}
+	nodes, others := splitNodesDown(n.New)
 	data := bodyData{
-		Summary:   summary(n),
-		New:       entries(n.New),
+		Summary:   summaryLine(n),
+		NodesDown: entries(nodes),
+		New:       entries(others),
 		Reminders: entries(n.Reminders),
 		Resolved:  entries(n.Resolved),
 		BaseURL:   n.BaseURL,
@@ -148,9 +210,18 @@ func entries(alerts []Alert) []bodyEntry {
 			Message:    a.Message,
 			Since:      formatTime(a.Since),
 			ResolvedAt: formatTime(a.ResolvedAt),
+			Affected:   affectedLines(a.Affected),
 		})
 	}
 	return result
+}
+
+func affectedLines(affected []AffectedProblem) []string {
+	var lines []string
+	for _, p := range affected {
+		lines = append(lines, p.Object.Label()+": "+p.Reason)
+	}
+	return lines
 }
 
 func formatTime(t time.Time) string {
@@ -220,16 +291,28 @@ func chatLines(n Notification) []chatLine {
 			lines = append(lines, chatLine{text: format(a), problem: true})
 		}
 	}
-	add("New:", n.New, func(a Alert) string {
+	nodes, others := splitNodesDown(n.New)
+	add("Node down:", nodes, func(a Alert) string {
+		return fmt.Sprintf("- %s (since %s)%s", a.Object.Label(), chatTime(a.Since), affectedCount(a))
+	})
+	add("New:", others, func(a Alert) string {
 		return fmt.Sprintf("- %s %s: %s (since %s)", strings.ToUpper(string(a.Severity)), a.Object.Label(), a.Reason, chatTime(a.Since))
 	})
 	add("Still critical:", n.Reminders, func(a Alert) string {
-		return fmt.Sprintf("- %s: %s (since %s)", a.Object.Label(), a.Reason, chatTime(a.Since))
+		return fmt.Sprintf("- %s: %s (since %s)%s", a.Object.Label(), a.Reason, chatTime(a.Since), affectedCount(a))
 	})
 	add("Resolved:", n.Resolved, func(a Alert) string {
 		return fmt.Sprintf("- %s: %s (since %s, resolved %s)", a.Object.Label(), a.Reason, chatTime(a.Since), chatTime(a.ResolvedAt))
 	})
 	return lines
+}
+
+// affectedCount is ", 3 affected" for a node that holds back problems.
+func affectedCount(a Alert) string {
+	if len(a.Affected) == 0 {
+		return ""
+	}
+	return fmt.Sprintf(", %d affected", len(a.Affected))
 }
 
 func joinChatLines(lines []chatLine) string {

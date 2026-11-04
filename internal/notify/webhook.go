@@ -85,6 +85,14 @@ type webhookAlert struct {
 	Message    string        `json:"message"`
 	Since      time.Time     `json:"since"`
 	ResolvedAt *time.Time    `json:"resolved_at"` // null unless resolved
+	// Affected lists, for a node that is down, the problems it holds back.
+	// Added in phase 15; empty for every other alert, never null.
+	Affected []webhookAffected `json:"affected"`
+}
+
+type webhookAffected struct {
+	Object webhookObject `json:"object"`
+	Reason string        `json:"reason"`
 }
 
 type webhookObject struct {
@@ -117,6 +125,13 @@ func webhookAlerts(alerts []Alert) []webhookAlert {
 			Reason:   a.Reason,
 			Message:  a.Message,
 			Since:    a.Since.UTC(),
+			Affected: []webhookAffected{},
+		}
+		for _, p := range a.Affected {
+			entry.Affected = append(entry.Affected, webhookAffected{
+				Object: webhookObject{Kind: p.Object.Kind, Namespace: p.Object.Namespace, Name: p.Object.Name},
+				Reason: p.Reason,
+			})
 		}
 		if !a.ResolvedAt.IsZero() {
 			resolvedAt := a.ResolvedAt.UTC()
