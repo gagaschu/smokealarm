@@ -74,14 +74,15 @@ func (s *Store) EndDowntime(ctx context.Context, id int64, now time.Time) (strin
 }
 
 // FinishDowntime removes a downtime that has ended and clears the "reported"
-// marker of the problem if it is still firing, for every notification target,
-// so it is reported again as new. That is what brings back an alarm that was
+// marker of the problem if it is still firing, for the given notification
+// targets (those it is meant for now), so it is reported again as new. A target
+// it is no longer meant for keeps its marker and hears the end. That is what brings back an alarm that was
 // reported before the downtime; the reminder clock then runs from this new
 // report. An acknowledged problem keeps its marker, because it stays silent
 // until it is resolved. All changes happen in one transaction, so a restart
 // cannot lose the message. A downtime that was
 // extended in the meantime is left alone.
-func (s *Store) FinishDowntime(ctx context.Context, key string, now time.Time) error {
+func (s *Store) FinishDowntime(ctx context.Context, key string, now time.Time, targets []string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
@@ -109,7 +110,7 @@ func (s *Store) FinishDowntime(ctx context.Context, key string, now time.Time) e
 	case err != nil:
 		return fmt.Errorf("clear marker of finding %s: %w", key, err)
 	default:
-		if err := clearFiringDeliveries(ctx, tx, id); err != nil {
+		if err := clearFiringDeliveries(ctx, tx, id, targets); err != nil {
 			return err
 		}
 	}

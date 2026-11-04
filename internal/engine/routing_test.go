@@ -176,3 +176,104 @@ func TestStatusShowsCriticalOnlyTargets(t *testing.T) {
 		t.Errorf("targets = %+v, want only the second one critical only", targets)
 	}
 }
+
+// Review finding 1: an escalation must not take the end away from a target
+// that heard the start but is no longer meant for the problem.
+func TestEscalationKeepsTheEndForATargetTheProblemMovedAwayFrom(t *testing.T) {
+	h, second := twoTargets(t)
+	h.findings = []checks.Finding{escalating(checks.Warning)}
+	h.mustRun(0)
+	h.mustRun(2 * time.Minute) // both hear the warning
+
+	moved := escalating(checks.Critical)
+	moved.Targets = []string{"second"}
+	h.findings = []checks.Finding{moved}
+	h.mustRun(time.Minute) // now critical, and only for the second target
+	h.findings = nil
+	h.mustRun(time.Minute)
+
+	wantNotifications(t, h.notifier, "new:vol/reminders:/resolved:", "new:/reminders:/resolved:vol")
+	wantNotifications(t, second, "new:vol/reminders:/resolved:", "new:vol/reminders:/resolved:",
+		"new:/reminders:/resolved:vol")
+}
+
+// Review finding 2: the end of a downtime must not take the end away from a
+// critical-only target while the problem is only a warning.
+func TestDowntimeEndKeepsTheEndForACriticalOnlyTarget(t *testing.T) {
+	h, second := twoTargets(t)
+	h.engine.MinSeverity = map[string]checks.Severity{"second": checks.Critical}
+	h.findings = []checks.Finding{escalating(checks.Critical)}
+	h.mustRun(0)
+	h.mustRun(2 * time.Minute) // both hear it as critical
+	h.findings = []checks.Finding{escalating(checks.Warning)}
+	h.mustRun(time.Minute)
+	h.setDowntime("vol", time.Hour)
+	h.mustRun(2 * time.Hour) // the downtime ends while it is a warning
+	h.findings = nil
+	h.mustRun(time.Minute)
+
+	wantNotifications(t, second, "new:vol/reminders:/resolved:", "new:/reminders:/resolved:vol")
+	wantNotifications(t, h.notifier, "new:vol/reminders:/resolved:", "new:vol/reminders:/resolved:",
+		"new:/reminders:/resolved:vol")
+}
+
+// The same for a targets annotation that moved away during the downtime.
+func TestDowntimeEndKeepsTheEndForATargetTheProblemMovedAwayFrom(t *testing.T) {
+	h, second := twoTargets(t)
+	h.findings = []checks.Finding{finding("a", checks.Critical)}
+	h.mustRun(0)
+	h.mustRun(2 * time.Minute)
+	h.setDowntime("a", time.Hour)
+	h.findings = []checks.Finding{withTargets(finding("a", checks.Critical), "second")}
+	h.mustRun(2 * time.Hour)
+	h.findings = nil
+	h.mustRun(time.Minute)
+
+	wantNotifications(t, h.notifier, "new:a/reminders:/resolved:", "new:/reminders:/resolved:a")
+	wantNotifications(t, second, "new:a/reminders:/resolved:", "new:a/reminders:/resolved:",
+		"new:/reminders:/resolved:a")
+}
+
+// Review finding 3: a warning that reaches no target is allowed, but logged.
+func TestWarningThatReachesNoTargetIsLoggedOnce(t *testing.T) {
+	h, _ := twoTargets(t)
+	h.engine.MinSeverity = map[string]checks.Severity{"second": checks.Critical}
+	h.namespaces = []*corev1.Namespace{{ObjectMeta: metav1.ObjectMeta{Name: "media", Annotations: map[string]string{
+		checks.TargetsAnnotation: "second",
+	}}}}
+	h.findings = []checks.Finding{finding("a", checks.Warning), finding("b", checks.Warning)}
+	h.mustRun(0)
+	h.mustRun(2 * time.Minute)
+	h.mustRun(time.Minute)
+
+	wantNotifications(t, h.notifier)
+	if got := strings.Count(h.logs.String(), `msg="problems reach no notification target"`); got != 1 {
+		t.Errorf("logged %d times, want once for the namespace:\n%s", got, h.logs)
+	}
+	if !strings.Contains(h.logs.String(), "Namespace media") {
+		t.Errorf("want the namespace named as the source:\n%s", h.logs)
+	}
+}
+
+// Review finding 5: a warning names where the annotation is, once per process,
+// also when the problem goes away for a run and comes back.
+func TestAnnotationWarningNamesTheSourceOnce(t *testing.T) {
+	h := newHarness(t)
+	h.namespaces = []*corev1.Namespace{{ObjectMeta: metav1.ObjectMeta{Name: "media", Annotations: map[string]string{
+		checks.TargetsAnnotation: "slak",
+	}}}}
+	h.findings = []checks.Finding{finding("a", checks.Critical), finding("b", checks.Critical)}
+	h.mustRun(0)
+	h.findings = nil
+	h.mustRun(time.Minute)
+	h.findings = []checks.Finding{finding("a", checks.Critical)}
+	h.mustRun(time.Minute)
+
+	logs := h.logs.String()
+	if got := strings.Count(logs, "annotation ignored"); got != 1 {
+		t.Errorf("logged %d times, want once:\n%s", got, logs)
+	}
+	if !strings.Contains(logs, "Namespace media") || strings.Contains(logs, "Pod media/a: ") {
+		t.Errorf("want the namespace as the source, not the pod:\n%s", logs)
+	}
+}

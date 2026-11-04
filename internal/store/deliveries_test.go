@@ -83,7 +83,7 @@ func TestClearingTheMarkerReachesEveryTarget(t *testing.T) {
 
 		record, _, _ := s.Record(ctx, id)
 		record.FiringNotifiedAt = nil
-		if err := s.Apply(ctx, Changes{Update: []Record{record}, Escalated: []int64{id}}); err != nil {
+		if err := s.Apply(ctx, Changes{Update: []Record{record}, Escalated: []Escalation{{ID: id, Targets: []string{"slack", "ntfy"}}}}); err != nil {
 			t.Fatalf("Apply: %v", err)
 		}
 		for _, target := range []string{"slack", "ntfy"} {
@@ -115,7 +115,7 @@ func TestClearingTheMarkerReachesEveryTarget(t *testing.T) {
 		mustMarkFiring(t, s, "ntfy", id, testNow)
 		mustSetDowntime(t, s, newDowntime("a", testNow))
 
-		if err := s.FinishDowntime(ctx, "a", testNow); err != nil {
+		if err := s.FinishDowntime(ctx, "a", testNow, []string{"slack", "ntfy"}); err != nil {
 			t.Fatalf("FinishDowntime: %v", err)
 		}
 		for _, target := range []string{"slack", "ntfy"} {
@@ -255,4 +255,37 @@ func countDeliveries(t *testing.T, s *Store, target string) int {
 		t.Fatalf("count deliveries: %v", err)
 	}
 	return n
+}
+
+// A target the problem is no longer meant for keeps its marker, so it still
+// hears the end (phase 14).
+func TestClearingTheMarkerSparesTheTargetsNotListed(t *testing.T) {
+	for name, clear := range map[string]func(s *Store, id int64) error{
+		"escalation": func(s *Store, id int64) error {
+			record, _, _ := s.Record(context.Background(), id)
+			record.FiringNotifiedAt = nil
+			return s.Apply(context.Background(), Changes{Update: []Record{record},
+				Escalated: []Escalation{{ID: id, Targets: []string{"ntfy"}}}})
+		},
+		"end of a downtime": func(s *Store, _ int64) error {
+			mustSetDowntime(t, s, newDowntime("a", testNow))
+			return s.FinishDowntime(context.Background(), "a", testNow, []string{"ntfy"})
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, _ := openTemp(t)
+			id := firingRecord(t, s, "a")
+			mustMarkFiring(t, s, "slack", id, testNow)
+			mustMarkFiring(t, s, "ntfy", id, testNow)
+			if err := clear(s, id); err != nil {
+				t.Fatal(err)
+			}
+			if keys := unnotifiedKeys(t, s, "ntfy"); keys != "a" {
+				t.Errorf("ntfy: Unnotified = %q, want a", keys)
+			}
+			if keys := unnotifiedKeys(t, s, "slack"); keys != "" {
+				t.Errorf("slack: Unnotified = %q, want nothing: it keeps its marker", keys)
+			}
+		})
+	}
 }

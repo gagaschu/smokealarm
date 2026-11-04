@@ -49,9 +49,18 @@ type Changes struct {
 	Insert []Record
 	Update []Record // matched by ID; see Apply for the fields that are written
 	Delete []int64
-	// Escalated lists firing problems that got worse: every notification
-	// target forgets that it was told, and hears about them again.
-	Escalated []int64
+	// Escalated lists firing problems that got worse: the listed targets
+	// forget that they were told, and hear about them again.
+	Escalated []Escalation
+}
+
+// Escalation is a firing problem that got worse. Targets are the notification
+// targets (Notifier.Name) it is meant for now; only they are told again. A
+// target that heard the start but is no longer meant for it keeps its marker,
+// so it still hears the end.
+type Escalation struct {
+	ID      int64
+	Targets []string
 }
 
 // selectColumns lists the columns in the order scanRecord reads them.
@@ -146,8 +155,8 @@ func (s *Store) Apply(ctx context.Context, changes Changes) error {
 			return fmt.Errorf("update finding %s: %w", r.Key, err)
 		}
 	}
-	for _, id := range changes.Escalated {
-		if err := clearFiringDeliveries(ctx, tx, id); err != nil {
+	for _, esc := range changes.Escalated {
+		if err := clearFiringDeliveries(ctx, tx, esc.ID, esc.Targets); err != nil {
 			return err
 		}
 	}
