@@ -8,9 +8,6 @@ import (
 	"github.com/gagaschu/smokealarm/internal/checks"
 )
 
-// NtfyServer is the public ntfy server, the default for Ntfy.Server.
-const NtfyServer = "https://ntfy.sh"
-
 // ntfyLimit is a little below the 4096 bytes ntfy accepts as a message; a
 // longer one would arrive as an attachment.
 const ntfyLimit = 4000

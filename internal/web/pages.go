@@ -234,7 +234,7 @@ func newProblemView(rec store.Record, now time.Time) problemView {
 	view := problemView{
 		ID:             rec.ID,
 		Severity:       string(rec.Severity),
-		Object:         objectLabel(rec.Object),
+		Object:         rec.Object.Label(),
 		Reason:         rec.Reason,
 		Message:        rec.Message,
 		Since:          rec.FirstSeen.UTC().Format(timeFormat),
@@ -332,7 +332,7 @@ func (s *Server) history(w http.ResponseWriter, r *http.Request) {
 		view := historyView{
 			ID:            rec.ID,
 			Severity:      string(rec.Severity),
-			Object:        objectLabel(rec.Object),
+			Object:        rec.Object.Label(),
 			Reason:        rec.Reason,
 			Message:       rec.Message,
 			DowntimeUntil: downtimeEnds[rec.Key],
@@ -383,14 +383,6 @@ func formatOptionalTime(t time.Time) string {
 		return ""
 	}
 	return t.UTC().Format(timeFormat)
-}
-
-// objectLabel is "Pod media/jellyfin", or "Node pi-1" for cluster-scoped objects.
-func objectLabel(ref checks.ObjectRef) string {
-	if ref.Namespace == "" {
-		return ref.Kind + " " + ref.Name
-	}
-	return ref.Kind + " " + ref.Namespace + "/" + ref.Name
 }
 
 // formatAge writes a duration in the two most useful units: "3d 4h",

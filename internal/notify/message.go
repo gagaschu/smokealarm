@@ -144,7 +144,7 @@ func entries(alerts []Alert) []bodyEntry {
 		result = append(result, bodyEntry{
 			Severity:   strings.ToUpper(string(a.Severity)),
 			Reason:     a.Reason,
-			Object:     objectLabel(a.Object),
+			Object:     a.Object.Label(),
 			Message:    a.Message,
 			Since:      formatTime(a.Since),
 			ResolvedAt: formatTime(a.ResolvedAt),
@@ -221,13 +221,13 @@ func chatLines(n Notification) []chatLine {
 		}
 	}
 	add("New:", n.New, func(a Alert) string {
-		return fmt.Sprintf("- %s %s: %s (since %s)", strings.ToUpper(string(a.Severity)), objectLabel(a.Object), a.Reason, chatTime(a.Since))
+		return fmt.Sprintf("- %s %s: %s (since %s)", strings.ToUpper(string(a.Severity)), a.Object.Label(), a.Reason, chatTime(a.Since))
 	})
 	add("Still critical:", n.Reminders, func(a Alert) string {
-		return fmt.Sprintf("- %s: %s (since %s)", objectLabel(a.Object), a.Reason, chatTime(a.Since))
+		return fmt.Sprintf("- %s: %s (since %s)", a.Object.Label(), a.Reason, chatTime(a.Since))
 	})
 	add("Resolved:", n.Resolved, func(a Alert) string {
-		return fmt.Sprintf("- %s: %s (since %s, resolved %s)", objectLabel(a.Object), a.Reason, chatTime(a.Since), chatTime(a.ResolvedAt))
+		return fmt.Sprintf("- %s: %s (since %s, resolved %s)", a.Object.Label(), a.Reason, chatTime(a.Since), chatTime(a.ResolvedAt))
 	})
 	return lines
 }
@@ -256,12 +256,6 @@ func moreLine(left int, baseURL string) string {
 		return fmt.Sprintf("… and %d more, see the web UI", left)
 	}
 	return fmt.Sprintf("… and %d more, see %s", left, baseURL)
-}
-
-// objectLabel is "Pod media/jellyfin", or "Node pi-2" for cluster-scoped
-// objects.
-func objectLabel(ref checks.ObjectRef) string {
-	return ref.Kind + " " + objectName(ref)
 }
 
 func chatTime(t time.Time) string {
