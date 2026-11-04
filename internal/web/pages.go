@@ -99,10 +99,10 @@ type statusView struct {
 // secret; the engine gets it from the notifier.
 type targetView struct {
 	Description  string
-	CriticalOnly bool // hears only about critical problems
-	LastSentAt  string // empty if nothing was sent since the start
-	LastError   string
-	LastErrorAt string
+	CriticalOnly bool   // hears only about critical problems
+	LastSentAt   string // empty if nothing was sent since the start
+	LastError    string
+	LastErrorAt  string
 }
 
 type checkView struct {
@@ -375,9 +375,9 @@ func targetViews(targets []engine.TargetStatus) []targetView {
 		views = append(views, targetView{
 			Description:  t.Description,
 			CriticalOnly: t.CriticalOnly,
-			LastSentAt:  formatOptionalTime(t.LastSentAt),
-			LastError:   t.LastError,
-			LastErrorAt: formatOptionalTime(t.LastErrorAt),
+			LastSentAt:   formatOptionalTime(t.LastSentAt),
+			LastError:    t.LastError,
+			LastErrorAt:  formatOptionalTime(t.LastErrorAt),
 		})
 	}
 	return views
