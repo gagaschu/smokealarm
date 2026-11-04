@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -104,7 +105,7 @@ func TestWebhook(t *testing.T) {
 		t.Errorf("X-Api-Key = %q", key)
 	}
 	checkGoldenJSON(t, "webhook_mixed.golden", got.body)
-	if w.Description() != "webhook ("+strings.TrimPrefix(server.URL, "http://")+")" {
+	if w.Description() != "webhook" {
 		t.Errorf("Description = %q", w.Description())
 	}
 }
@@ -154,8 +155,8 @@ func TestNtfy(t *testing.T) {
 		}
 	}
 	checkGolden(t, "ntfy_mixed.golden", string(got.body))
-	if strings.Contains(n.Description(), "smokealarm-x7k2") {
-		t.Errorf("Description %q shows the topic", n.Description())
+	if n.Description() != "ntfy" {
+		t.Errorf("Description = %q, want the name only", n.Description())
 	}
 }
 
@@ -321,5 +322,75 @@ func TestRequestUsesTheContext(t *testing.T) {
 	err := (&Slack{WebhookURL: server.URL, Client: NewHTTPClient()}).Send(ctx, mixed())
 	if err == nil || !strings.Contains(err.Error(), "context canceled") {
 		t.Errorf("error = %v, want the cancellation", err)
+	}
+}
+
+// newAnswer starts a server that refuses every request with this answer.
+func newAnswer(t *testing.T, answer string) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = io.WriteString(w, answer)
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+// A server may quote only a part of the URL or of the header.
+func TestPartsOfASecretAreRemoved(t *testing.T) {
+	const pathToken = "0f8fad5b-d9cb-469f"
+	const queryToken = "sig/with+escapes"
+	const headerToken = "header-token-456"
+	secretURL := "/webhook/" + pathToken + "/a%2Fb-escaped-part?sig=sig%2Fwith%2Bescapes"
+	for _, answer := range []string{
+		`The webhook "POST ` + pathToken + `" is not registered`,
+		"unknown path a%2Fb-escaped-part",
+		"bad signature " + queryToken,
+		"bad token " + headerToken,
+	} {
+		server := newAnswer(t, answer)
+		w := &Webhook{URL: server.URL + secretURL, HeaderName: "Authorization", HeaderValue: "Bearer " + headerToken, Client: NewHTTPClient()}
+		err := w.Send(context.Background(), mixed())
+		wantNoSecret(t, err, "404", pathToken, "a%2Fb-escaped-part", queryToken, headerToken)
+	}
+}
+
+// Secrets are removed before the excerpt is cut, so the cut cannot leave the
+// start of one behind.
+func TestCutDoesNotLeaveAPartOfASecret(t *testing.T) {
+	const token = "very-secret-token-0123456789"
+	for offset := maxErrorBody - len(token); offset <= maxErrorBody; offset++ {
+		server := newAnswer(t, strings.Repeat("x", offset)+token)
+		err := (&Telegram{APIURL: server.URL, Token: token, ChatID: "1", Client: NewHTTPClient()}).Send(context.Background(), mixed())
+		wantNoSecret(t, err, "404", token[:len(token)/2])
+	}
+}
+
+// A target is shown by its name only, also when it cannot be reached.
+func TestDialErrorDoesNotShowTheHost(t *testing.T) {
+	w := &Webhook{URL: "https://relay.invalid/hook", Client: NewHTTPClient()}
+	wantNoSecret(t, w.Send(context.Background(), mixed()), "webhook", "relay.invalid")
+}
+
+// Teams counts the whole card, and every line costs a block of its own.
+func TestTeamsMessageFitsTheLimit(t *testing.T) {
+	for _, count := range []int{10, 150, 400, 5000} {
+		var alerts []Alert
+		for i := range count {
+			a := mixed().New[0]
+			a.Key = fmt.Sprintf("key-%d", i)
+			alerts = append(alerts, a)
+		}
+		server, got := newTarget(t, http.StatusAccepted)
+		n := Notification{New: alerts, BaseURL: "https://smokealarm.example.org"}
+		if err := (&Teams{WebhookURL: server.URL, Client: NewHTTPClient()}).Send(context.Background(), n); err != nil {
+			t.Fatalf("Send: %v", err)
+		}
+		if len(got.body) > teamsMaxMessage {
+			t.Errorf("%d alerts: message of %d bytes, want at most %d", count, len(got.body), teamsMaxMessage)
+		}
+		if count >= 400 && !bytes.Contains(got.body, []byte("more, see https://smokealarm.example.org")) {
+			t.Errorf("%d alerts: the message does not say that it was cut", count)
+		}
 	}
 }

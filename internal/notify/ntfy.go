@@ -29,8 +29,8 @@ type Ntfy struct {
 // Name identifies the target.
 func (t *Ntfy) Name() string { return "ntfy" }
 
-// Description shows the server, but not the topic.
-func (t *Ntfy) Description() string { return "ntfy (" + hostOf(t.Server) + ")" }
+// Description shows neither the server nor the topic.
+func (t *Ntfy) Description() string { return "ntfy" }
 
 // Send publishes the short text, with the subject as its title.
 func (t *Ntfy) Send(ctx context.Context, n Notification) error {

@@ -20,7 +20,7 @@ type Notifier interface {
 	// and differ between targets ("mail", "slack", "telegram:-1001234").
 	Name() string
 	// Description is how the target is shown on the status page and in the
-	// log, without secrets, e.g. "ntfy (ntfy.example.org)".
+	// log, without secrets, e.g. "telegram (chat -1001234)".
 	Description() string
 	Send(ctx context.Context, n Notification) error
 }

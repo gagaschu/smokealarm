@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -27,8 +28,8 @@ type Webhook struct {
 // Name identifies the target.
 func (w *Webhook) Name() string { return "webhook" }
 
-// Description shows only the host of the URL.
-func (w *Webhook) Description() string { return "webhook (" + hostOf(w.URL) + ")" }
+// Description shows nothing of the URL, which may contain a secret.
+func (w *Webhook) Description() string { return "webhook" }
 
 // Send posts the notification.
 func (w *Webhook) Send(ctx context.Context, n Notification) error {
@@ -41,12 +42,22 @@ func (w *Webhook) Send(ctx context.Context, n Notification) error {
 		url:         w.URL,
 		contentType: "application/json",
 		body:        body,
-		secrets:     []string{w.HeaderValue},
+		secrets:     headerSecrets(w.HeaderValue),
 	}
 	if w.HeaderName != "" {
 		r.headers = map[string]string{w.HeaderName: w.HeaderValue}
 	}
 	return post(ctx, w.Client, r)
+}
+
+// headerSecrets returns the header value and, for "Bearer <token>", the part
+// after the scheme: a server may quote just the token.
+func headerSecrets(value string) []string {
+	secrets := []string{value}
+	if _, credentials, found := strings.Cut(value, " "); found {
+		secrets = append(secrets, strings.TrimSpace(credentials))
+	}
+	return secrets
 }
 
 type webhookPayload struct {

@@ -156,7 +156,7 @@ Every target that is set up gets every notification. You can use any combination
 
 Each target remembers on its own what it has been told. If one is down (say Telegram for an hour), only that one is tried again on the next runs, also after a restart, and the others get nothing twice. It also has its own reminder clock, which runs from its own last message. A target you add later starts from the current state: it doesn't get the history, only what comes next and what is still waiting for its first message. A target you remove is forgotten; if you add it back, it starts from the current state again.
 
-The chat targets (ntfy, Telegram, Slack, Teams) get a short message: the mail subject as the headline, then one line per problem with object, reason and since when, and the link to the web UI (`SMOKEALARM_BASE_URL`). If there are more problems than fit into one message, the last line says `… and 12 more, see <link>`. The limits are 4096 bytes for ntfy and Telegram, 3000 characters for Slack and 20,000 for Teams. A message looks like this:
+The chat targets (ntfy, Telegram, Slack, Teams) get a short message: the mail subject as the headline, then one line per problem with object, reason and since when, and the link to the web UI (`SMOKEALARM_BASE_URL`). If there are more problems than fit into one message, the last line says `… and 12 more, see <link>`. The limits are 4096 bytes for ntfy and Telegram, 3000 characters for Slack and about 26 KB for the whole Teams card. A message looks like this:
 
 ```
 [smokealarm] 2 new problems, 1 resolved
@@ -170,7 +170,7 @@ Resolved:
 https://smokealarm.example.com
 ```
 
-Tokens and webhook URLs are secrets: whoever has one can post to your channel. The Helm chart stores them in its Secret (or reads them from `existingSecret`), never as plain values in the Deployment. They never appear in the log, in error messages or on the status page; the status page only shows the name of the target, such as `slack`, `telegram (chat -1001234567890)` or `ntfy (ntfy.sh)`.
+Tokens and webhook URLs are secrets: whoever has one can post to your channel. The Helm chart stores them in its Secret (or reads them from `existingSecret`), never as plain values in the Deployment. They never appear in the log, in error messages or on the status page; the status page only shows the name of the target, such as `slack`, `webhook`, `ntfy` or `telegram (chat -1001234567890)`.
 
 All URLs must use `https`. Plain `http` is accepted for `localhost`, and for the webhook and the ntfy server also with `SMOKEALARM_NOTIFY_ALLOW_HTTP=true` (chart: `notifications.allowHttp`), for a relay inside the cluster. smokealarm does not follow redirects: a webhook that answers with one is reported as an error. The pod needs outgoing HTTPS to the services you use; `HTTPS_PROXY` is honored.
 

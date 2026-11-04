@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 )
@@ -19,6 +20,16 @@ const httpTimeout = 15 * time.Second
 
 // maxErrorBody is how much of a response body goes into an error message.
 const maxErrorBody = 200
+
+// maxErrorRead is how much of a response body is read for that excerpt. It is
+// far more than the excerpt, because secrets are removed before the cut: a
+// secret that the cut went through would no longer be recognized.
+const maxErrorRead = 64 << 10
+
+// minSecretPart is the shortest part of a URL path or query that counts as a
+// possible secret. Shorter ones are words like "api" or "v1", and replacing
+// those would make an error unreadable; a token is longer.
+const minSecretPart = 8
 
 // NewHTTPClient returns the client that all HTTP targets share. main creates
 // it once. It does not follow redirects: a webhook that answers with one is
@@ -49,6 +60,8 @@ type request struct {
 // Telegram token, a webhook URL), so the URL is taken out before wrapping.
 func post(ctx context.Context, client *http.Client, r request) error {
 	r.secrets = append(r.secrets, urlSecrets(r.url)...)
+	// Longest first: a short secret inside a longer one must not break it up.
+	slices.SortFunc(r.secrets, func(a, b string) int { return len(b) - len(a) })
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.url, bytes.NewReader(r.body))
 	if err != nil {
 		return fmt.Errorf("%s: create request: %w", r.target, withoutURL(err, r.secrets))
@@ -66,8 +79,9 @@ func post(ctx context.Context, client *http.Client, r request) error {
 	defer func() { _ = resp.Body.Close() }() // nothing useful can be done with a close error
 
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		excerpt, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody)) // a read error leaves the excerpt short
-		return fmt.Errorf("%s: answered %s: %s", r.target, resp.Status, redact(strings.TrimSpace(string(excerpt)), r.secrets))
+		answer, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorRead)) // a read error leaves the answer short
+		excerpt := cutText(redact(strings.TrimSpace(string(answer)), r.secrets), maxErrorBody)
+		return fmt.Errorf("%s: answered %s: %s", r.target, resp.Status, excerpt)
 	}
 	// Read the rest, so the connection can be reused.
 	_, _ = io.Copy(io.Discard, resp.Body)
@@ -99,29 +113,37 @@ func redact(s string, secrets []string) string {
 	return s
 }
 
-// urlSecrets returns the parts of a URL that may be secret: the whole URL, and
-// its path and query, because a server may repeat them in its answer.
+// urlSecrets returns the parts of a URL that may be secret, because a server or
+// net/http may repeat them: the whole URL, its host (a target is shown by its
+// name only), a password, the path and the query, and also every single path
+// segment and query value, as a server may quote just the token.
 func urlSecrets(rawURL string) []string {
 	secrets := []string{rawURL}
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return secrets
 	}
-	if u.Path != "" && u.Path != "/" {
-		secrets = append(secrets, u.Path)
+	secrets = append(secrets, u.Hostname())
+	if password, set := u.User.Password(); set {
+		secrets = append(secrets, password)
 	}
-	if u.RawQuery != "" {
-		secrets = append(secrets, u.RawQuery)
+	if u.Path != "/" {
+		secrets = append(secrets, u.Path, u.EscapedPath())
+	}
+	secrets = append(secrets, u.RawQuery)
+
+	isSlash := func(r rune) bool { return r == '/' }
+	isQuerySeparator := func(r rune) bool { return r == '&' || r == '=' }
+	parts := strings.FieldsFunc(u.Path, isSlash)
+	parts = append(parts, strings.FieldsFunc(u.EscapedPath(), isSlash)...)
+	parts = append(parts, strings.FieldsFunc(u.RawQuery, isQuerySeparator)...)
+	for _, values := range u.Query() {
+		parts = append(parts, values...)
+	}
+	for _, part := range parts {
+		if len(part) >= minSecretPart {
+			secrets = append(secrets, part)
+		}
 	}
 	return secrets
-}
-
-// hostOf returns the host of a URL for descriptions, or "" if it does not
-// parse. The host is not a secret; the path and the query may be.
-func hostOf(rawURL string) string {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return ""
-	}
-	return u.Host
 }
