@@ -72,7 +72,8 @@ type problemView struct {
 	CanAcknowledge bool   // critical and not acknowledged yet
 	AcknowledgedAt string // exact time, empty if not acknowledged
 	DowntimeUntil  string // end of the running downtime, empty if there is none
-	Targets        string // "slack, mail" from the targets annotation, empty for every target
+	NotifiesOnly   string // "slack, mail" if not every target hears about it
+	NotifiesNobody bool   // no target hears about it (a warning for critical-only targets)
 }
 
 type historyView struct {
@@ -83,8 +84,9 @@ type historyView struct {
 	Message       string
 	ResolvedAt    string
 	Lasted        string
-	DowntimeUntil string // end of the running downtime, empty if there is none
-	Targets       string // as in problemView
+	DowntimeUntil  string // end of the running downtime, empty if there is none
+	NotifiesOnly   string // as in problemView
+	NotifiesNobody bool
 }
 
 type statusView struct {
@@ -211,6 +213,7 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 	data := page{Title: "Overview", Active: "overview", ShowNav: true, Refresh: true}
 	for _, rec := range firing {
 		view := newProblemView(rec, now)
+		view.NotifiesOnly, view.NotifiesNobody = s.audience(rec)
 		view.DowntimeUntil = downtimeEnds[rec.Key]
 		data.Problems = append(data.Problems, view)
 		if rec.Severity == checks.Critical {
@@ -232,6 +235,22 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 	s.render(w, http.StatusOK, "overview", data)
 }
 
+// audience returns what the pages say about who hears about a problem: nothing
+// if every target does, otherwise the targets that do, or that nobody does.
+func (s *Server) audience(rec store.Record) (only string, nobody bool) {
+	if s.Audience == nil {
+		return "", false
+	}
+	targets, all := s.Audience(rec)
+	switch {
+	case all:
+		return "", false
+	case len(targets) == 0:
+		return "", true
+	}
+	return strings.Join(targets, ", "), false
+}
+
 // newProblemView prepares one firing problem for the overview.
 func newProblemView(rec store.Record, now time.Time) problemView {
 	view := problemView{
@@ -243,7 +262,6 @@ func newProblemView(rec store.Record, now time.Time) problemView {
 		Since:          rec.FirstSeen.UTC().Format(timeFormat),
 		Age:            formatAge(now.Sub(rec.FirstSeen)),
 		CanAcknowledge: rec.Severity == checks.Critical && rec.AcknowledgedAt == nil,
-		Targets:        strings.Join(rec.Targets, ", "),
 	}
 	if rec.AcknowledgedAt != nil {
 		view.AcknowledgedAt = rec.AcknowledgedAt.UTC().Format(timeFormat)
@@ -340,8 +358,8 @@ func (s *Server) history(w http.ResponseWriter, r *http.Request) {
 			Reason:        rec.Reason,
 			Message:       rec.Message,
 			DowntimeUntil: downtimeEnds[rec.Key],
-			Targets:       strings.Join(rec.Targets, ", "),
 		}
+		view.NotifiesOnly, view.NotifiesNobody = s.audience(rec)
 		if rec.ResolvedAt != nil {
 			view.ResolvedAt = rec.ResolvedAt.UTC().Format(historyTimeFormat)
 			view.Lasted = formatAge(rec.ResolvedAt.Sub(rec.FirstSeen))

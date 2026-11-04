@@ -31,6 +31,7 @@ type testEnv struct {
 	t       *testing.T
 	store   *store.Store
 	handler http.Handler
+	server  *Server // for fields a test sets after the start, such as Audience
 	status  engine.Status
 	ready   error
 }
@@ -61,6 +62,7 @@ func newTestEnv(t *testing.T) *testEnv {
 		Now:      now,
 		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
+	e.server = server
 	e.handler, err = server.Handler()
 	if err != nil {
 		t.Fatalf("Handler: %v", err)

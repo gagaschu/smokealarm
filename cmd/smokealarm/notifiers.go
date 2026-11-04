@@ -71,12 +71,12 @@ func minSeverities(notifiers []notify.Notifier, criticalOnly []string) map[strin
 // syncTargets tells the store which targets are configured, so a new one does
 // not get the history, and logs them without secrets.
 func syncTargets(ctx context.Context, logger *slog.Logger, db *store.Store, notifiers []notify.Notifier,
-	criticalOnly []string) error {
+	minSeverity map[string]checks.Severity) error {
 	var names []string
 	for _, n := range notifiers {
 		names = append(names, n.Name())
 		hears := "everything"
-		if slices.Contains(criticalOnly, notify.Kind(n.Name())) {
+		if minSeverity[n.Name()] == checks.Critical {
 			hears = "critical problems only"
 		}
 		logger.Info("notification target", "target", n.Description(), "hears", hears)

@@ -11,27 +11,63 @@ import (
 	"github.com/gagaschu/smokealarm/internal/store"
 )
 
-func TestOverviewAndHistoryShowTheTargetsAnnotation(t *testing.T) {
+// fakeAudience stands in for engine.Engine.Audience: problems with "only" in
+// the key reach slack, "nobody" none, the rest every target.
+func fakeAudience(rec store.Record) ([]string, bool) {
+	switch {
+	case strings.Contains(rec.Key, "only"):
+		return []string{"slack", "mail (smtp.example.com)"}, false
+	case strings.Contains(rec.Key, "nobody"):
+		return nil, false
+	}
+	return []string{"slack", "mail (smtp.example.com)", "ntfy"}, true
+}
+
+func TestOverviewShowsWhoIsNotified(t *testing.T) {
 	e := newTestEnv(t)
+	e.server.Audience = fakeAudience
 	e.status.LastRun = testNow
-	routed := problem("routed", "media", checks.Critical, store.StateFiring, testNow.Add(-time.Hour), "broken")
-	routed.Targets = []string{"mail", "slack"}
-	everywhere := problem("everywhere", "media", checks.Critical, store.StateFiring, testNow.Add(-time.Hour), "broken")
-	gone := resolvedProblem("gone", "media", testNow.Add(-2*time.Hour), testNow.Add(-time.Hour))
-	gone.Targets = []string{"ntfy"}
-	e.insert(routed, everywhere, gone)
+	e.insert(
+		problem("only-some", "media", checks.Critical, store.StateFiring, testNow.Add(-time.Hour), "broken"),
+		problem("nobody", "media", checks.Warning, store.StateFiring, testNow.Add(-time.Hour), "broken"),
+		problem("everywhere", "media", checks.Critical, store.StateFiring, testNow.Add(-time.Hour), "broken"),
+	)
 
-	overview := e.do(http.MethodGet, "/", nil, e.login()).Body.String()
-	if got := strings.Count(overview, "Notifies only:"); got != 1 {
-		t.Errorf("overview shows %d target lines, want 1:\n%s", got, overview)
+	body := e.do(http.MethodGet, "/", nil, e.login()).Body.String()
+	if got := strings.Count(body, "Notifies only: slack, mail (smtp.example.com)"); got != 1 {
+		t.Errorf("overview shows the target line %d times, want once:\n%s", got, body)
 	}
-	if !strings.Contains(overview, "Notifies only: mail, slack") {
-		t.Errorf("overview does not name the targets:\n%s", overview)
+	if got := strings.Count(body, "Notifies nobody"); got != 1 {
+		t.Errorf("overview shows \"Notifies nobody\" %d times, want once:\n%s", got, body)
 	}
+}
 
-	history := e.do(http.MethodGet, "/history", nil, e.login()).Body.String()
-	if !strings.Contains(history, "only ntfy") {
-		t.Errorf("history does not name the targets:\n%s", history)
+func TestHistoryShowsWhoIsNotified(t *testing.T) {
+	e := newTestEnv(t)
+	e.server.Audience = fakeAudience
+	e.insert(
+		resolvedProblem("only-some", "media", testNow.Add(-2*time.Hour), testNow.Add(-time.Hour)),
+		resolvedProblem("nobody", "media", testNow.Add(-2*time.Hour), testNow.Add(-time.Hour)),
+		resolvedProblem("everywhere", "media", testNow.Add(-2*time.Hour), testNow.Add(-time.Hour)),
+	)
+
+	body := e.do(http.MethodGet, "/history", nil, e.login()).Body.String()
+	if got := strings.Count(body, "only slack, mail (smtp.example.com)"); got != 1 {
+		t.Errorf("history shows the target line %d times, want once:\n%s", got, body)
+	}
+	if got := strings.Count(body, "nobody notified"); got != 1 {
+		t.Errorf("history shows \"nobody notified\" %d times, want once:\n%s", got, body)
+	}
+}
+
+func TestPagesSayNothingWithoutAudience(t *testing.T) {
+	e := newTestEnv(t) // Audience is nil
+	e.status.LastRun = testNow
+	e.insert(problem("only-some", "media", checks.Critical, store.StateFiring, testNow.Add(-time.Hour), "broken"))
+
+	body := e.do(http.MethodGet, "/", nil, e.login()).Body.String()
+	if strings.Contains(body, "Notifies") {
+		t.Errorf("overview talks about targets without knowing them:\n%s", body)
 	}
 }
 

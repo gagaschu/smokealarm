@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gagaschu/smokealarm/internal/checks"
+	"github.com/gagaschu/smokealarm/internal/store"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -275,5 +276,31 @@ func TestAnnotationWarningNamesTheSourceOnce(t *testing.T) {
 	}
 	if !strings.Contains(logs, "Namespace media") || strings.Contains(logs, "Pod media/a: ") {
 		t.Errorf("want the namespace as the source, not the pod:\n%s", logs)
+	}
+}
+
+// Review finding 4: the web UI shows who really hears about a problem.
+func TestAudienceIsWhatTheSendingDoes(t *testing.T) {
+	h, _ := twoTargets(t)
+	h.engine.MinSeverity = map[string]checks.Severity{"second": checks.Critical}
+	tests := []struct {
+		name    string
+		finding checks.Finding
+		want    string
+		wantAll bool
+	}{
+		{"critical, no annotation", finding("a", checks.Critical), "fake (test),second (test)", true},
+		{"warning, critical-only target left out", finding("a", checks.Warning), "fake (test)", false},
+		{"annotation", withTargets(finding("a", checks.Critical), "second"), "second (test)", false},
+		{"warning for a critical-only target", withTargets(finding("a", checks.Warning), "second"), "", false},
+		{"typo goes everywhere", withTargets(finding("a", checks.Critical), "slak"), "fake (test),second (test)", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			targets, all := h.engine.Audience(store.Record{Finding: tt.finding})
+			if strings.Join(targets, ",") != tt.want || all != tt.wantAll {
+				t.Errorf("Audience = %v, %v, want %q, %v", targets, all, tt.want, tt.wantAll)
+			}
+		})
 	}
 }

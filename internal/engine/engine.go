@@ -493,7 +493,7 @@ func (e *Engine) notifyTarget(ctx context.Context, target notify.Notifier, unkno
 		return fmt.Errorf("load findings due for a reminder via %s: %w", name, err)
 	}
 
-	r := e.buildReport(records, due, silenced, func(rec store.Record) bool { return e.routedTo(target, rec) })
+	r := e.buildReport(records, due, silenced, target)
 	n := r.notification
 	if err := e.Store.MarkResolvedNotified(ctx, name, r.silentIDs, now); err != nil {
 		return fmt.Errorf("mark silently resolved findings for %s: %w", name, err)
@@ -528,12 +528,12 @@ type report struct {
 	silentIDs    []int64 // over without a mail
 }
 
-// buildReport sorts the unreported records and the due reminders into a report.
-// routed says whether the target is meant to hear about a problem; a firing
-// problem it is not meant for gets no marker, so the target hears about it as
-// new once that changes (it gets worse, or the annotation changes).
+// buildReport sorts the unreported records and the due reminders for one
+// target into a report. A firing problem the target is not meant for gets no
+// marker, so the target hears about it as new once that changes (it gets
+// worse, or the annotation changes).
 func (e *Engine) buildReport(records, due []store.Record, silenced map[string]bool,
-	routed func(store.Record) bool) report {
+	target notify.Notifier) report {
 	r := report{notification: notify.Notification{BaseURL: e.BaseURL}}
 	n := &r.notification
 	for _, rec := range records {
@@ -545,12 +545,12 @@ func (e *Engine) buildReport(records, due []store.Record, silenced map[string]bo
 			// It went away during the downtime, so nothing is sent, not even
 			// after it ends. The downtime also wins over an acknowledgement.
 			r.silentIDs = append(r.silentIDs, rec.ID)
-		case firing && !routed(rec):
+		case firing && !e.routedTo(target, rec):
 			// Not for this target (yet).
 		case firing:
 			n.New = append(n.New, alertFor(rec))
 			r.firingIDs = append(r.firingIDs, rec.ID)
-		case rec.FiringNotifiedAt == nil && (rec.AcknowledgedAt == nil || !routed(rec)):
+		case rec.FiringNotifiedAt == nil && (rec.AcknowledgedAt == nil || !e.routedTo(target, rec)):
 			// It was fixed before this target heard about it. Telling the
 			// reader it is resolved would be confusing. After an
 			// acknowledgement somebody did hear about it, so that case
@@ -650,6 +650,21 @@ func (e *Engine) routedTo(target notify.Notifier, rec store.Record) bool {
 		return false
 	}
 	return e.listedTarget(rec.Targets, target)
+}
+
+// Audience says who hears about a problem, for the web UI: the descriptions of
+// the targets it is meant for, and whether that is every target. It uses the
+// same rule as the sending, so a typo in an annotation (which goes to every
+// target) or a warning for critical-only targets shows what really happens.
+// The web server calls it; it reads only fields that do not change after the
+// start.
+func (e *Engine) Audience(rec store.Record) (targets []string, all bool) {
+	for _, n := range e.Notifiers {
+		if e.routedTo(n, rec) {
+			targets = append(targets, n.Description())
+		}
+	}
+	return targets, len(targets) == len(e.Notifiers)
 }
 
 // routedNamesNow returns the targets the open problem with this key is meant for
