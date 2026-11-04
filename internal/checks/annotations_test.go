@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -72,6 +73,88 @@ func TestApplyAnnotations(t *testing.T) {
 				t.Errorf("key changed from %q to %q", in.Key, got.Key)
 			}
 		})
+	}
+}
+
+// Review finding 7/8: every kind a check reports on must find the annotations
+// of its object, otherwise only the namespace would count.
+func TestApplyAnnotationsCoversEveryKind(t *testing.T) {
+	annotated := func(name string) metav1.ObjectMeta {
+		return metav1.ObjectMeta{Namespace: "ns", Name: name, Annotations: map[string]string{TargetsAnnotation: "slack"}}
+	}
+	node := annotated("node")
+	node.Namespace = ""
+	snap := &Snapshot{
+		Pods:         []*corev1.Pod{{ObjectMeta: annotated("x")}},
+		Deployments:  []*appsv1.Deployment{{ObjectMeta: annotated("x")}},
+		StatefulSets: []*appsv1.StatefulSet{{ObjectMeta: annotated("x")}},
+		DaemonSets:   []*appsv1.DaemonSet{{ObjectMeta: annotated("x")}},
+		Nodes:        []*corev1.Node{{ObjectMeta: node}},
+		Jobs:         []*batchv1.Job{{ObjectMeta: annotated("x")}},
+		CronJobs:     []*batchv1.CronJob{{ObjectMeta: annotated("x")}},
+		PVCs:         []*corev1.PersistentVolumeClaim{{ObjectMeta: annotated("x")}},
+		Certificates: []Certificate{{Meta: annotated("x")}},
+		Applications: []Application{{Meta: annotated("x")}},
+	}
+	kinds := []string{KindPod, KindDeployment, KindStatefulSet, KindDaemonSet, KindNode, KindJob, KindCronJob,
+		KindPVC, KindCertificate, KindApplication}
+	for _, kind := range kinds {
+		ref := ObjectRef{Kind: kind, Namespace: "ns", Name: "x"}
+		if kind == KindNode {
+			ref = ObjectRef{Kind: kind, Name: "node"}
+		}
+		out, _ := ApplyAnnotations(snap, []Finding{newFinding("test", Warning, ref, "A", "message")})
+		if !slices.Equal(out[0].Targets, []string{"slack"}) || out[0].TargetsFrom != ref.Label() {
+			t.Errorf("%s: targets = %v from %q, want [slack] from %q", kind, out[0].Targets, out[0].TargetsFrom, ref.Label())
+		}
+	}
+}
+
+// Review finding 6: like the ignore annotation, the job template counts for a
+// CronJob; the CronJob's own annotation wins.
+func TestApplyAnnotationsReadsTheJobTemplateOfACronJob(t *testing.T) {
+	cronJob := func(name string, own, template map[string]string) *batchv1.CronJob {
+		cj := &batchv1.CronJob{ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: name, Annotations: own}}
+		cj.Spec.JobTemplate.Annotations = template
+		return cj
+	}
+	snap := &Snapshot{CronJobs: []*batchv1.CronJob{
+		cronJob("template", nil, map[string]string{TargetsAnnotation: "mail", SeverityAnnotation: "critical"}),
+		cronJob("both", map[string]string{TargetsAnnotation: "slack"}, map[string]string{TargetsAnnotation: "mail"}),
+	}}
+	out, _ := ApplyAnnotations(snap, []Finding{
+		newFinding("job-failed", Warning, ObjectRef{KindCronJob, "ns", "template"}, "LastJobFailed", "failed"),
+		newFinding("job-failed", Warning, ObjectRef{KindCronJob, "ns", "both"}, "LastJobFailed", "failed"),
+	})
+	if !slices.Equal(out[0].Targets, []string{"mail"}) || out[0].Severity != Critical {
+		t.Errorf("template: %+v, want mail and critical", out[0])
+	}
+	if !slices.Equal(out[1].Targets, []string{"slack"}) {
+		t.Errorf("both: targets = %v, want the CronJob's own [slack]", out[1].Targets)
+	}
+}
+
+func TestApplyAnnotationsNamesTheNamespaceAsTheSource(t *testing.T) {
+	snap := &Snapshot{Namespaces: []*corev1.Namespace{{ObjectMeta: metav1.ObjectMeta{Name: "media",
+		Annotations: map[string]string{SeverityAnnotation: "loud", TargetsAnnotation: "slack"}}}}}
+	out, problems := ApplyAnnotations(snap, []Finding{
+		newFinding("test", Critical, ObjectRef{KindPod, "media", "a"}, "A", "message"),
+		newFinding("test", Critical, ObjectRef{KindPod, "media", "b"}, "A", "message"),
+	})
+	if out[0].TargetsFrom != "Namespace media" {
+		t.Errorf("TargetsFrom = %q, want Namespace media", out[0].TargetsFrom)
+	}
+	for _, p := range problems {
+		if !strings.HasPrefix(p, "Namespace media: ") {
+			t.Errorf("problem %q does not name the namespace", p)
+		}
+	}
+}
+
+func TestApplyAnnotationsWithoutFindings(t *testing.T) {
+	out, problems := ApplyAnnotations(&Snapshot{}, nil)
+	if out != nil || problems != nil {
+		t.Errorf("got %v, %v, want nothing", out, problems)
 	}
 }
 

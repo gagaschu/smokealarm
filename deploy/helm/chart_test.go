@@ -802,6 +802,7 @@ notifications:
   webhook:
     url: https://relay.example.org/hook
     header: "Authorization: Bearer webhook-token"
+    minSeverity: warning
   ntfy:
     server: https://ntfy.example.org
     topic: smokealarm-alerts
@@ -813,6 +814,7 @@ notifications:
     minSeverity: warning
   slack:
     webhookUrl: https://hooks.slack.com/services/T0/B0/slack-secret
+    minSeverity: critical
   teams:
     webhookUrl: https://example.logic.azure.com/workflows/teams-secret
     minSeverity: critical
@@ -863,6 +865,8 @@ func TestEverySettingBecomesAnEnvironmentVariable(t *testing.T) {
 		"SMOKEALARM_NTFY_MIN_SEVERITY":        "critical",
 		"SMOKEALARM_TELEGRAM_MIN_SEVERITY":    "warning",
 		"SMOKEALARM_TEAMS_MIN_SEVERITY":       "critical",
+		"SMOKEALARM_WEBHOOK_MIN_SEVERITY":     "warning",
+		"SMOKEALARM_SLACK_MIN_SEVERITY":       "critical",
 	}
 	for name, value := range want {
 		if got[name] != value {
@@ -897,7 +901,7 @@ func TestRenderedEnvironmentIsAValidConfig(t *testing.T) {
 				cfg.PodPendingAfter != 7*time.Minute || cfg.RestartThreshold != 10 || cfg.CookieSecure ||
 				!cfg.SMTP.Enabled() || len(cfg.SMTP.To) != 2 || len(cfg.IgnoreNamespaces) != 2 ||
 				cfg.Notify.WebhookHeaderName != "Authorization" || len(cfg.Notify.TelegramChatIDs) != 2 || !cfg.Notify.AllowHTTP ||
-				!slices.Equal(cfg.CriticalOnly, []string{"mail", "ntfy", "teams"}) {
+				!slices.Equal(cfg.CriticalOnly, []string{"mail", "ntfy", "slack", "teams"}) {
 				t.Errorf("config = %+v, not what the values say", cfg)
 			}
 		})
