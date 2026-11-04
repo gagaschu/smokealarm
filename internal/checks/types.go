@@ -53,6 +53,12 @@ type Finding struct {
 	Object   ObjectRef
 	Reason   string // short and stable, e.g. "CrashLoopBackOff"
 	Message  string // human readable details, may change between runs
+
+	// Targets limits the notification targets ("mail", "ntfy", ...) that
+	// hear about this problem, from the targets annotation (see
+	// ApplyAnnotations). Empty means every target. It is not part of the
+	// key: changing the annotation does not turn it into a new problem.
+	Targets []string
 }
 
 // Snapshot is a read-only copy of the cluster objects the checks need.
