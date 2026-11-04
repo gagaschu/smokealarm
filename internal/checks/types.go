@@ -78,6 +78,10 @@ type Finding struct {
 	// TargetsFrom names where the targets annotation was found ("Namespace
 	// media"), for log messages. It is not stored.
 	TargetsFrom string
+	// CausedBy is the name of a node that is down, if this problem is a
+	// consequence of it (see ApplyNodeCauses). The engine holds such a
+	// problem back while the node is down. It is not part of the key.
+	CausedBy string
 }
 
 // Snapshot is a read-only copy of the cluster objects the checks need.
@@ -169,7 +173,7 @@ func All() []Check {
 		{Name: checkPodRestarts, Run: PodRestarts},
 		{Name: checkPodPending, Run: PodPending},
 		{Name: checkWorkloadReplicas, Run: WorkloadReplicas},
-		{Name: checkNodeNotReady, Run: NodeNotReady},
+		{Name: CheckNodeNotReady, Run: NodeNotReady},
 		{Name: checkNodePressure, Run: NodePressure},
 		{Name: checkJobFailed, Run: JobFailed},
 		{Name: checkCronJobMissed, Run: CronJobMissed},

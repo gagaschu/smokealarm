@@ -7,10 +7,12 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
-const (
-	checkNodeNotReady = "node-not-ready"
-	checkNodePressure = "node-pressure"
-)
+// CheckNodeNotReady is the name of the NotReady check. It is exported because
+// a down node is special beyond the check: it holds back the problems it
+// causes (see ApplyNodeCauses), and notifications and the web UI list it first.
+const CheckNodeNotReady = "node-not-ready"
+
+const checkNodePressure = "node-pressure"
 
 // NodeNotReady reports nodes whose Ready condition is False or Unknown
 // (Unknown means the node stopped reporting). Pods on the node are not
@@ -24,16 +26,16 @@ func NodeNotReady(snap *Snapshot, opts Options) []Finding {
 		if isIgnored(snap, opts, node.ObjectMeta) {
 			continue
 		}
-		cond := nodeCondition(node, corev1.NodeReady)
-		if cond == nil || cond.Status == corev1.ConditionTrue {
+		if !nodeDown(node) {
 			continue
 		}
+		cond := nodeCondition(node, corev1.NodeReady)
 		msg := fmt.Sprintf("node is not ready for %s (status %s)",
 			snap.Now.Sub(cond.LastTransitionTime.Time).Round(time.Second), cond.Status)
 		if cond.Message != "" {
 			msg += ": " + cond.Message
 		}
-		findings = append(findings, newFinding(checkNodeNotReady, Critical, nodeRef(node), "NotReady", msg))
+		findings = append(findings, newFinding(CheckNodeNotReady, Critical, nodeRef(node), "NotReady", msg))
 	}
 	return findings
 }
@@ -67,6 +69,14 @@ func NodePressure(snap *Snapshot, opts Options) []Finding {
 		}
 	}
 	return findings
+}
+
+// nodeDown says whether the node is not ready: its Ready condition is False or
+// Unknown. A node without a Ready condition has just registered and is not
+// counted as down.
+func nodeDown(node *corev1.Node) bool {
+	cond := nodeCondition(node, corev1.NodeReady)
+	return cond != nil && cond.Status != corev1.ConditionTrue
 }
 
 // nodeCondition returns the condition of the given type, or nil.
