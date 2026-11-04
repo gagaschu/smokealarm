@@ -52,6 +52,12 @@ type Engine struct {
 	// the message to the others again. There must be at least one (main uses
 	// notify.Log when nothing is configured).
 	Notifiers []notify.Notifier
+	// MinSeverity is the lowest severity a target hears about, by
+	// Notifier.Name. A target that is missing hears about everything; with
+	// checks.Critical it hears only about critical problems. It applies to new
+	// problems and reminders; the end of a problem goes to every target that
+	// heard about its start.
+	MinSeverity map[string]checks.Severity
 	// BaseURL is the link to the web UI that notifications point to. It may
 	// be empty.
 	BaseURL string
@@ -68,6 +74,9 @@ type Engine struct {
 	// previousSkipped is what was skipped in the last run, to log only when
 	// that changes. Only RunOnce touches it.
 	previousSkipped map[string]string
+	// previousAnnotationWarnings are the annotation values that could not be
+	// used in the last run, to log each one only once. Only RunOnce touches it.
+	previousAnnotationWarnings map[string]bool
 }
 
 // SkippedCheck is a check that does not run, with the reason to show.
@@ -91,9 +100,12 @@ type CheckStatus struct {
 type TargetStatus struct {
 	Name        string // Notifier.Name
 	Description string // Notifier.Description, without secrets
-	LastSentAt  time.Time
-	LastError   string    // empty if the last send worked
-	LastErrorAt time.Time // zero if there is no error
+	// CriticalOnly says that the target hears only about critical problems
+	// (see Engine.MinSeverity).
+	CriticalOnly bool
+	LastSentAt   time.Time
+	LastError    string    // empty if the last send worked
+	LastErrorAt  time.Time // zero if there is no error
 }
 
 // Status is what the engine reports about itself, for the status page.
@@ -114,6 +126,7 @@ func (e *Engine) Status() Status {
 		target := e.targets[n.Name()]
 		target.Name = n.Name()
 		target.Description = n.Description()
+		target.CriticalOnly = e.MinSeverity[n.Name()] == checks.Critical
 		s.Targets = append(s.Targets, target)
 	}
 	return s
@@ -263,7 +276,8 @@ func (e *Engine) RunOnce(ctx context.Context) error {
 	start := e.Now()
 	snap := e.Snapshot(ctx, start)
 	runnable, skipped := e.splitSkipped(snap)
-	findings := runChecks(snap, e.Options, runnable)
+	findings, annotationProblems := runChecks(snap, e.Options, runnable)
+	e.warnAboutAnnotations(findings, annotationProblems)
 	for _, f := range findings {
 		e.Logger.Debug("finding",
 			"key", f.Key,
@@ -385,6 +399,7 @@ func (e *Engine) refresh(record store.Record, f checks.Finding, now time.Time) s
 	record.Severity = f.Severity
 	record.Reason = f.Reason
 	record.Message = f.Message
+	record.Targets = f.Targets // a changed annotation counts from now on
 	record.LastSeen = now
 
 	// A problem that gets worse is still the same problem, so it is not
@@ -459,12 +474,12 @@ func (e *Engine) notifyTarget(ctx context.Context, target notify.Notifier, unkno
 	if err != nil {
 		return fmt.Errorf("load findings not reported via %s: %w", name, err)
 	}
-	due, err := e.dueReminders(ctx, name, unknown, silenced, now)
+	due, err := e.dueReminders(ctx, target, unknown, silenced, now)
 	if err != nil {
 		return fmt.Errorf("load findings due for a reminder via %s: %w", name, err)
 	}
 
-	r := e.buildReport(records, due, silenced)
+	r := e.buildReport(records, due, silenced, func(rec store.Record) bool { return e.routedTo(target, rec) })
 	n := r.notification
 	if err := e.Store.MarkResolvedNotified(ctx, name, r.silentIDs, now); err != nil {
 		return fmt.Errorf("mark silently resolved findings for %s: %w", name, err)
@@ -500,7 +515,11 @@ type report struct {
 }
 
 // buildReport sorts the unreported records and the due reminders into a report.
-func (e *Engine) buildReport(records, due []store.Record, silenced map[string]bool) report {
+// routed says whether the target is meant to hear about a problem; a firing
+// problem it is not meant for gets no marker, so the target hears about it as
+// new once that changes (it gets worse, or the annotation changes).
+func (e *Engine) buildReport(records, due []store.Record, silenced map[string]bool,
+	routed func(store.Record) bool) report {
 	r := report{notification: notify.Notification{BaseURL: e.BaseURL}}
 	n := &r.notification
 	for _, rec := range records {
@@ -512,14 +531,19 @@ func (e *Engine) buildReport(records, due []store.Record, silenced map[string]bo
 			// It went away during the downtime, so nothing is sent, not even
 			// after it ends. The downtime also wins over an acknowledgement.
 			r.silentIDs = append(r.silentIDs, rec.ID)
+		case firing && !routed(rec):
+			// Not for this target (yet).
 		case firing:
 			n.New = append(n.New, alertFor(rec))
 			r.firingIDs = append(r.firingIDs, rec.ID)
-		case rec.FiringNotifiedAt == nil && rec.AcknowledgedAt == nil:
-			// It was fixed before anybody heard about it. Telling the
+		case rec.FiringNotifiedAt == nil && (rec.AcknowledgedAt == nil || !routed(rec)):
+			// It was fixed before this target heard about it. Telling the
 			// reader it is resolved would be confusing. After an
 			// acknowledgement somebody did hear about it, so that case
-			// gets its mail, even if the first mail never went out.
+			// gets its mail, even if the first mail never went out, but
+			// only at a target the problem is meant for. A target that heard
+			// the start always hears the end, even if the problem is no longer
+			// meant for it.
 			r.silentIDs = append(r.silentIDs, rec.ID)
 		default:
 			n.Resolved = append(n.Resolved, alertFor(rec))
@@ -539,18 +563,19 @@ func (e *Engine) buildReport(records, due []store.Record, silenced map[string]bo
 // dueReminders returns the critical problems whose last report to the target
 // is at least one repeat interval old. Problems of checks whose state is unknown are left
 // out, because a reminder would claim they still exist; they are reminded of
-// as soon as the check runs again. Problems in a downtime are left out too.
-func (e *Engine) dueReminders(ctx context.Context, target string, unknown []string,
+// as soon as the check runs again. Problems in a downtime are left out too, and
+// so are problems no longer meant for the target (the annotation changed).
+func (e *Engine) dueReminders(ctx context.Context, target notify.Notifier, unknown []string,
 	silenced map[string]bool, now time.Time) ([]store.Record, error) {
 	if e.CriticalRepeatInterval <= 0 {
 		return nil, nil
 	}
-	records, err := e.Store.CriticalDueForReminder(ctx, target, now.Add(-e.CriticalRepeatInterval))
+	records, err := e.Store.CriticalDueForReminder(ctx, target.Name(), now.Add(-e.CriticalRepeatInterval))
 	if err != nil {
 		return nil, err
 	}
 	return slices.DeleteFunc(records, func(r store.Record) bool {
-		return slices.Contains(unknown, r.Check) || silenced[r.Key]
+		return slices.Contains(unknown, r.Check) || silenced[r.Key] || !e.routedTo(target, r)
 	}), nil
 }
 
@@ -590,13 +615,70 @@ func (e *Engine) cleanup(ctx context.Context, now time.Time) error {
 	return nil
 }
 
-// runChecks runs every check and returns all findings sorted by key, so the
-// output order is stable between runs.
-func runChecks(snap *checks.Snapshot, opts checks.Options, list []checks.Check) []checks.Finding {
+// runChecks runs every check, applies the smokealarm annotations and returns
+// all findings sorted by key, so the output order is stable between runs. The
+// second result lists the annotation values that could not be used.
+func runChecks(snap *checks.Snapshot, opts checks.Options, list []checks.Check) ([]checks.Finding, []string) {
 	var findings []checks.Finding
 	for _, c := range list {
 		findings = append(findings, c.Run(snap, opts)...)
 	}
+	findings, problems := checks.ApplyAnnotations(snap, findings)
 	sort.Slice(findings, func(i, j int) bool { return findings[i].Key < findings[j].Key })
-	return findings
+	return findings, problems
+}
+
+// routedTo says whether the target is meant to hear about a problem: its
+// severity is high enough for the target, and the targets annotation, if any,
+// names the kind of the target.
+func (e *Engine) routedTo(target notify.Notifier, rec store.Record) bool {
+	if e.MinSeverity[target.Name()] == checks.Critical && rec.Severity != checks.Critical {
+		return false
+	}
+	return e.listedTarget(rec.Targets, target)
+}
+
+// listedTarget says whether the target is one of the listed kinds. A list that
+// names no configured target at all (a typo, a target that was removed) counts
+// as no list, so a mistake in an annotation never makes an alarm silent.
+func (e *Engine) listedTarget(listed []string, target notify.Notifier) bool {
+	if len(listed) == 0 || slices.Contains(listed, notify.Kind(target.Name())) {
+		return true
+	}
+	return !slices.ContainsFunc(listed, e.configuredKind)
+}
+
+// warnAboutAnnotations logs annotation values that cannot be used: an invalid
+// severity, and target names that are not configured. Each is logged once,
+// when it shows up, not in every run.
+func (e *Engine) warnAboutAnnotations(findings []checks.Finding, severityProblems []string) {
+	current := map[string]bool{}
+	for _, problem := range severityProblems {
+		current[problem] = true
+	}
+	for _, f := range findings {
+		for _, name := range f.Targets {
+			if e.configuredKind(name) {
+				continue
+			}
+			current[fmt.Sprintf("%s: %s lists %q, which is not a configured notification target",
+				f.Object.Label(), checks.TargetsAnnotation, name)] = true
+		}
+	}
+	for problem := range current {
+		if !e.previousAnnotationWarnings[problem] {
+			e.Logger.Warn("annotation ignored", "problem", problem)
+		}
+	}
+	e.previousAnnotationWarnings = current
+}
+
+// configuredKind says whether a target of this kind is configured.
+func (e *Engine) configuredKind(kind string) bool {
+	for _, n := range e.Notifiers {
+		if notify.Kind(n.Name()) == kind {
+			return true
+		}
+	}
+	return false
 }

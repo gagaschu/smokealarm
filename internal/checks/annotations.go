@@ -53,8 +53,8 @@ func ApplyAnnotations(snap *Snapshot, findings []Finding) ([]Finding, []string) 
 		// A list without names (" , ") counts as not set, like an empty value.
 		if targets := ParseTargets(own[TargetsAnnotation]); len(targets) > 0 {
 			f.Targets = targets
-		} else {
-			f.Targets = ParseTargets(inherited[TargetsAnnotation])
+		} else if targets := ParseTargets(inherited[TargetsAnnotation]); len(targets) > 0 {
+			f.Targets = targets
 		}
 		out = append(out, f)
 	}
