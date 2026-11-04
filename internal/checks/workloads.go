@@ -27,15 +27,15 @@ func WorkloadReplicas(snap *Snapshot, opts Options) []Finding {
 	}
 
 	for _, d := range snap.Deployments {
-		add("Deployment", d.ObjectMeta, desiredReplicas(d.Spec.Replicas), d.Status.AvailableReplicas)
+		add(KindDeployment, d.ObjectMeta, desiredReplicas(d.Spec.Replicas), d.Status.AvailableReplicas)
 	}
 	for _, s := range snap.StatefulSets {
-		add("StatefulSet", s.ObjectMeta, desiredReplicas(s.Spec.Replicas), s.Status.AvailableReplicas)
+		add(KindStatefulSet, s.ObjectMeta, desiredReplicas(s.Spec.Replicas), s.Status.AvailableReplicas)
 	}
 	for _, d := range snap.DaemonSets {
 		// A DaemonSet has no replica count; the controller computes how many
 		// nodes should run a pod.
-		add("DaemonSet", d.ObjectMeta, d.Status.DesiredNumberScheduled, d.Status.NumberAvailable)
+		add(KindDaemonSet, d.ObjectMeta, d.Status.DesiredNumberScheduled, d.Status.NumberAvailable)
 	}
 	return findings
 }

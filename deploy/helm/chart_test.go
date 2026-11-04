@@ -794,6 +794,7 @@ smtp:
   tls: tls
   from: smokealarm@example.com
   to: [me@example.com, ops@example.com]
+  minSeverity: critical
   username: alice
   password: s3cret
 notifications:
@@ -801,17 +802,22 @@ notifications:
   webhook:
     url: https://relay.example.org/hook
     header: "Authorization: Bearer webhook-token"
+    minSeverity: warning
   ntfy:
     server: https://ntfy.example.org
     topic: smokealarm-alerts
     token: tk_ntfy
+    minSeverity: critical
   telegram:
     botToken: "123456:telegram-token"
     chatIds: ["-1001234567890", "@ops_channel"]
+    minSeverity: warning
   slack:
     webhookUrl: https://hooks.slack.com/services/T0/B0/slack-secret
+    minSeverity: critical
   teams:
     webhookUrl: https://example.logic.azure.com/workflows/teams-secret
+    minSeverity: critical
 `
 
 // config.Load ignores variables it does not know, so a typo in a template would
@@ -855,6 +861,12 @@ func TestEverySettingBecomesAnEnvironmentVariable(t *testing.T) {
 		"SMOKEALARM_TELEGRAM_CHAT_IDS":        "-1001234567890,@ops_channel",
 		"SMOKEALARM_SLACK_WEBHOOK_URL":        "https://hooks.slack.com/services/T0/B0/slack-secret",
 		"SMOKEALARM_TEAMS_WEBHOOK_URL":        "https://example.logic.azure.com/workflows/teams-secret",
+		"SMOKEALARM_SMTP_MIN_SEVERITY":        "critical",
+		"SMOKEALARM_NTFY_MIN_SEVERITY":        "critical",
+		"SMOKEALARM_TELEGRAM_MIN_SEVERITY":    "warning",
+		"SMOKEALARM_TEAMS_MIN_SEVERITY":       "critical",
+		"SMOKEALARM_WEBHOOK_MIN_SEVERITY":     "warning",
+		"SMOKEALARM_SLACK_MIN_SEVERITY":       "critical",
 	}
 	for name, value := range want {
 		if got[name] != value {
@@ -888,11 +900,23 @@ func TestRenderedEnvironmentIsAValidConfig(t *testing.T) {
 			if cfg.CheckInterval != 45*time.Second || cfg.Retention != 14*24*time.Hour || cfg.SessionTTL != 72*time.Hour ||
 				cfg.PodPendingAfter != 7*time.Minute || cfg.RestartThreshold != 10 || cfg.CookieSecure ||
 				!cfg.SMTP.Enabled() || len(cfg.SMTP.To) != 2 || len(cfg.IgnoreNamespaces) != 2 ||
-				cfg.Notify.WebhookHeaderName != "Authorization" || len(cfg.Notify.TelegramChatIDs) != 2 || !cfg.Notify.AllowHTTP {
+				cfg.Notify.WebhookHeaderName != "Authorization" || len(cfg.Notify.TelegramChatIDs) != 2 || !cfg.Notify.AllowHTTP ||
+				!slices.Equal(cfg.CriticalOnly, []string{"mail", "ntfy", "slack", "teams"}) {
 				t.Errorf("config = %+v, not what the values say", cfg)
 			}
 		})
 	}
+}
+
+// exampleCommandLine holds the secrets that an example's header passes with
+// --set-string instead of keeping them in the file, as values.
+func exampleCommandLine(file string) string {
+	switch filepath.Base(file) {
+	case "notify-targets.yaml":
+		return "notifications:\n  ntfy:\n    topic: example-topic\n" +
+			"  telegram:\n    botToken: '123456:example'\n    chatIds: ['-1001234567890']\n"
+	}
+	return ""
 }
 
 // The example files are part of the documentation: each must render, and what
@@ -908,7 +932,11 @@ func TestExamplesRender(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			r := render(t, string(example))
+			out, err := helmTemplate(t, "smokealarm", baseValues, string(example), exampleCommandLine(file))
+			if err != nil {
+				t.Fatalf("helm template failed: %v\n%s", err, out)
+			}
+			r := parseRelease(t, out)
 			if !r.has("Deployment") {
 				t.Fatalf("rendered %v, want at least a Deployment", r.kinds())
 			}

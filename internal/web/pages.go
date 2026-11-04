@@ -72,17 +72,21 @@ type problemView struct {
 	CanAcknowledge bool   // critical and not acknowledged yet
 	AcknowledgedAt string // exact time, empty if not acknowledged
 	DowntimeUntil  string // end of the running downtime, empty if there is none
+	NotifiesOnly   string // "slack, mail" if not every target hears about it
+	NotifiesNobody bool   // no target hears about it (a warning for critical-only targets)
 }
 
 type historyView struct {
-	ID            int64
-	Severity      string
-	Object        string
-	Reason        string
-	Message       string
-	ResolvedAt    string
-	Lasted        string
-	DowntimeUntil string // end of the running downtime, empty if there is none
+	ID             int64
+	Severity       string
+	Object         string
+	Reason         string
+	Message        string
+	ResolvedAt     string
+	Lasted         string
+	DowntimeUntil  string // end of the running downtime, empty if there is none
+	NotifiesOnly   string // as in problemView
+	NotifiesNobody bool
 }
 
 type statusView struct {
@@ -96,10 +100,11 @@ type statusView struct {
 // targetView is one notification target. The description never contains a
 // secret; the engine gets it from the notifier.
 type targetView struct {
-	Description string
-	LastSentAt  string // empty if nothing was sent since the start
-	LastError   string
-	LastErrorAt string
+	Description  string
+	CriticalOnly bool   // hears only about critical problems
+	LastSentAt   string // empty if nothing was sent since the start
+	LastError    string
+	LastErrorAt  string
 }
 
 type checkView struct {
@@ -208,6 +213,7 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 	data := page{Title: "Overview", Active: "overview", ShowNav: true, Refresh: true}
 	for _, rec := range firing {
 		view := newProblemView(rec, now)
+		view.NotifiesOnly, view.NotifiesNobody = s.audience(rec)
 		view.DowntimeUntil = downtimeEnds[rec.Key]
 		data.Problems = append(data.Problems, view)
 		if rec.Severity == checks.Critical {
@@ -227,6 +233,22 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 		data.LastRunAgo = formatAge(now.Sub(lastRun))
 	}
 	s.render(w, http.StatusOK, "overview", data)
+}
+
+// audience returns what the pages say about who hears about a problem: nothing
+// if every target does, otherwise the targets that do, or that nobody does.
+func (s *Server) audience(rec store.Record) (only string, nobody bool) {
+	if s.Audience == nil {
+		return "", false
+	}
+	targets, all := s.Audience(rec)
+	switch {
+	case all:
+		return "", false
+	case len(targets) == 0:
+		return "", true
+	}
+	return strings.Join(targets, ", "), false
 }
 
 // newProblemView prepares one firing problem for the overview.
@@ -337,6 +359,7 @@ func (s *Server) history(w http.ResponseWriter, r *http.Request) {
 			Message:       rec.Message,
 			DowntimeUntil: downtimeEnds[rec.Key],
 		}
+		view.NotifiesOnly, view.NotifiesNobody = s.audience(rec)
 		if rec.ResolvedAt != nil {
 			view.ResolvedAt = rec.ResolvedAt.UTC().Format(historyTimeFormat)
 			view.Lasted = formatAge(rec.ResolvedAt.Sub(rec.FirstSeen))
@@ -368,10 +391,11 @@ func targetViews(targets []engine.TargetStatus) []targetView {
 	var views []targetView
 	for _, t := range targets {
 		views = append(views, targetView{
-			Description: t.Description,
-			LastSentAt:  formatOptionalTime(t.LastSentAt),
-			LastError:   t.LastError,
-			LastErrorAt: formatOptionalTime(t.LastErrorAt),
+			Description:  t.Description,
+			CriticalOnly: t.CriticalOnly,
+			LastSentAt:   formatOptionalTime(t.LastSentAt),
+			LastError:    t.LastError,
+			LastErrorAt:  formatOptionalTime(t.LastErrorAt),
 		})
 	}
 	return views

@@ -185,5 +185,5 @@ func containerStatuses(pod *corev1.Pod) []corev1.ContainerStatus {
 }
 
 func podRef(pod *corev1.Pod) ObjectRef {
-	return ObjectRef{Kind: "Pod", Namespace: pod.Namespace, Name: pod.Name}
+	return ObjectRef{Kind: KindPod, Namespace: pod.Namespace, Name: pod.Name}
 }

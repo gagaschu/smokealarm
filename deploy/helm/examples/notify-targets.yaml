@@ -1,5 +1,7 @@
 # Send notifications to a self-hosted ntfy server and to Telegram, besides (or
-# instead of) mail. Every target that is set up gets every notification.
+# instead of) mail. ntfy (the phone) gets only critical problems, Telegram gets
+# everything. Annotations can send the problems of one app or namespace to some
+# targets only (README, "Routing").
 #
 # Topic, access token and bot token are secrets. Pass them on the command line,
 # so they end up in the chart's Secret and not in a file:
@@ -22,6 +24,7 @@
 notifications:
   ntfy:
     server: https://ntfy.example.org
+    minSeverity: critical
 config:
   # The link in the notifications (built from the ingress host if empty).
   baseUrl: https://smokealarm.example.com

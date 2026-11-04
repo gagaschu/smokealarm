@@ -43,5 +43,5 @@ func ArgoCDSync(snap *Snapshot, opts Options) []Finding {
 }
 
 func appRef(app Application) ObjectRef {
-	return ObjectRef{Kind: "Application", Namespace: app.Meta.Namespace, Name: app.Meta.Name}
+	return ObjectRef{Kind: KindApplication, Namespace: app.Meta.Namespace, Name: app.Meta.Name}
 }

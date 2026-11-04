@@ -34,7 +34,7 @@ func PVCPending(snap *Snapshot, opts Options) []Finding {
 		if age <= opts.PVCPendingAfter || waitsForFirstConsumer(snap, pvc) {
 			continue
 		}
-		ref := ObjectRef{Kind: "PersistentVolumeClaim", Namespace: pvc.Namespace, Name: pvc.Name}
+		ref := ObjectRef{Kind: KindPVC, Namespace: pvc.Namespace, Name: pvc.Name}
 		msg := fmt.Sprintf("pending for %s: %s", age.Round(time.Second), pvcDetail(snap, ref))
 		findings = append(findings, newFinding(checkPVCPending, Warning, ref, "PVCPending", msg))
 	}
@@ -126,7 +126,7 @@ func PVCUsage(snap *Snapshot, opts Options) []Finding {
 		// that starts above 85.
 		msg := fmt.Sprintf("%.1f%% full (%s of %s used)",
 			float64(usage.UsedBytes)*100/float64(usage.CapacityBytes), formatBytes(usage.UsedBytes), formatBytes(usage.CapacityBytes))
-		ref := ObjectRef{Kind: "PersistentVolumeClaim", Namespace: namespace, Name: name}
+		ref := ObjectRef{Kind: KindPVC, Namespace: namespace, Name: name}
 		findings = append(findings, newEscalatingFinding(checkPVCUsage, severity, ref, "usage", reason, msg))
 	}
 	return findings

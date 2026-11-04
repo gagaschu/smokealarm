@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"time"
 
+	"github.com/gagaschu/smokealarm/internal/checks"
 	"github.com/gagaschu/smokealarm/internal/config"
 	"github.com/gagaschu/smokealarm/internal/notify"
 	"github.com/gagaschu/smokealarm/internal/store"
@@ -53,13 +55,31 @@ func newNotifiers(cfg config.Config, logger *slog.Logger, client *http.Client, n
 	return list
 }
 
+// minSeverities gives every notifier of a kind in criticalOnly (from
+// SMOKEALARM_<TARGET>_MIN_SEVERITY) the minimum severity critical. All Telegram
+// chats share the setting.
+func minSeverities(notifiers []notify.Notifier, criticalOnly []string) map[string]checks.Severity {
+	severities := map[string]checks.Severity{}
+	for _, n := range notifiers {
+		if slices.Contains(criticalOnly, notify.Kind(n.Name())) {
+			severities[n.Name()] = checks.Critical
+		}
+	}
+	return severities
+}
+
 // syncTargets tells the store which targets are configured, so a new one does
 // not get the history, and logs them without secrets.
-func syncTargets(ctx context.Context, logger *slog.Logger, db *store.Store, notifiers []notify.Notifier) error {
+func syncTargets(ctx context.Context, logger *slog.Logger, db *store.Store, notifiers []notify.Notifier,
+	minSeverity map[string]checks.Severity) error {
 	var names []string
 	for _, n := range notifiers {
 		names = append(names, n.Name())
-		logger.Info("notification target", "target", n.Description())
+		hears := "everything"
+		if minSeverity[n.Name()] == checks.Critical {
+			hears = "critical problems only"
+		}
+		logger.Info("notification target", "target", n.Description(), "hears", hears)
 	}
 	added, removed, err := db.SyncTargets(ctx, names)
 	if err != nil {

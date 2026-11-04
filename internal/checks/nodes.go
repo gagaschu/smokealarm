@@ -80,5 +80,5 @@ func nodeCondition(node *corev1.Node, condType corev1.NodeConditionType) *corev1
 }
 
 func nodeRef(node *corev1.Node) ObjectRef {
-	return ObjectRef{Kind: "Node", Name: node.Name}
+	return ObjectRef{Kind: KindNode, Name: node.Name}
 }

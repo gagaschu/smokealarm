@@ -15,6 +15,7 @@ import (
 	"github.com/gagaschu/smokealarm/internal/checks"
 	"github.com/gagaschu/smokealarm/internal/notify"
 	"github.com/gagaschu/smokealarm/internal/store"
+	corev1 "k8s.io/api/core/v1"
 )
 
 var testStart = time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
@@ -49,16 +50,17 @@ func (f *fakeNotifier) Send(_ context.Context, n notify.Notification) error {
 // harness drives an engine with a controllable clock and controllable
 // findings, against a real SQLite file.
 type harness struct {
-	t         *testing.T
-	path      string
-	engine    *Engine
-	notifier  *fakeNotifier   // the first target
-	others    []*fakeNotifier // more targets, see addTarget
-	findings  []checks.Finding
-	skipped   map[string]string // what the snapshot reports as unable to run
-	checkRuns int               // how often the fake check was executed
-	now       time.Time
-	logs      *bytes.Buffer
+	t          *testing.T
+	path       string
+	engine     *Engine
+	notifier   *fakeNotifier   // the first target
+	others     []*fakeNotifier // more targets, see addTarget
+	findings   []checks.Finding
+	skipped    map[string]string   // what the snapshot reports as unable to run
+	namespaces []*corev1.Namespace // in the snapshot, for the annotations
+	checkRuns  int                 // how often the fake check was executed
+	now        time.Time
+	logs       *bytes.Buffer
 }
 
 func newHarness(t *testing.T) *harness {
@@ -87,7 +89,7 @@ func (h *harness) start() {
 
 	h.engine = &Engine{
 		Snapshot: func(_ context.Context, now time.Time) *checks.Snapshot {
-			return &checks.Snapshot{Now: now, Skipped: h.skipped}
+			return &checks.Snapshot{Now: now, Skipped: h.skipped, Namespaces: h.namespaces}
 		},
 		Checks: []checks.Check{{
 			Name: "fake",
@@ -772,7 +774,7 @@ func TestRunChecksSortsByKey(t *testing.T) {
 		{Name: "none", Run: func(*checks.Snapshot, checks.Options) []checks.Finding { return nil }},
 	}
 
-	got := runChecks(&checks.Snapshot{Now: testStart}, checks.Options{}, list)
+	got, _ := runChecks(&checks.Snapshot{Now: testStart}, checks.Options{}, list)
 
 	var keys []string
 	for _, f := range got {

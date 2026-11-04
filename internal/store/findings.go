@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/gagaschu/smokealarm/internal/checks"
@@ -48,14 +49,23 @@ type Changes struct {
 	Insert []Record
 	Update []Record // matched by ID; see Apply for the fields that are written
 	Delete []int64
-	// Escalated lists firing problems that got worse: every notification
-	// target forgets that it was told, and hears about them again.
-	Escalated []int64
+	// Escalated lists firing problems that got worse: the listed targets
+	// forget that they were told, and hear about them again.
+	Escalated []Escalation
+}
+
+// Escalation is a firing problem that got worse. Targets are the notification
+// targets (Notifier.Name) it is meant for now; only they are told again. A
+// target that heard the start but is no longer meant for it keeps its marker,
+// so it still hears the end.
+type Escalation struct {
+	ID      int64
+	Targets []string
 }
 
 // selectColumns lists the columns in the order scanRecord reads them.
 const selectColumns = `id, key, check_name, severity, kind, namespace, name, reason, message,
-	state, first_seen, last_seen, firing_at, resolved_at, firing_notified_at, resolved_notified_at, acknowledged_at`
+	state, first_seen, last_seen, firing_at, resolved_at, firing_notified_at, resolved_notified_at, acknowledged_at, targets`
 
 // OpenRecords returns all problems that are pending or firing.
 func (s *Store) OpenRecords(ctx context.Context) ([]Record, error) {
@@ -110,8 +120,8 @@ func (s *Store) Namespaces(ctx context.Context) ([]string, error) {
 }
 
 // Apply writes all changes or none. Update only touches the columns that
-// change during a life cycle (severity, reason, message, state, last_seen,
-// firing_at, resolved_at). firing_notified_at is written too, so that a
+// change during a life cycle (severity, reason, message, targets, state,
+// last_seen, firing_at, resolved_at). firing_notified_at is written too, so that a
 // problem that got worse can be reported again; the markers are otherwise set
 // by MarkFiringNotified and MarkResolvedNotified. acknowledged_at is not
 // written: the engine works on a copy it read earlier, and writing that copy
@@ -125,28 +135,28 @@ func (s *Store) Apply(ctx context.Context, changes Changes) error {
 
 	for _, r := range changes.Insert {
 		_, err := tx.ExecContext(ctx, `INSERT INTO findings
-			(key, check_name, severity, kind, namespace, name, reason, message,
+			(key, check_name, severity, kind, namespace, name, reason, message, targets,
 			 state, first_seen, last_seen, firing_at, resolved_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			r.Key, r.Check, r.Severity, r.Object.Kind, r.Object.Namespace, r.Object.Name, r.Reason, r.Message,
-			r.State, unix(r.FirstSeen), unix(r.LastSeen), nullableUnix(r.FiringAt), nullableUnix(r.ResolvedAt))
+			joinTargets(r.Targets), r.State, unix(r.FirstSeen), unix(r.LastSeen), nullableUnix(r.FiringAt), nullableUnix(r.ResolvedAt))
 		if err != nil {
 			return fmt.Errorf("insert finding %s: %w", r.Key, err)
 		}
 	}
 	for _, r := range changes.Update {
 		_, err := tx.ExecContext(ctx, `UPDATE findings
-			SET severity = ?, reason = ?, message = ?, state = ?, last_seen = ?, firing_at = ?, resolved_at = ?,
-			    firing_notified_at = ?
+			SET severity = ?, reason = ?, message = ?, targets = ?, state = ?, last_seen = ?, firing_at = ?,
+			    resolved_at = ?, firing_notified_at = ?
 			WHERE id = ?`,
-			r.Severity, r.Reason, r.Message, r.State, unix(r.LastSeen), nullableUnix(r.FiringAt), nullableUnix(r.ResolvedAt),
+			r.Severity, r.Reason, r.Message, joinTargets(r.Targets), r.State, unix(r.LastSeen), nullableUnix(r.FiringAt), nullableUnix(r.ResolvedAt),
 			nullableUnix(r.FiringNotifiedAt), r.ID)
 		if err != nil {
 			return fmt.Errorf("update finding %s: %w", r.Key, err)
 		}
 	}
-	for _, id := range changes.Escalated {
-		if err := clearFiringDeliveries(ctx, tx, id); err != nil {
+	for _, esc := range changes.Escalated {
+		if err := clearFiringDeliveries(ctx, tx, esc.ID, esc.Targets); err != nil {
 			return err
 		}
 	}
@@ -256,10 +266,11 @@ func scanRecord(rows *sql.Rows) (Record, error) {
 	var r Record
 	var firstSeen, lastSeen int64
 	var firingAt, resolvedAt, firingNotifiedAt, resolvedNotifiedAt, acknowledgedAt sql.NullInt64
+	var targets string
 
 	err := rows.Scan(&r.ID, &r.Key, &r.Check, &r.Severity, &r.Object.Kind, &r.Object.Namespace, &r.Object.Name,
 		&r.Reason, &r.Message, &r.State, &firstSeen, &lastSeen,
-		&firingAt, &resolvedAt, &firingNotifiedAt, &resolvedNotifiedAt, &acknowledgedAt)
+		&firingAt, &resolvedAt, &firingNotifiedAt, &resolvedNotifiedAt, &acknowledgedAt, &targets)
 	if err != nil {
 		return Record{}, fmt.Errorf("scan finding: %w", err)
 	}
@@ -270,7 +281,13 @@ func scanRecord(rows *sql.Rows) (Record, error) {
 	r.FiringNotifiedAt = fromNullable(firingNotifiedAt)
 	r.ResolvedNotifiedAt = fromNullable(resolvedNotifiedAt)
 	r.AcknowledgedAt = fromNullable(acknowledgedAt)
+	r.Targets = checks.ParseTargets(targets)
 	return r, nil
+}
+
+// joinTargets stores the target list as "mail,slack"; empty means every target.
+func joinTargets(targets []string) string {
+	return strings.Join(targets, ",")
 }
 
 func unix(t time.Time) int64 { return t.Unix() }

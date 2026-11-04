@@ -49,6 +49,7 @@ Finding (guideline):
 - Check, Severity (critical | warning), Object (Kind, Namespace, Name)
 - Reason: short, e.g. "CrashLoopBackOff"
 - Message: human-readable with relevant context (e.g. last exit code, matching warning event)
+- Targets (since phase 14): the notification targets from the targets annotation; the severity annotation can replace the check's severity. Both are applied after the checks, so checks stay unaware of them.
 
 Sequence every SMOKEALARM_CHECK_INTERVAL (default 30s):
 1. Build the snapshot, run all enabled checks.
@@ -85,7 +86,7 @@ Optional CRDs are detected at startup via the discovery API. If they are missing
 Individual checks can be disabled via an environment variable.
 
 Ignoring:
-- The annotation smokealarm.<DOMAIN>/ignore: "true" on an object or on its namespace suppresses findings. For pods, the annotation in the pod template is enough. The annotation prefix is a single constant in the code.
+- The annotation smokealarm.<DOMAIN>/ignore: "true" on an object or on its namespace suppresses findings. For pods, the annotation in the pod template is enough. The annotation prefix is a single constant in the code. It wins over the routing annotations (see Notifications).
 - In addition, an environment variable with a list of ignored namespaces.
 
 ## Notifications
@@ -103,7 +104,7 @@ Ignoring:
 - The subject summarizes: specific for one change, e.g. "[smokealarm] CRITICAL: CrashLoopBackOff media/jellyfin" or, for a reminder, "[smokealarm] STILL CRITICAL: CrashLoopBackOff media/jellyfin"; for several, e.g. "[smokealarm] 3 new problems, 1 still critical, 1 resolved".
 - Body as plain text: new problems sorted by severity, then reminders, then resolved ones; each with object, reason, message, since when; link to the web UI (SMOKEALARM_BASE_URL).
 - Chat targets (ntfy, Telegram, Slack, Teams) get a short version: the subject as the headline, then one line per problem (object, reason, since when) and the link to the web UI, cut to the length limit of the service with "… and N more". The webhook gets all fields as JSON.
-- No routing by severity or label per target, no webhook signatures yet.
+- Since phase 14, routing: SMOKEALARM_<TARGET>_MIN_SEVERITY (SMTP, WEBHOOK, NTFY, TELEGRAM, SLACK, TEAMS; default warning = everything) limits a target to critical problems. The annotations smokealarm.<DOMAIN>/targets (comma-separated kinds: mail, webhook, ntfy, telegram, slack, teams; telegram = all chats) and smokealarm.<DOMAIN>/severity (warning | critical) on an object or its namespace choose the targets and replace the severity of its problems; the object wins over the namespace, each annotation on its own. A target hears about a problem if its severity is high enough for the target and the targets annotation, if any, names it. The filter applies to new problems and reminders; a target that heard the start of a problem always hears its end, also after an escalation or the end of a downtime (only the targets the problem is meant for then hear it again as new). A targets annotation that names no configured target counts as none (every target), so a typo never silences an alarm; unusable annotation values, and an annotation that makes a problem reach no target at all (a warning for critical-only targets, which is allowed), are logged once, naming the object or namespace that carries it. The UI says who is notified when it is not every target. For a CronJob the annotations of its job template count too. Annotations do not change the key. Every other rule (ALERT_AFTER, combined message, reminders, acknowledge, downtimes) is unchanged. Not yet: Kubernetes labels, several instances of one kind of target, webhook signatures.
 
 ## Web UI
 - Server-rendered HTML, no JavaScript framework, no build step. Auto-refresh via meta tag (30s). Plain custom CSS, light/dark via prefers-color-scheme, works well on a phone.

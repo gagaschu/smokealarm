@@ -6,6 +6,7 @@ package notify
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/gagaschu/smokealarm/internal/checks"
@@ -39,4 +40,12 @@ type Alert struct {
 	checks.Finding
 	Since      time.Time // when the problem was first seen
 	ResolvedAt time.Time // zero for new problems
+}
+
+// Kind is the kind of target a Notifier.Name belongs to: "telegram" for
+// "telegram:-1001234", otherwise the name itself. The targets annotation names
+// kinds, so "telegram" there means every configured chat.
+func Kind(name string) string {
+	kind, _, _ := strings.Cut(name, ":")
+	return kind
 }

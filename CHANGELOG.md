@@ -17,12 +17,14 @@ All notable changes to this project are documented here. The format is based on
 - Every notification target remembers on its own what it was told: a target that is down is retried without sending duplicates to the others, also after a restart. A target added later does not get the history.
 - The status page lists every notification target with the time of its last message and its last error.
 - Helm chart: `notifications.*` values; tokens and webhook URLs go into the Secret only. New example `notify-targets.yaml`.
+- **Routing**: `SMOKEALARM_<TARGET>_MIN_SEVERITY=critical` sends only critical problems to a target (for example ntfy), while the others still get everything. The annotations `smokealarm.gagaschu.github.io/targets` (e.g. `"slack,mail"`) and `smokealarm.gagaschu.github.io/severity` (`warning` or `critical`) on an object or its namespace choose the targets and the severity of its problems. A target that heard about a problem always hears its end; an annotation that names no configured target sends to all of them. The status page shows which targets get critical problems only; the overview and the history show the targets of a problem. Helm chart: `minSeverity` per target.
 
 ### Changed
 
 - **New look for the web UI**: a top bar with logo, slimmer buttons with icons and a clear main action, problem cards with severity counters above them, tables as cards, a status page with state pills, and a favicon. Still no JavaScript and no external files; light and dark mode and the phone layout are kept. The history shows the duration below the time and the severity above the reason, so the table fits on a small laptop screen.
 - The README shows screenshots of the web interface.
 - Database migration `005_deliveries.sql`. On the upgrade, the configured targets start from the current state, so nothing is sent twice.
+- Database migration `006_targets.sql` (the targets of a problem). Existing problems go to every target, as before.
 
 ## [0.1.0] - not released yet
 

@@ -38,6 +38,10 @@ type Server struct {
 
 	// Status returns what the engine knows about itself.
 	Status func() engine.Status
+	// Audience says which notification targets hear about a problem, and
+	// whether that is all of them (see engine.Engine.Audience). It may be nil;
+	// then the pages say nothing about it.
+	Audience func(store.Record) (targets []string, all bool)
 
 	Now    func() time.Time
 	Logger *slog.Logger

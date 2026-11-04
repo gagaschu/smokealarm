@@ -104,6 +104,16 @@ spec:
             - name: SMOKEALARM_SMTP_TO
               value: {{ join "," .Values.smtp.to | quote }}
             {{- end }}
+            {{- with .Values.smtp.minSeverity }}
+            - name: SMOKEALARM_SMTP_MIN_SEVERITY
+              value: {{ . | quote }}
+            {{- end }}
+            {{- range $values, $env := dict "webhook" "SMOKEALARM_WEBHOOK_MIN_SEVERITY" "ntfy" "SMOKEALARM_NTFY_MIN_SEVERITY" "telegram" "SMOKEALARM_TELEGRAM_MIN_SEVERITY" "slack" "SMOKEALARM_SLACK_MIN_SEVERITY" "teams" "SMOKEALARM_TEAMS_MIN_SEVERITY" }}
+            {{- with (index $.Values.notifications $values).minSeverity }}
+            - name: {{ $env }}
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
             {{- if .Values.notifications.allowHttp }}
             - name: SMOKEALARM_NOTIFY_ALLOW_HTTP
               value: "true"

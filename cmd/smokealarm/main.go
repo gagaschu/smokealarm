@@ -91,10 +91,11 @@ func run() error {
 	}
 
 	notifiers := newNotifiers(cfg, logger, notify.NewHTTPClient(), time.Now)
-	if err := syncTargets(ctx, logger, db, notifiers); err != nil {
+	minSeverity := minSeverities(notifiers, cfg.CriticalOnly)
+	if err := syncTargets(ctx, logger, db, notifiers, minSeverity); err != nil {
 		return err
 	}
-	loop := newEngine(cfg, logger, cluster, db, activeChecks, unavailable, notifiers)
+	loop := newEngine(cfg, logger, cluster, db, activeChecks, unavailable, notifiers, minSeverity)
 	handler, err := newHandler(cfg, logger, cluster, db, loop)
 	if err != nil {
 		return fmt.Errorf("create web handler: %w", err)
@@ -204,7 +205,8 @@ func hasCheck(list []checks.Check, name string) bool {
 // the status page reads from it, but it only starts running after the
 // informer caches are synced.
 func newEngine(cfg config.Config, logger *slog.Logger, cluster *kube.Cluster, db *store.Store,
-	enabled []checks.Check, unavailable []engine.SkippedCheck, notifiers []notify.Notifier) *engine.Engine {
+	enabled []checks.Check, unavailable []engine.SkippedCheck, notifiers []notify.Notifier,
+	minSeverity map[string]checks.Severity) *engine.Engine {
 	skipped := slices.Clone(unavailable)
 	for _, name := range cfg.DisabledChecks {
 		skipped = append(skipped, engine.SkippedCheck{Name: name, Reason: "disabled by SMOKEALARM_DISABLED_CHECKS"})
@@ -226,6 +228,7 @@ func newEngine(cfg config.Config, logger *slog.Logger, cluster *kube.Cluster, db
 		SkippedChecks:          skipped,
 		Store:                  db,
 		Notifiers:              notifiers,
+		MinSeverity:            minSeverity,
 		BaseURL:                cfg.BaseURL,
 		Now:                    time.Now,
 		Logger:                 logger,
@@ -250,10 +253,11 @@ func newHandler(cfg config.Config, logger *slog.Logger, cluster *kube.Cluster, d
 			SecureCookie: cfg.CookieSecure,
 			Now:          time.Now,
 		},
-		Limiter: &auth.RateLimiter{Now: time.Now},
-		Status:  loop.Status,
-		Now:     time.Now,
-		Logger:  logger,
+		Limiter:  &auth.RateLimiter{Now: time.Now},
+		Status:   loop.Status,
+		Audience: loop.Audience,
+		Now:      time.Now,
+		Logger:   logger,
 	}
 	return server.Handler()
 }

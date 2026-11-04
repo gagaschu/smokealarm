@@ -70,6 +70,7 @@ smtp:
   tls: starttls             # SMOKEALARM_SMTP_TLS: starttls, tls (port 465) or none
   from: ""                  # SMOKEALARM_SMTP_FROM
   to: []                    # SMOKEALARM_SMTP_TO: list of recipients
+  minSeverity: ""           # SMOKEALARM_SMTP_MIN_SEVERITY: "critical" for critical problems only
   # Login, if the server needs one. Stored in the chart's Secret (or read from
   # existingSecret, see above).
   username: ""
@@ -84,22 +85,30 @@ notifications:
   # SMOKEALARM_NOTIFY_ALLOW_HTTP: allow plain http:// for the webhook and the
   # ntfy server, e.g. a relay inside the cluster (http://apprise.monitoring.svc:8000).
   allowHttp: false
+  # minSeverity (SMOKEALARM_<TARGET>_MIN_SEVERITY) below: "critical" sends only
+  # critical problems to that target, empty or "warning" sends everything. Which
+  # problems go where can also be set per app with annotations (README, "Routing").
   webhook:
     url: ""                 # SMOKEALARM_WEBHOOK_URL (Secret): JSON is posted here
     header: ""              # SMOKEALARM_WEBHOOK_HEADER (Secret), e.g. "Authorization: Bearer <token>"
+    minSeverity: ""         # SMOKEALARM_WEBHOOK_MIN_SEVERITY
   ntfy:
     server: ""              # SMOKEALARM_NTFY_URL: empty means https://ntfy.sh
     topic: ""               # SMOKEALARM_NTFY_TOPIC (Secret): on ntfy.sh, anybody who knows it can read along
     token: ""               # SMOKEALARM_NTFY_TOKEN (Secret): access token, optional
+    minSeverity: ""         # SMOKEALARM_NTFY_MIN_SEVERITY
   telegram:
     botToken: ""            # SMOKEALARM_TELEGRAM_BOT_TOKEN (Secret): from @BotFather
     # SMOKEALARM_TELEGRAM_CHAT_IDS: write every id in quotes ("-1001234567890",
     # "@channel"); Helm would turn a bare number into a float.
     chatIds: []
+    minSeverity: ""         # SMOKEALARM_TELEGRAM_MIN_SEVERITY, for all chats
   slack:
     webhookUrl: ""          # SMOKEALARM_SLACK_WEBHOOK_URL (Secret)
+    minSeverity: ""         # SMOKEALARM_SLACK_MIN_SEVERITY
   teams:
     webhookUrl: ""          # SMOKEALARM_TEAMS_WEBHOOK_URL (Secret): a Workflows webhook
+    minSeverity: ""         # SMOKEALARM_TEAMS_MIN_SEVERITY
 
 # --- Permissions ---------------------------------------------------------------
 # smokealarm only reads (get, list, watch). The switches below control the
