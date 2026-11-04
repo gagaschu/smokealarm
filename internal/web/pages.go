@@ -77,13 +77,13 @@ type problemView struct {
 }
 
 type historyView struct {
-	ID            int64
-	Severity      string
-	Object        string
-	Reason        string
-	Message       string
-	ResolvedAt    string
-	Lasted        string
+	ID             int64
+	Severity       string
+	Object         string
+	Reason         string
+	Message        string
+	ResolvedAt     string
+	Lasted         string
 	DowntimeUntil  string // end of the running downtime, empty if there is none
 	NotifiesOnly   string // as in problemView
 	NotifiesNobody bool
