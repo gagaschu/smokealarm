@@ -120,7 +120,7 @@ func (h *harness) syncTargets(db *store.Store) {
 	for _, n := range h.notifiers() {
 		names = append(names, n.Name())
 	}
-	if _, _, err := db.SyncTargets(context.Background(), names, h.now); err != nil {
+	if _, _, err := db.SyncTargets(context.Background(), names); err != nil {
 		h.t.Fatalf("SyncTargets: %v", err)
 	}
 }

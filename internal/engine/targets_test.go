@@ -193,7 +193,7 @@ func TestEscalationReachesEveryTarget(t *testing.T) {
 	}
 }
 
-func TestNewTargetStartsFromTheCurrentState(t *testing.T) {
+func TestNewTargetHearsWhatIsFiringButNotTheHistory(t *testing.T) {
 	h := newHarness(t)
 	h.findings = []checks.Finding{finding("old", checks.Critical), finding("gone", checks.Warning)}
 	h.mustRun(0)
@@ -206,7 +206,45 @@ func TestNewTargetStartsFromTheCurrentState(t *testing.T) {
 
 	added := h.addTarget("second")
 	h.mustRun(30 * time.Second)
+	wantNotifications(t, added, "new:old,waiting/reminders:/resolved:")
 
-	// No history, nothing reported before; only what is still waiting.
-	wantNotifications(t, added, "new:waiting/reminders:/resolved:")
+	h.findings = nil
+	h.mustRun(time.Minute)
+	wantNotifications(t, added, "new:old,waiting/reminders:/resolved:", "new:/reminders:/resolved:old,waiting")
+}
+
+// A problem that ended before the new target's first run is none of its
+// business, even if the others have not been told about the end yet.
+func TestNewTargetDoesNotHearTheEndOfWhatItNeverHeardOf(t *testing.T) {
+	h := newHarness(t)
+	h.findings = []checks.Finding{finding("a", checks.Critical)}
+	h.mustRun(0)
+	h.mustRun(2 * time.Minute)
+	h.findings = nil
+	h.notifier.fail = true
+	_ = h.run(time.Minute) // the end of "a" is not reported yet
+	h.notifier.fail = false
+
+	added := h.addTarget("second")
+	h.mustRun(30 * time.Second)
+	wantNotifications(t, added)
+}
+
+// When what failed is over, no message is waiting anymore, so the status must
+// not go on claiming that sending fails.
+func TestStatusForgetsTheErrorWhenNothingIsLeftToSend(t *testing.T) {
+	h := newHarness(t)
+	h.findings = []checks.Finding{finding("a", checks.Critical)}
+	h.mustRun(0)
+	h.notifier.fail = true
+	_ = h.run(2 * time.Minute) // "a" fires, but its first message fails
+	if status := h.engine.Status().Targets[0]; status.LastError == "" {
+		t.Fatalf("target = %+v, want its error", status)
+	}
+
+	h.findings = nil
+	h.mustRun(time.Minute) // "a" ends before anybody heard about it: silent
+	if status := h.engine.Status().Targets[0]; status.LastError != "" || !status.LastErrorAt.IsZero() {
+		t.Errorf("target = %+v, want no error", status)
+	}
 }

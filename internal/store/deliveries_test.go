@@ -83,7 +83,7 @@ func TestClearingTheMarkerReachesEveryTarget(t *testing.T) {
 
 		record, _, _ := s.Record(ctx, id)
 		record.FiringNotifiedAt = nil
-		if err := s.Apply(ctx, Changes{Update: []Record{record}}); err != nil {
+		if err := s.Apply(ctx, Changes{Update: []Record{record}, Escalated: []int64{id}}); err != nil {
 			t.Fatalf("Apply: %v", err)
 		}
 		for _, target := range []string{"slack", "ntfy"} {
@@ -134,18 +134,18 @@ func TestSyncTargets(t *testing.T) {
 	firingRecord(t, s, "waiting") // its first message has not gone out anywhere
 	mustMarkFiring(t, s, "mail", reported, testNow)
 
-	added, removed, err := s.SyncTargets(ctx, []string{"mail", "slack"}, testNow)
+	added, removed, err := s.SyncTargets(ctx, []string{"mail", "slack"})
 	if err != nil || len(added) != 2 || len(removed) != 0 {
 		t.Fatalf("first SyncTargets = %v, %v, %v, want two added", added, removed, err)
 	}
-	// A new target starts from the current state: no history, but what is
-	// still waiting for its first message.
+	// The first start after the upgrade copies the summary, so nothing that
+	// was reported by the old version is sent again.
 	if keys := unnotifiedKeys(t, s, "slack"); keys != "waiting" {
 		t.Errorf("slack: Unnotified = %q, want waiting", keys)
 	}
 
 	// The marker of a known target is kept, even if it has delivered nothing.
-	if _, _, err := s.SyncTargets(ctx, []string{"mail", "slack"}, testNow); err != nil {
+	if _, _, err := s.SyncTargets(ctx, []string{"mail", "slack"}); err != nil {
 		t.Fatalf("second SyncTargets: %v", err)
 	}
 	mustMarkFiring(t, s, "mail", reported, testNow.Add(time.Hour))
@@ -154,12 +154,47 @@ func TestSyncTargets(t *testing.T) {
 	}
 
 	// A removed target is forgotten; when it comes back, it starts afresh.
-	added, removed, err = s.SyncTargets(ctx, []string{"mail"}, testNow)
+	added, removed, err = s.SyncTargets(ctx, []string{"mail"})
 	if err != nil || len(added) != 0 || len(removed) != 1 || removed[0] != "slack" {
 		t.Fatalf("SyncTargets without slack = %v, %v, %v, want slack removed", added, removed, err)
 	}
 	if n := countDeliveries(t, s, "slack"); n != 0 {
 		t.Errorf("%d deliveries of slack left, want none", n)
+	}
+}
+
+// A target added later hears about what is firing, whether or not another
+// target was told, but gets no history.
+func TestLaterTargetHearsWhatIsFiring(t *testing.T) {
+	s, _ := openTemp(t)
+	ctx := context.Background()
+	if _, _, err := s.SyncTargets(ctx, []string{"mail"}); err != nil {
+		t.Fatalf("SyncTargets: %v", err)
+	}
+	reported := firingRecord(t, s, "reported")
+	firingRecord(t, s, "waiting")
+	mustMarkFiring(t, s, "mail", reported, testNow)
+
+	ended := firingRecord(t, s, "ended")
+	mustMarkFiring(t, s, "mail", ended, testNow)
+	record, _, _ := s.Record(ctx, ended)
+	record.State = StateResolved
+	record.ResolvedAt = &testNow
+	if err := s.Apply(ctx, Changes{Update: []Record{record}}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if err := s.MarkResolvedNotified(ctx, "mail", []int64{ended}, testNow); err != nil {
+		t.Fatalf("MarkResolvedNotified: %v", err)
+	}
+
+	if _, _, err := s.SyncTargets(ctx, []string{"mail", "slack"}); err != nil {
+		t.Fatalf("SyncTargets: %v", err)
+	}
+	if keys := unnotifiedKeys(t, s, "slack"); keys != "reported,waiting" {
+		t.Errorf("slack: Unnotified = %q, want reported,waiting", keys)
+	}
+	if keys := unnotifiedKeys(t, s, "mail"); keys != "waiting" {
+		t.Errorf("mail: Unnotified = %q, want waiting", keys)
 	}
 }
 
@@ -205,7 +240,7 @@ func TestUpgradeSendsNothingTwice(t *testing.T) {
 		t.Fatalf("Open after the upgrade: %v", err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
-	if _, _, err := s.SyncTargets(ctx, []string{"mail"}, testNow); err != nil {
+	if _, _, err := s.SyncTargets(ctx, []string{"mail"}); err != nil {
 		t.Fatalf("SyncTargets: %v", err)
 	}
 	if keys := unnotifiedKeys(t, s, "mail"); keys != "" {

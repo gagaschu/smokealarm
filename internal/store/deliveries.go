@@ -66,6 +66,9 @@ func (s *Store) MarkResolvedNotified(ctx context.Context, target string, ids []i
 // markNotified sets the marker of the target and the summary in findings, for
 // all ids in one transaction.
 func (s *Store) markNotified(ctx context.Context, ids []int64, at time.Time, delivery, summary, target string) error {
+	if len(ids) == 0 {
+		return nil
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
@@ -99,12 +102,13 @@ func clearFiringDeliveries(ctx context.Context, tx *sql.Tx, findingID int64) err
 // SyncTargets records which notification targets are configured now. It runs
 // once at startup and returns the targets it added and removed.
 //
-// A new target starts from the current state: it gets the summary markers, so
-// it is not sent the whole history, and on the upgrade from a version without
-// this table the mail target sends nothing twice. A problem that is still
-// waiting for its first report goes to the new target as well. A target that
+// A new target is not sent the history, but it hears about what is firing now,
+// so it does not stay silent during an alarm and then report only its end. The
+// first start after the upgrade from a version without this table is the
+// exception: no target is known yet, and the summary markers are what the old
+// version has told, so they are copied and nothing is sent twice. A target that
 // is no longer configured is forgotten; if it comes back, it starts afresh.
-func (s *Store) SyncTargets(ctx context.Context, names []string, now time.Time) (added, removed []string, err error) {
+func (s *Store) SyncTargets(ctx context.Context, names []string) (added, removed []string, err error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("begin transaction: %w", err)
@@ -124,11 +128,12 @@ func (s *Store) SyncTargets(ctx context.Context, names []string, now time.Time) 
 		}
 		removed = append(removed, name)
 	}
+	upgrade := len(known) == 0
 	for _, name := range names {
 		if slices.Contains(known, name) {
 			continue
 		}
-		if err := addTarget(ctx, tx, name, now); err != nil {
+		if err := addTarget(ctx, tx, name, upgrade); err != nil {
 			return nil, nil, err
 		}
 		added = append(added, name)
@@ -160,17 +165,27 @@ func knownTargets(ctx context.Context, tx *sql.Tx) ([]string, error) {
 	return names, nil
 }
 
-func addTarget(ctx context.Context, tx *sql.Tx, name string, now time.Time) error {
-	if _, err := tx.ExecContext(ctx, `INSERT INTO targets (name, added_at) VALUES (?, ?)`, name, unix(now)); err != nil {
+// addTarget registers a target and sets its markers. Without a firing marker,
+// a firing problem counts as not reported yet, and one that has ended is closed
+// without a message (see the engine), because the target never heard about it.
+func addTarget(ctx context.Context, tx *sql.Tx, name string, copyFiring bool) error {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO targets (name) VALUES (?)`, name); err != nil {
 		return fmt.Errorf("add notification target %s: %w", name, err)
 	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO deliveries (finding_id, target, firing_notified_at, resolved_notified_at)
+	seed := `INSERT INTO deliveries (finding_id, target, resolved_notified_at)
+		SELECT id, ?, resolved_notified_at FROM findings
+		WHERE resolved_notified_at IS NOT NULL
+		ON CONFLICT (finding_id, target) DO UPDATE SET
+			resolved_notified_at = excluded.resolved_notified_at`
+	if copyFiring {
+		seed = `INSERT INTO deliveries (finding_id, target, firing_notified_at, resolved_notified_at)
 		SELECT id, ?, firing_notified_at, resolved_notified_at FROM findings
 		WHERE firing_notified_at IS NOT NULL OR resolved_notified_at IS NOT NULL
 		ON CONFLICT (finding_id, target) DO UPDATE SET
 			firing_notified_at = excluded.firing_notified_at,
-			resolved_notified_at = excluded.resolved_notified_at`, name)
-	if err != nil {
+			resolved_notified_at = excluded.resolved_notified_at`
+	}
+	if _, err := tx.ExecContext(ctx, seed, name); err != nil {
 		return fmt.Errorf("copy markers to notification target %s: %w", name, err)
 	}
 	return nil

@@ -53,20 +53,20 @@ func newNotifiers(cfg config.Config, logger *slog.Logger, client *http.Client, n
 	return list
 }
 
-// syncTargets tells the store which targets are configured, so a new one
-// starts from the current state, and logs them without secrets.
+// syncTargets tells the store which targets are configured, so a new one does
+// not get the history, and logs them without secrets.
 func syncTargets(ctx context.Context, logger *slog.Logger, db *store.Store, notifiers []notify.Notifier) error {
 	var names []string
 	for _, n := range notifiers {
 		names = append(names, n.Name())
 		logger.Info("notification target", "target", n.Description())
 	}
-	added, removed, err := db.SyncTargets(ctx, names, time.Now())
+	added, removed, err := db.SyncTargets(ctx, names)
 	if err != nil {
 		return fmt.Errorf("register notification targets: %w", err)
 	}
 	if len(added) > 0 || len(removed) > 0 {
-		logger.Info("notification targets changed; new ones start from the current state", "added", added, "removed", removed)
+		logger.Info("notification targets changed; new ones hear about what is firing now, not the history", "added", added, "removed", removed)
 	}
 	return nil
 }

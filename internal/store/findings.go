@@ -48,6 +48,9 @@ type Changes struct {
 	Insert []Record
 	Update []Record // matched by ID; see Apply for the fields that are written
 	Delete []int64
+	// Escalated lists firing problems that got worse: every notification
+	// target forgets that it was told, and hears about them again.
+	Escalated []int64
 }
 
 // selectColumns lists the columns in the order scanRecord reads them.
@@ -110,10 +113,7 @@ func (s *Store) Namespaces(ctx context.Context) ([]string, error) {
 // change during a life cycle (severity, reason, message, state, last_seen,
 // firing_at, resolved_at). firing_notified_at is written too, so that a
 // problem that got worse can be reported again; the markers are otherwise set
-// by MarkFiringNotified and MarkResolvedNotified. An empty firing_notified_at
-// also clears the marker of every notification target, so all of them hear
-// about it again. Otherwise that changes nothing: the summary is only empty if
-// no target has the marker. acknowledged_at is not
+// by MarkFiringNotified and MarkResolvedNotified. acknowledged_at is not
 // written: the engine works on a copy it read earlier, and writing that copy
 // back could undo an acknowledgement made in the web UI in the meantime.
 func (s *Store) Apply(ctx context.Context, changes Changes) error {
@@ -144,10 +144,10 @@ func (s *Store) Apply(ctx context.Context, changes Changes) error {
 		if err != nil {
 			return fmt.Errorf("update finding %s: %w", r.Key, err)
 		}
-		if r.FiringNotifiedAt == nil {
-			if err := clearFiringDeliveries(ctx, tx, r.ID); err != nil {
-				return err
-			}
+	}
+	for _, id := range changes.Escalated {
+		if err := clearFiringDeliveries(ctx, tx, id); err != nil {
+			return err
 		}
 	}
 	for _, id := range changes.Delete {

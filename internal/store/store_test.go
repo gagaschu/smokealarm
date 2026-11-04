@@ -395,7 +395,7 @@ func TestUpdateWritesReasonAndNotifiedMarker(t *testing.T) {
 	}
 	changed := open[0]
 	changed.Severity, changed.Reason, changed.FiringNotifiedAt = checks.Warning, "OtherReason", nil
-	if err := s.Apply(ctx, Changes{Update: []Record{changed}}); err != nil {
+	if err := s.Apply(ctx, Changes{Update: []Record{changed}, Escalated: []int64{changed.ID}}); err != nil {
 		t.Fatalf("update: %v", err)
 	}
 
