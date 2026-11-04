@@ -27,8 +27,8 @@ func TestApplyAnnotations(t *testing.T) {
 			{ObjectMeta: meta("plain", "typo", map[string]string{SeverityAnnotation: "hgih"})},
 			{ObjectMeta: meta("plain", "upper", map[string]string{SeverityAnnotation: "CRITICAL"})},
 		},
-		Deployments: []*appsv1.Deployment{{ObjectMeta: meta("plain", "web", map[string]string{TargetsAnnotation: "teams"})}},
-		Nodes:       []*corev1.Node{{ObjectMeta: meta("", "pi-1", map[string]string{TargetsAnnotation: "ntfy"})}},
+		Deployments:  []*appsv1.Deployment{{ObjectMeta: meta("plain", "web", map[string]string{TargetsAnnotation: "teams"})}},
+		Nodes:        []*corev1.Node{{ObjectMeta: meta("", "pi-1", map[string]string{TargetsAnnotation: "ntfy"})}},
 		Certificates: []Certificate{{Meta: meta("plain", "tls", map[string]string{SeverityAnnotation: "warning"})}},
 		Applications: []Application{{Meta: meta("plain", "app", map[string]string{TargetsAnnotation: "webhook"})}},
 	}
