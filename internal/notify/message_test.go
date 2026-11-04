@@ -201,7 +201,7 @@ func TestSubjectNamesAtMostThreeNodes(t *testing.T) {
 		a.Object.Name = name
 		n.New = append(n.New, a)
 	}
-	want := "[smokealarm] NODE DOWN: pi-1, pi-2, and 3 more"
+	want := "[smokealarm] NODE DOWN: pi-1, pi-2, pi-3, and 2 more"
 	if got := Subject(n); got != want {
 		t.Errorf("Subject = %q, want %q", got, want)
 	}

@@ -110,7 +110,7 @@ func TestReconcile(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			changes := reconcileEngine(tt.alertAfter).reconcile(tt.open, tt.findings, tt.skipped, nil, now)
+			changes := reconcileEngine(tt.alertAfter).reconcile(tt.open, tt.findings, tt.skipped, now)
 
 			if got := states(changes.Insert); !slices.Equal(got, tt.wantInsert) {
 				t.Errorf("inserted states = %v, want %v", got, tt.wantInsert)
@@ -130,7 +130,7 @@ func TestReconcileRefreshesDetails(t *testing.T) {
 	open := openRecord(7, "k", "fake", store.StateFiring, now.Add(-time.Hour))
 	f := checks.Finding{Key: "k", Check: "fake", Severity: checks.Critical, Message: "new message"}
 
-	changes := reconcileEngine(2*time.Minute).reconcile([]store.Record{open}, []checks.Finding{f}, nil, nil, now)
+	changes := reconcileEngine(2*time.Minute).reconcile([]store.Record{open}, []checks.Finding{f}, nil, now)
 
 	got := changes.Update[0]
 	if got.ID != 7 || got.Message != "new message" || got.Severity != checks.Critical || !got.LastSeen.Equal(now) {
@@ -145,7 +145,7 @@ func TestReconcileResolvedHasTimestamp(t *testing.T) {
 	now := testStart
 	open := openRecord(1, "k", "fake", store.StateFiring, now.Add(-time.Hour))
 
-	changes := reconcileEngine(2*time.Minute).reconcile([]store.Record{open}, nil, nil, nil, now)
+	changes := reconcileEngine(2*time.Minute).reconcile([]store.Record{open}, nil, nil, now)
 
 	if got := changes.Update[0].ResolvedAt; got == nil || !got.Equal(now) {
 		t.Errorf("ResolvedAt = %v, want %v", got, now)
@@ -190,7 +190,7 @@ func TestReconcileEscalation(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			changes := reconcileEngine(2*time.Minute).reconcile([]store.Record{tt.record}, []checks.Finding{tt.finding}, nil, nil, now)
+			changes := reconcileEngine(2*time.Minute).reconcile([]store.Record{tt.record}, []checks.Finding{tt.finding}, nil, now)
 
 			if len(changes.Update) != 1 || len(changes.Insert) != 0 || len(changes.Delete) != 0 {
 				t.Fatalf("changes = %+v, want exactly one update", changes)
@@ -215,7 +215,7 @@ func TestReconcileEscalationWhilePending(t *testing.T) {
 	record.Severity = checks.Warning
 	f := checks.Finding{Key: "k", Check: "fake", Severity: checks.Critical, Reason: "CritReason", Message: "m"}
 
-	changes := reconcileEngine(2*time.Minute).reconcile([]store.Record{record}, []checks.Finding{f}, nil, nil, now)
+	changes := reconcileEngine(2*time.Minute).reconcile([]store.Record{record}, []checks.Finding{f}, nil, now)
 
 	got := changes.Update[0]
 	if got.State != store.StatePending || got.Severity != checks.Critical || got.Reason != "CritReason" {

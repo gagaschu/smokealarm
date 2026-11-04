@@ -776,7 +776,7 @@ func TestRunChecksSortsByKey(t *testing.T) {
 		{Name: "none", Run: func(*checks.Snapshot, checks.Options) []checks.Finding { return nil }},
 	}
 
-	got, _ := runChecks(&checks.Snapshot{Now: testStart}, checks.Options{}, list)
+	got, _ := runChecks(&checks.Snapshot{Now: testStart}, checks.Options{}, list, nil)
 
 	var keys []string
 	for _, f := range got {

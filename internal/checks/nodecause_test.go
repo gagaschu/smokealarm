@@ -50,12 +50,29 @@ func nodeCauseSnapshot() *Snapshot {
 			{ObjectMeta: metav1.ObjectMeta{Namespace: "media", Name: "sonarr"}, Spec: appsv1.DeploymentSpec{Selector: selectorFor(app)}},
 			{ObjectMeta: metav1.ObjectMeta{Namespace: "media", Name: "radarr"}, Spec: appsv1.DeploymentSpec{Selector: selectorFor(map[string]string{"app": "radarr"})}},
 			{ObjectMeta: metav1.ObjectMeta{Namespace: "media", Name: "everything"}, Spec: appsv1.DeploymentSpec{Selector: &metav1.LabelSelector{}}},
+			{
+				// Two of three replicas missing, but only one pod on the down node.
+				ObjectMeta: metav1.ObjectMeta{Namespace: "media", Name: "big"},
+				Spec:       appsv1.DeploymentSpec{Replicas: int32Ptr(3), Selector: selectorFor(app)},
+				Status:     appsv1.DeploymentStatus{AvailableReplicas: 1},
+			},
 		},
 		StatefulSets: []*appsv1.StatefulSet{
 			{ObjectMeta: metav1.ObjectMeta{Namespace: "media", Name: "db"}, Spec: appsv1.StatefulSetSpec{Selector: selectorFor(map[string]string{"app": "other"})}},
 		},
 		DaemonSets: []*appsv1.DaemonSet{
-			{ObjectMeta: metav1.ObjectMeta{Namespace: "media", Name: "agent"}, Spec: appsv1.DaemonSetSpec{Selector: selectorFor(map[string]string{"app": "test"})}},
+			{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "media", Name: "agent"},
+				Spec:       appsv1.DaemonSetSpec{Selector: selectorFor(map[string]string{"app": "test"})},
+				Status:     appsv1.DaemonSetStatus{DesiredNumberScheduled: 3, NumberAvailable: 2},
+			},
+			{
+				// The rollout fails on the healthy nodes too: more is missing
+				// than the down node explains.
+				ObjectMeta: metav1.ObjectMeta{Namespace: "media", Name: "broken-rollout"},
+				Spec:       appsv1.DaemonSetSpec{Selector: selectorFor(map[string]string{"app": "test"})},
+				Status:     appsv1.DaemonSetStatus{DesiredNumberScheduled: 3, NumberAvailable: 0},
+			},
 		},
 	}
 }
@@ -76,7 +93,9 @@ func TestApplyNodeCauses(t *testing.T) {
 		{"pods of the selector in another namespace", ObjectRef{KindDeployment, "media", "radarr"}, ""},
 		{"empty selector", ObjectRef{KindDeployment, "media", "everything"}, ""},
 		{"selector matches nothing", ObjectRef{KindStatefulSet, "media", "db"}, ""},
-		{"daemonset on an ignored down node", ObjectRef{KindDaemonSet, "media", "agent"}, "pi-test"},
+		{"daemonset missing only its pod on the down node", ObjectRef{KindDaemonSet, "media", "agent"}, "pi-test"},
+		{"daemonset missing more than the down node explains", ObjectRef{KindDaemonSet, "media", "broken-rollout"}, ""},
+		{"deployment missing more than the down node explains", ObjectRef{KindDeployment, "media", "big"}, ""},
 		{"workload not in the snapshot", ObjectRef{KindDeployment, "media", "gone"}, ""},
 		{"the node itself", ObjectRef{KindNode, "", "pi-2"}, ""},
 		{"other kinds never", ObjectRef{KindPVC, "other", "radarr"}, ""},
@@ -85,7 +104,7 @@ func TestApplyNodeCauses(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			in := newFinding("test", Warning, tt.ref, "Reason", "message")
-			out := ApplyNodeCauses(snap, []Finding{in})
+			out := ApplyNodeCauses(snap, []Finding{in}, DownNodes(snap))
 			if len(out) != 1 {
 				t.Fatalf("got %d findings, want 1", len(out))
 			}
@@ -105,7 +124,15 @@ func TestApplyNodeCausesWithoutDownNodes(t *testing.T) {
 		Pods:  []*corev1.Pod{podOn("media", "jellyfin", "pi-1", nil)},
 	}
 	in := []Finding{newFinding("test", Critical, ObjectRef{KindPod, "media", "jellyfin"}, "Reason", "message")}
-	if out := ApplyNodeCauses(snap, in); out[0].CausedBy != "" {
+	if out := ApplyNodeCauses(snap, in, DownNodes(snap)); out[0].CausedBy != "" {
+		t.Errorf("CausedBy = %q, want none", out[0].CausedBy)
+	}
+}
+
+func TestApplyNodeCausesHoldsNothingBackWithoutDownNodes(t *testing.T) {
+	snap := nodeCauseSnapshot() // pi-2 is down, but the engine passes no down nodes
+	in := []Finding{newFinding("test", Critical, ObjectRef{KindPod, "other", "radarr"}, "Reason", "message")}
+	if out := ApplyNodeCauses(snap, in, nil); out[0].CausedBy != "" {
 		t.Errorf("CausedBy = %q, want none", out[0].CausedBy)
 	}
 }

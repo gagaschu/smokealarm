@@ -227,7 +227,7 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 		view := newProblemView(rec, now)
 		view.NotifiesOnly, view.NotifiesNobody = s.audience(rec)
 		view.DowntimeUntil = downtimeEnds[rec.Key]
-		if rec.Check == checks.CheckNodeNotReady {
+		if rec.IsNodeDown() {
 			view.HoldsBack = len(held[rec.Object.Name])
 		}
 		data.Problems = append(data.Problems, view)
@@ -347,7 +347,7 @@ func (s *Server) unacknowledge(w http.ResponseWriter, r *http.Request) {
 func sortProblems(records []store.Record) {
 	sort.Slice(records, func(i, j int) bool {
 		a, b := records[i], records[j]
-		aNode, bNode := a.Check == checks.CheckNodeNotReady, b.Check == checks.CheckNodeNotReady
+		aNode, bNode := a.IsNodeDown(), b.IsNodeDown()
 		if aNode != bNode {
 			return aNode
 		}

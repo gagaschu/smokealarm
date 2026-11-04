@@ -20,15 +20,24 @@ func DownNodes(snap *Snapshot) map[string]bool {
 }
 
 // ApplyNodeCauses sets Finding.CausedBy for the problems that are consequences
-// of a node that is down, so the engine can hold them back while the node is
-// the real alarm. A consequence is a problem of a pod on a down node, or of a
-// Deployment, StatefulSet or DaemonSet with at least one of its pods on a down
-// node. Nothing else is: a pod that has no node yet (Pending) waits for room,
-// and that is worth an alarm of its own.
+// of a node that is down (one of down, see DownNodes), so the engine can hold them back while the
+// node is the real alarm. A consequence is:
+//   - a problem of a pod on a down node;
+//   - a problem of a Deployment, StatefulSet or DaemonSet whose missing
+//     replicas are all explained by the down nodes: no more replicas are
+//     unavailable than it has pods (by its selector) on down nodes. Pods on a
+//     node that does not answer stay bound to it, also while they are being
+//     evicted, so they are still counted then. A workload that misses more,
+//     for example a DaemonSet whose rollout fails on the healthy nodes, is
+//     not held back.
+//
+// Nothing else is: a pod that has no node yet (Pending) waits for room, and
+// that is worth an alarm of its own.
 //
 // Like ApplyAnnotations it runs after the checks, so they stay unaware of it.
-func ApplyNodeCauses(snap *Snapshot, findings []Finding) []Finding {
-	down := DownNodes(snap)
+// The engine passes an empty down when nobody would hear about the node
+// (node-not-ready switched off), so nothing is held back then.
+func ApplyNodeCauses(snap *Snapshot, findings []Finding, down map[string]bool) []Finding {
 	if len(down) == 0 || len(findings) == 0 {
 		return findings // the usual case: nothing to look up
 	}
@@ -36,7 +45,7 @@ func ApplyNodeCauses(snap *Snapshot, findings []Finding) []Finding {
 	for _, pod := range snap.Pods {
 		pods[pod.Namespace+"/"+pod.Name] = pod
 	}
-	selectors := workloadSelectors(snap)
+	workloads := workloadsByKey(snap)
 
 	out := make([]Finding, 0, len(findings))
 	for _, f := range findings {
@@ -46,8 +55,8 @@ func ApplyNodeCauses(snap *Snapshot, findings []Finding) []Finding {
 				f.CausedBy = pod.Spec.NodeName
 			}
 		case KindDeployment, KindStatefulSet, KindDaemonSet:
-			if selector, found := selectors[objectKey(f.Object)]; found {
-				f.CausedBy = downNodeOfPods(snap.Pods, f.Object.Namespace, selector, down)
+			if w, found := workloads[objectKey(f.Object)]; found {
+				f.CausedBy = w.downNode(snap.Pods, f.Object.Namespace, down)
 			}
 		}
 		out = append(out, f)
@@ -55,40 +64,60 @@ func ApplyNodeCauses(snap *Snapshot, findings []Finding) []Finding {
 	return out
 }
 
-// workloadSelectors returns the pod selector of every Deployment, StatefulSet
-// and DaemonSet, by objectKey. A selector that cannot be parsed is left out;
-// the API server does not accept such objects anyway.
-func workloadSelectors(snap *Snapshot) map[string]labels.Selector {
-	selectors := map[string]labels.Selector{}
-	add := func(kind string, meta metav1.ObjectMeta, selector *metav1.LabelSelector) {
+// workload is what ApplyNodeCauses needs to know about a Deployment,
+// StatefulSet or DaemonSet.
+type workload struct {
+	selector    labels.Selector
+	unavailable int32 // desired minus available replicas
+}
+
+// workloadsByKey returns every Deployment, StatefulSet and DaemonSet with a
+// usable pod selector, by objectKey. A selector that cannot be parsed is left
+// out (the API server does not accept such objects anyway), and so is an empty
+// one, which would match every pod in the namespace.
+func workloadsByKey(snap *Snapshot) map[string]workload {
+	result := map[string]workload{}
+	add := func(kind string, meta metav1.ObjectMeta, selector *metav1.LabelSelector, desired, available int32) {
 		if selector == nil {
 			return
 		}
 		parsed, err := metav1.LabelSelectorAsSelector(selector)
 		if err != nil || parsed.Empty() {
-			return // an empty selector would match every pod in the namespace
+			return
 		}
-		selectors[objectKey(ObjectRef{Kind: kind, Namespace: meta.Namespace, Name: meta.Name})] = parsed
+		key := objectKey(ObjectRef{Kind: kind, Namespace: meta.Namespace, Name: meta.Name})
+		result[key] = workload{selector: parsed, unavailable: desired - available}
 	}
+	// The same numbers as WorkloadReplicas.
 	for _, o := range snap.Deployments {
-		add(KindDeployment, o.ObjectMeta, o.Spec.Selector)
+		add(KindDeployment, o.ObjectMeta, o.Spec.Selector, desiredReplicas(o.Spec.Replicas), o.Status.AvailableReplicas)
 	}
 	for _, o := range snap.StatefulSets {
-		add(KindStatefulSet, o.ObjectMeta, o.Spec.Selector)
+		add(KindStatefulSet, o.ObjectMeta, o.Spec.Selector, desiredReplicas(o.Spec.Replicas), o.Status.AvailableReplicas)
 	}
 	for _, o := range snap.DaemonSets {
-		add(KindDaemonSet, o.ObjectMeta, o.Spec.Selector)
+		add(KindDaemonSet, o.ObjectMeta, o.Spec.Selector, o.Status.DesiredNumberScheduled, o.Status.NumberAvailable)
 	}
-	return selectors
+	return result
 }
 
-// downNodeOfPods returns the down node of the first matching pod (in the order
-// of the snapshot) that runs on one, or "" if there is none.
-func downNodeOfPods(pods []*corev1.Pod, namespace string, selector labels.Selector, down map[string]bool) string {
+// downNode returns the down node of the workload's first pod on one (in the
+// order of the snapshot), if the pods on down nodes explain all its missing
+// replicas, and "" otherwise.
+func (w workload) downNode(pods []*corev1.Pod, namespace string, down map[string]bool) string {
+	first := ""
+	var onDownNodes int32
 	for _, pod := range pods {
-		if pod.Namespace == namespace && down[pod.Spec.NodeName] && selector.Matches(labels.Set(pod.Labels)) {
-			return pod.Spec.NodeName
+		if pod.Namespace != namespace || !down[pod.Spec.NodeName] || !w.selector.Matches(labels.Set(pod.Labels)) {
+			continue
 		}
+		if first == "" {
+			first = pod.Spec.NodeName
+		}
+		onDownNodes++
 	}
-	return ""
+	if onDownNodes == 0 || w.unavailable > onDownNodes {
+		return ""
+	}
+	return first
 }

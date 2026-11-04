@@ -23,7 +23,17 @@ func nodeHarness(t *testing.T) *harness {
 	h := newHarness(t)
 	h.nodes = []*corev1.Node{readyNode("pi-1", corev1.ConditionTrue), readyNode("pi-2", corev1.ConditionTrue)}
 	h.pods = []*corev1.Pod{podOn("a", "pi-2"), podOn("b", "pi-2"), podOn("c", "pi-1"), podOn("waiting", "")}
+	h.enableNodeCheck()
 	return h
+}
+
+// enableNodeCheck adds node-not-ready to the checks that run. Consequences are
+// held back only while it runs; the fake check still returns all findings.
+func (h *harness) enableNodeCheck() {
+	h.engine.Checks = append(h.engine.Checks, checks.Check{
+		Name: checks.CheckNodeNotReady,
+		Run:  func(*checks.Snapshot, checks.Options) []checks.Finding { return nil },
+	})
 }
 
 func readyNode(name string, status corev1.ConditionStatus) *corev1.Node {
@@ -166,17 +176,46 @@ func TestConsequenceThatLastsAfterTheNodeIsBackIsReported(t *testing.T) {
 	}
 }
 
-func TestConsequenceStaysHeldBackWhenItMovesAwayFromTheNode(t *testing.T) {
+// Review of phase 15: a problem that the down node no longer explains is a
+// problem of its own, even while the node is still down.
+func TestConsequenceThatNoLongerDependsOnTheNodeIsReported(t *testing.T) {
 	h := nodeHarness(t)
 	h.setNode("pi-2", corev1.ConditionUnknown)
 	h.findings = []checks.Finding{nodeDown("pi-2"), finding("a", checks.Critical)}
 	h.mustRun(0)
+	h.mustRun(2 * time.Minute)
 
-	// A replacement starts elsewhere; the problem keeps its key.
 	h.pods = []*corev1.Pod{podOn("a", "pi-1")}
-	h.mustRun(time.Minute)
-	h.mustRun(time.Hour)
+	h.mustRun(time.Minute) // released: the clock starts again
+	h.mustRun(time.Minute + 59*time.Second)
 	wantNotifications(t, h.notifier, "new:node-down-pi-2/reminders:/resolved:")
+	h.mustRun(time.Second)
+	wantNotifications(t, h.notifier, "new:node-down-pi-2/reminders:/resolved:", "new:a/reminders:/resolved:")
+}
+
+// Review of phase 15: without node-not-ready nobody would hear about the node,
+// so nothing is held back.
+func TestNothingIsHeldBackWithoutTheNodeCheck(t *testing.T) {
+	h := newHarness(t) // only the fake check runs
+	h.nodes = []*corev1.Node{readyNode("pi-2", corev1.ConditionUnknown)}
+	h.pods = []*corev1.Pod{podOn("a", "pi-2")}
+	h.findings = []checks.Finding{finding("a", checks.Critical)}
+	h.mustRun(0)
+	h.mustRun(2 * time.Minute)
+	wantNotifications(t, h.notifier, "new:a/reminders:/resolved:")
+}
+
+func TestHeldBackProblemsAreReleasedWhenTheNodeCheckIsSkipped(t *testing.T) {
+	h := nodeHarness(t)
+	h.setNode("pi-2", corev1.ConditionUnknown)
+	h.findings = []checks.Finding{nodeDown("pi-2"), finding("a", checks.Critical)}
+	h.mustRun(0)
+	h.mustRun(2 * time.Minute)
+
+	h.skipped = map[string]string{checks.CheckNodeNotReady: "no data"}
+	h.mustRun(time.Minute)
+	h.mustRun(2 * time.Minute)
+	wantNotifications(t, h.notifier, "new:node-down-pi-2/reminders:/resolved:", "new:a/reminders:/resolved:")
 }
 
 func TestIgnoredNodeStillHoldsBackItsConsequences(t *testing.T) {
@@ -230,6 +269,7 @@ func TestHeldBackProblemFiresNotAtOnceWithAlertAfterZero(t *testing.T) {
 
 func TestAffectedListFollowsTheRouting(t *testing.T) {
 	h, second := twoTargets(t)
+	h.enableNodeCheck()
 	h.nodes = []*corev1.Node{readyNode("pi-2", corev1.ConditionUnknown)}
 	h.pods = []*corev1.Pod{podOn("a", "pi-2"), podOn("b", "pi-2")}
 	h.engine.MinSeverity = map[string]checks.Severity{"second": checks.Critical}

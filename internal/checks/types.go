@@ -84,6 +84,13 @@ type Finding struct {
 	CausedBy string
 }
 
+// IsNodeDown says whether the finding is about a node that is not ready. Such
+// a problem comes first in notifications and on the overview, because the
+// problems around it are often its consequences.
+func (f Finding) IsNodeDown() bool {
+	return f.Check == CheckNodeNotReady
+}
+
 // Snapshot is a read-only copy of the cluster objects the checks need.
 type Snapshot struct {
 	Now            time.Time

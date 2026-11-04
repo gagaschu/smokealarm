@@ -55,7 +55,7 @@ func summary(n Notification) string {
 	var names []string
 	for _, a := range nodes {
 		if len(names) == maxNodeNames {
-			names[len(names)-1] = fmt.Sprintf("and %d more", len(nodes)-maxNodeNames+1)
+			names = append(names, fmt.Sprintf("and %d more", len(nodes)-maxNodeNames))
 			break
 		}
 		names = append(names, a.Object.Name)
