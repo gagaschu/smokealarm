@@ -38,7 +38,7 @@ type page struct {
 	// overview
 	Problems          []problemView
 	HeldBack          []heldBackView // problems waiting for a down node, by node
-	CriticalCount     int // for the counters below the heading
+	CriticalCount     int            // for the counters below the heading
 	WarningCount      int
 	CanAcknowledgeAny bool // explains the button once, not on every problem
 	AcknowledgedAny   bool // the same for removing an acknowledgement
