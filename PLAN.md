@@ -6,7 +6,8 @@ smokealarm runs as a single Deployment (1 replica). Every `CHECK_INTERVAL` it bu
 ```
 informers ──► kube.BuildSnapshot ──► checks.Run* ──► engine.Reconcile ──► store (SQLite)
                                                            │
-                                                           └──► notify.Notifier (mail / log)
+                                                           └──► notify.Notifier, one per target
+                                                                (mail, webhook, ntfy, Telegram, Slack, Teams / log)
 web ◄── store + engine.Status()
 ```
 
@@ -22,7 +23,7 @@ Module path: `github.com/gagaschu/smokealarm`. Go: current stable release; `go.m
 | `internal/checks` | `Snapshot`, `Finding`, `Check`, all check functions, ignore helper. **No API access, no state.** | – |
 | `internal/engine` | Main loop with ticker, `RunOnce`, `Reconcile`, notification dispatch, retention, in-memory `Status` | `checks`, `kube`, `store`, `notify` |
 | `internal/store` | SQLite (`modernc.org/sqlite`), embedded migrations (`migrations/*.sql`), finding/session/queries, retention | `checks` |
-| `internal/notify` | `Notifier` interface, `Mail` (SMTP), `Log` (slog) implementations, subject/body templates | `checks` |
+| `internal/notify` | `Notifier` interface, `Mail` (SMTP), `Webhook`, `Ntfy`, `Telegram`, `Slack`, `Teams` (net/http + encoding/json), `Log` (slog), subject/body templates and the short chat text | `checks` |
 | `internal/auth` | Password login (bcrypt), sessions, middleware, login rate limiter | `store` |
 | `internal/web` | Handlers, `html/template` templates, CSS (`go:embed`), `/healthz`, `/readyz` | `store`, `auth`, `engine` |
 | `deploy/helm/smokealarm` | Helm chart | – |
@@ -151,7 +152,7 @@ func (c *Cluster) BuildSnapshot(ctx, now) *checks.Snapshot // Snapshot.Skipped s
 type Engine struct {
     cluster  *kube.Cluster
     store    *store.Store
-    notifier notify.Notifier
+    notifiers []notify.Notifier // one per target (phase 13), at least notify.Log
     checks   []checks.Check   // enabled checks only
     opts     checks.Options
     interval, alertAfter, retention time.Duration
@@ -164,9 +165,8 @@ type Engine struct {
 type Status struct {
     LastRun        time.Time
     LastRunError   string
-    Checks         []CheckStatus // Name, Enabled bool, SkipReason string
-    LastNotifyError   string
-    LastNotifyErrorAt time.Time
+    Checks         []CheckStatus  // Name, Enabled bool, SkipReason string
+    Targets        []TargetStatus // phase 13: Name, Description, LastSentAt, LastError, LastErrorAt
 }
 func (e *Engine) Run(ctx)                       // ticker loop
 func (e *Engine) RunOnce(ctx) error             // snapshot → checks → reconcile → notify → retention
@@ -177,7 +177,7 @@ func (e *Engine) Status() Status
 1. Finding with an open record (pending/firing) → update `last_seen`, message, severity. Pending and `now - first_seen >= ALERT_AFTER` → firing (`firing_at = now`).
 2. New finding → insert as pending (immediately firing if `ALERT_AFTER = 0`).
 3. Open record no longer present **and its check ran successfully in this run** → pending: delete silently; firing: resolved (`resolved_at = now`). Records of skipped or failed checks stay untouched (no false resolves after an API error).
-4. Notify: all firing records with `firing_notified_at IS NULL` plus all resolved records with `resolved_notified_at IS NULL`. Resolved records whose firing was never reported get marked silently (the user never heard about them). Only after `Send` succeeds, set the `*_notified_at` fields; on error they stay open and get retried in the next run (survives restarts).
+4. Notify (phase 13: once per target, with that target's markers from `deliveries`): all firing records with `firing_notified_at IS NULL` plus all resolved records with `resolved_notified_at IS NULL`. Resolved records whose firing was never reported get marked silently (the user never heard about them). Only after `Send` succeeds, set the `*_notified_at` fields; on error they stay open and get retried in the next run (survives restarts).
 5. Retention: delete resolved records older than `RETENTION` and expired sessions.
 
 ### store
@@ -210,7 +210,8 @@ func (s *Store) Ping(ctx) error
 ### notify
 ```go
 type Notifier interface {
-    Name() string
+    Name() string        // stable id, stored in deliveries: "mail", "slack", "telegram:<chat>"
+    Description() string // phase 13: label without secrets for the log and the status page
     Send(ctx context.Context, n Notification) error
 }
 type Notification struct {
@@ -228,7 +229,7 @@ func Body(n Notification) (string, error) // text/template
 type Mail struct{ Host, Port, TLS, Username, Password, From, To, TLSConfig, Now } // net/smtp; starttls | tls (port 465) | none; optional PLAIN auth; multiple recipients
 type Log struct{ logger *slog.Logger } // used when no SMTP is configured, and in phases 1–3
 ```
-Telegram/webhook later as separate files `telegram.go` / `webhook.go` that implement `Notifier`; the engine does not change.
+Phase 13 adds `webhook.go`, `ntfy.go`, `telegram.go`, `slack.go` and `teams.go`, each a `Notifier` built on `post` in `http.go` (shared `*http.Client` from `NewHTTPClient`, the run's context, non-2xx = error with status and a short excerpt, URL and secrets taken out of errors), plus `ChatBody(n, limit)` in `message.go` for the chat targets.
 
 ### auth
 ```go
@@ -286,7 +287,7 @@ CREATE TABLE sessions (
 );
 CREATE INDEX sessions_expires ON sessions(expires_at);
 ```
-Implementation note (phase 3): `001_findings.sql` contains only the `findings` table; `schema_migrations` is created by the migration code itself; the `sessions` table arrives with phase 5 as `002_sessions.sql`. Phase 9 adds the column `findings.acknowledged_at` (INTEGER, nullable) in `003_acknowledge.sql`. Phase 10 adds the table `downtimes` in `004_downtimes.sql`.
+Implementation note (phase 3): `001_findings.sql` contains only the `findings` table; `schema_migrations` is created by the migration code itself; the `sessions` table arrives with phase 5 as `002_sessions.sql`. Phase 9 adds the column `findings.acknowledged_at` (INTEGER, nullable) in `003_acknowledge.sql`. Phase 10 adds the table `downtimes` in `004_downtimes.sql`. Phase 13 adds the tables `deliveries` (finding_id, target, firing_notified_at, resolved_notified_at; one row per finding and target) and `targets` (name) in `005_deliveries.sql`; the marker columns in `findings` stay as the summary over all targets.
 Migrations: files `NNN_name.sql` are embedded, applied in order, each in a transaction; the version goes into `schema_migrations`.
 
 ## 5. Environment variables
@@ -319,6 +320,16 @@ Durations: Go format (`30s`, `5m`, `2h`) plus a `d` suffix for days (`30d`). Lis
 | `SMOKEALARM_SMTP_PASSWORD` | – | Required if username is set |
 | `SMOKEALARM_SMTP_FROM` | required when mail is on | Sender address |
 | `SMOKEALARM_SMTP_TO` | required when mail is on | Recipient list |
+| `SMOKEALARM_WEBHOOK_URL` | – | Secret; switches the webhook on (phase 13) |
+| `SMOKEALARM_WEBHOOK_HEADER` | – | Secret; `Name: value` |
+| `SMOKEALARM_NTFY_TOPIC` | – | Secret; switches ntfy on |
+| `SMOKEALARM_NTFY_URL` | `https://ntfy.sh` | ntfy server |
+| `SMOKEALARM_NTFY_TOKEN` | – | Secret; access token |
+| `SMOKEALARM_TELEGRAM_BOT_TOKEN` | – | Secret; switches Telegram on |
+| `SMOKEALARM_TELEGRAM_CHAT_IDS` | required when Telegram is on | List of numeric ids or `@channel` |
+| `SMOKEALARM_SLACK_WEBHOOK_URL` | – | Secret; switches Slack on |
+| `SMOKEALARM_TEAMS_WEBHOOK_URL` | – | Secret; switches Teams on (Workflows webhooks only) |
+| `SMOKEALARM_NOTIFY_ALLOW_HTTP` | `false` | Plain http for the webhook and ntfy server |
 | `KUBECONFIG` | – | Standard variable for local runs (see deviations) |
 
 Validation collects all errors and exits with one clear message (e.g. `config: SMOKEALARM_ADMIN_USER is required; SMOKEALARM_SMTP_PORT: invalid number "abc"`). Unknown check names in `DISABLED_CHECKS` are an error.
@@ -339,7 +350,19 @@ Every phase: own branch from main, unit tests with fake objects, `go build`/`go 
 11. **phase-11-remove-acknowledge** – a button to take an acknowledgement back. No migration and no change to the engine; tests for engine, store and handlers.
 12. **phase-12-ui-design** – a new look for the web UI: stylesheet, templates, inline SVG icons (`templates/icons.html`), favicon, and counters of critical problems and warnings on the overview. No change to behavior, texts or routes; tests for the counters, the favicon and templates without `style` attributes. The history table has five columns instead of seven (the duration below the time, the severity above the reason), so the downtime button stays visible on screens from about 1000 px. Screenshots for the README in `docs/screenshots/`.
 
+13. **phase-13-notify-targets** – more notification targets besides mail: webhook, ntfy, Telegram, Slack, Teams (Workflows), standard library only. Per-target delivery tracking in migration `005_deliveries.sql`; status page per target; Helm values with secrets in the Secret only. Tests per target with `httptest` (no network), golden files for every format, config validation, engine and store tests for partial failure, restart, acknowledge and downtimes with two targets.
+
 ## 7. Deliberate deviations / decisions
+- **Notification targets (phase 13), per-target delivery (decided by the maintainer):** each target has its own "reported" markers in `deliveries`, and the engine runs the existing notify logic once per target. A target that fails is retried on its own; the others get no duplicates, also after a restart. Every rule (ALERT_AFTER, combined message, reminders, acknowledge, downtimes) applies per target as it did to mail; each target has its own reminder clock. The alternatives were all-or-nothing (no schema change, but duplicates at every other target on every outage) and best effort (messages lost).
+- **Phase 13, the summary markers:** `findings.firing_notified_at`/`resolved_notified_at` stay and mean "reported to at least one target". `reconcile`, the escalation rule and the web UI keep using them unchanged. An escalation is named explicitly in `Changes.Escalated`; `Apply` and `FinishDowntime` then clear the markers of every target, and all of them hear about it again.
+- **Phase 13, adding and removing targets:** `SyncTargets` runs at startup. A new target gets no history, but it does hear about what is firing and not acknowledged: otherwise it would stay silent during an alarm and then report only its end. *(Changed in the review of phase 13; before, it copied the firing markers too.)* A resolved problem it never heard about is closed without a message; the end of an acknowledged one is still sent, as for every target. Only the first start after the upgrade from phase 12 (no target known yet) copies all summary markers, because they are what mail or log has already told, so nothing is sent twice; a target added in that same step is treated alike. A target no longer configured is forgotten with its rows; if it comes back, it counts as new again. The table `targets` is needed so that a target that has never delivered anything is not re-seeded on every restart.
+- **Phase 13, no `notify.Multi`:** with per-target markers the targets can need different content (one has caught up, another has not), so the fan-out has to know about the markers. One loop in the engine is simpler than a type that hides it.
+- **Phase 13, ids and labels:** `Notifier.Name()` is the stable id in the database; `Description()` is the label without secrets. Telegram gets one notifier per chat id (`telegram:<id>`), so a chat that fails does not repeat the message in the others. The ntfy topic is not shown anywhere, because on ntfy.sh it works like a password; the chart keeps it in the Secret.
+- **Phase 13, ntfy priority:** a new critical problem is `urgent` (a smoke alarm must get through), reminders only are `high` (known, but still on fire), new warnings are `default`, resolved only is `low`. Tags: `rotating_light`, `warning`, `white_check_mark`.
+- **Phase 13, length limits:** `ChatBody` counts bytes (exact for ntfy, on the safe side for character limits) and ends with "… and N more, see <base URL>". Telegram: 4096 characters per message, minus the headline. ntfy: 4096 bytes, a longer body becomes an attachment, so 4000. Slack: `text` is cut at 40,000 characters, but a section block holds 3000 and a header 150, so 3000 and 150. Teams: about 28 KB per message including the card. The Teams card has one TextBlock per line, because single line breaks inside one block are not reliably kept, and those blocks count too: the text starts at 20,000 and is shortened until the whole message is at most 26,000 bytes.
+- **Phase 13, security:** no redirects are followed (a secret must not go to another URL, and a misconfigured URL shows up as an error). `http.go` replaces the `*url.Error` from net/http by its cause and removes the URL, its path and query and the known secrets from errors and response excerpts. Plain http only for localhost, or for the webhook and ntfy with `SMOKEALARM_NOTIFY_ALLOW_HTTP` (relays in the cluster usually speak plain http); Slack, Teams and Telegram always https. Config errors name the variable, never a secret value. Old Teams connector URLs (`*.webhook.office.com`) are refused with a hint.
+- **Phase 13, Helm:** secrets (`webhook.url`, `webhook.header`, `ntfy.topic`, `ntfy.token`, `telegram.botToken`, `slack.webhookUrl`, `teams.webhookUrl`) go into the chart's Secret only; with `existingSecret` the chart refuses them in the values instead of ignoring them. Telegram chat ids must be strings, because Helm turns bare numbers into floats (`-1001234567890` → `-1.00123456789e+12`).
+- **Phase 13, routing later (not implemented):** because the engine builds one report per target, a filter per target (e.g. minimum severity) fits into `notifyTarget` before `Send`, configured by new optional variables per group (`SMOKEALARM_SLACK_MIN_SEVERITY`) whose defaults are today's behavior, so no configuration breaks. Several instances of one kind could get suffixed ids (`slack:ops`) without touching stored data.
 - **New look (phase 12):** icons are inline SVG in `templates/icons.html` instead of image files or an icon font, so they need no extra request, take the text color and work with the CSP `default-src 'self'`. That policy also blocks `style` attributes (a test checks the templates) and `data:` images, so color and line width of the icons are set in the stylesheet. No web fonts: the system font is used, as before. The favicon is a static SVG file under `/static/`, which needs no login. The login page has no top bar; its card shows the logo.
 - **README screenshots (phase 12):** PNG files in `docs/screenshots/`, taken by `TestScreenshots` in `internal/web` (`make screenshots`, which sets `UPDATE_SCREENSHOTS=1` like `UPDATE_GOLDEN=1` for the mails). It renders the pages from made-up data through the real handlers, serves them with an `httptest` server and calls headless Chrome from the command line (`--screenshot`, `--force-dark-mode`), so it needs no Node or Playwright and no new Go dependency. Chrome can only take a picture of its window, so the window is taller than the page and the test cuts off the empty background with the standard `image` packages. `pngquant`, if installed, reduces the files to 256 colors (about 430 KB together instead of about three times that). Normal test runs skip it; with `UPDATE_SCREENSHOTS=1` a missing Chrome is an error. `docs` is in `.dockerignore`, so the images do not go into the build context.
 - **Removing an acknowledgement (phase 11, rules agreed with the maintainer):** the problem then behaves like any other, and the engine needs no change. An overdue reminder or a first mail that was held back goes out in the next run, so a mail can follow right away. A grace period would need a new column or a false `firing_notified_at`. A problem that is only a warning at that moment cannot be acknowledged again until it is critical, because warnings cannot be acknowledged.
@@ -370,7 +393,7 @@ Every phase: own branch from main, unit tests with fake objects, `go build`/`go 
 - **Mail (phase 4):** STARTTLS is required in `starttls` mode (a server without it is an error, no silent downgrade); `none` is for local testing. The body is quoted-printable. There is no connection test at startup, so a mail server that is briefly down at boot does not stop monitoring.
 - **Golden tests use `UPDATE_GOLDEN=1`** instead of a `-update` flag, because a `flag` variable would be a package-level variable.
 - **`Status` starts minimal (phase 4):** only `NotifierName`, `LastNotifyError` and `LastNotifyErrorAt`; the error is cleared by the next successful send. `LastRun`, checks and the rest follow with the status page in phase 5.
-- **Status page data (phase 5):** `engine.Status` has no `MailConfigured` field; "mail configured" is derived from `NotifierName == "mail"`. Skipped checks come from `Engine.SkippedChecks`, which main fills (phase 6 adds "CRD not installed" without changing the engine).
+- **Status page data (phase 5):** `engine.Status` has no `MailConfigured` field; "mail configured" is derived from `NotifierName == "mail"`. *(Phase 13: replaced by `Status.Targets`, one entry per target.)* Skipped checks come from `Engine.SkippedChecks`, which main fills (phase 6 adds "CRD not installed" without changing the engine).
 - **Overview shows firing problems only (phase 5):** pending ones have not lasted `ALERT_AFTER` yet; listing them would contradict the mails. Before the first run it says "Starting up" instead of "All good".
 - **`web.Server` (phase 5):** dependencies are plain fields (`Ready func(ctx) error`, `Status func() engine.Status`, `Store`, `Sessions`, ...). `Handler()` parses the templates and returns an error if one is broken. `/readyz` in main = informer caches synced **and** database ping.
 - **Second `go:embed` variable (phase 5):** `assets` in `internal/web` (templates and CSS), never modified. The first one is `migrationFiles` in `internal/store`.

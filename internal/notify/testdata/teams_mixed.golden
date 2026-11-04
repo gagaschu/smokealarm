@@ -1,0 +1,78 @@
+{
+  "attachments": [
+    {
+      "content": {
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "actions": [
+          {
+            "title": "Open smokealarm",
+            "type": "Action.OpenUrl",
+            "url": "https://smokealarm.example.com"
+          }
+        ],
+        "body": [
+          {
+            "size": "Medium",
+            "text": "[smokealarm] 2 new problems, 1 still critical, 1 resolved",
+            "type": "TextBlock",
+            "weight": "Bolder",
+            "wrap": true
+          },
+          {
+            "spacing": "Small",
+            "text": "New:",
+            "type": "TextBlock",
+            "wrap": true
+          },
+          {
+            "spacing": "None",
+            "text": "- CRITICAL Pod media/jellyfin: CrashLoopBackOff (since 2026-11-03 10:00 UTC)",
+            "type": "TextBlock",
+            "wrap": true
+          },
+          {
+            "spacing": "None",
+            "text": "- WARNING Deployment media/sonarr: ReplicasUnavailable (since 2026-11-03 10:30 UTC)",
+            "type": "TextBlock",
+            "wrap": true
+          },
+          {
+            "spacing": "None",
+            "text": "Still critical:",
+            "type": "TextBlock",
+            "wrap": true
+          },
+          {
+            "spacing": "None",
+            "text": "- Node pi-2: NotReady (since 2026-11-03 10:00 UTC)",
+            "type": "TextBlock",
+            "wrap": true
+          },
+          {
+            "spacing": "None",
+            "text": "Resolved:",
+            "type": "TextBlock",
+            "wrap": true
+          },
+          {
+            "spacing": "None",
+            "text": "- Deployment media/sonarr: ReplicasUnavailable (since 2026-11-03 10:30 UTC, resolved 2026-11-03 12:30 UTC)",
+            "type": "TextBlock",
+            "wrap": true
+          },
+          {
+            "spacing": "Medium",
+            "text": "https://smokealarm.example.com",
+            "type": "TextBlock",
+            "wrap": true
+          }
+        ],
+        "type": "AdaptiveCard",
+        "version": "1.4"
+      },
+      "contentType": "application/vnd.microsoft.card.adaptive",
+      "contentUrl": null
+    }
+  ],
+  "type": "message"
+}

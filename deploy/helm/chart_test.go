@@ -531,6 +531,10 @@ func TestNotes(t *testing.T) {
 			[]string{"http://smoke.example.com"}, []string{"cookieSecure"}},
 		{"disabled checks warn about resolved mails", "disabledChecks: [pod-restarts]\n",
 			[]string{"Disabled checks: pod-restarts", `"resolved"`}, nil},
+		{"no target", "", []string{"No notification target is configured"}, nil},
+		{"mail only", "smtp:\n  host: mail.example.com\n  from: a@example.com\n  to: [b@example.com]\n",
+			nil, []string{"No notification target"}},
+		{"ntfy only", "notifications:\n  ntfy:\n    topic: alerts\n", nil, []string{"No notification target"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -601,6 +605,90 @@ func TestMailLoginGoesIntoTheSecret(t *testing.T) {
 	out, err := helmTemplate(t, "smokealarm", baseValues, "smtp:\n  username: alice\n")
 	if err == nil || !strings.Contains(out, "smtp.password") {
 		t.Errorf("err = %v, output %q; want an error: username without password", err, out)
+	}
+}
+
+func TestNoNotificationTargetByDefault(t *testing.T) {
+	for name := range render(t, "").environment() {
+		for _, prefix := range []string{"SMOKEALARM_WEBHOOK_", "SMOKEALARM_NTFY_", "SMOKEALARM_TELEGRAM_", "SMOKEALARM_SLACK_", "SMOKEALARM_TEAMS_", "SMOKEALARM_NOTIFY_"} {
+			if strings.HasPrefix(name, prefix) {
+				t.Errorf("%s is set although no target is configured", name)
+			}
+		}
+	}
+}
+
+// Tokens and webhook URLs belong in the Secret, like the SMTP password.
+func TestNotificationSecretsAreOnlyInTheSecret(t *testing.T) {
+	r := render(t, everySetting)
+	var secret corev1.Secret
+	r.as("Secret", &secret)
+	secretKeys := []string{
+		"SMOKEALARM_WEBHOOK_URL", "SMOKEALARM_WEBHOOK_HEADER", "SMOKEALARM_NTFY_TOPIC", "SMOKEALARM_NTFY_TOKEN",
+		"SMOKEALARM_TELEGRAM_BOT_TOKEN", "SMOKEALARM_SLACK_WEBHOOK_URL", "SMOKEALARM_TEAMS_WEBHOOK_URL",
+	}
+	env := r.env()
+	raw, _ := r.find("Deployment").MarshalJSON()
+	for _, key := range secretKeys {
+		value := secret.StringData[key]
+		if value == "" {
+			t.Errorf("%s is not in the Secret", key)
+			continue
+		}
+		if _, found := env[key]; found || strings.Contains(string(raw), value) {
+			t.Errorf("%s appears in the Deployment; it belongs in the Secret only", key)
+		}
+	}
+	for _, key := range []string{"SMOKEALARM_NTFY_URL", "SMOKEALARM_TELEGRAM_CHAT_IDS", "SMOKEALARM_NOTIFY_ALLOW_HTTP"} {
+		if _, found := env[key]; !found {
+			t.Errorf("%s is not a plain variable of the Deployment", key)
+		}
+	}
+}
+
+func TestNotificationSecretsWithExistingSecret(t *testing.T) {
+	out, err := helmTemplate(t, "smokealarm", "existingSecret: my-secret\nnotifications:\n  telegram:\n    chatIds: [\"42\"]\n")
+	if err != nil {
+		t.Fatalf("helm template: %v\n%s", err, out)
+	}
+	r := parseRelease(t, out)
+	if r.has("Secret") || r.env()["SMOKEALARM_TELEGRAM_CHAT_IDS"] != "42" {
+		t.Errorf("want no Secret and the chat id as a plain variable, got %v and %v", r.kinds(), r.env())
+	}
+
+	// A token in the values would be ignored silently; refuse it instead.
+	out, err = helmTemplate(t, "smokealarm", "existingSecret: my-secret\nnotifications:\n  slack:\n    webhookUrl: https://hooks.slack.com/x\n")
+	if err == nil || !strings.Contains(out, "existingSecret is set") {
+		t.Errorf("err = %v, output %q; want an error about the token in the values", err, out)
+	}
+}
+
+// Settings that make no sense alone fail the install, not the pod.
+func TestIncompleteNotificationTargetFailsTheInstall(t *testing.T) {
+	tests := []struct{ name, values, want string }{
+		{"telegram token without chats", "notifications:\n  telegram:\n    botToken: 1:abc\n", "chatIds"},
+		{"telegram chats without token", "notifications:\n  telegram:\n    chatIds: [\"42\"]\n", "botToken"},
+		{"ntfy token without topic", "notifications:\n  ntfy:\n    token: tk_abc\n", "ntfy.topic"},
+		{"webhook header without url", "notifications:\n  webhook:\n    header: \"X-Key: abc\"\n", "webhook.url"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := helmTemplate(t, "smokealarm", baseValues, tt.values)
+			if err == nil || !strings.Contains(out, tt.want) {
+				t.Errorf("err = %v, output %q; want an error about %s", err, out, tt.want)
+			}
+		})
+	}
+	// With an existing Secret, the token of the chats is in there.
+	if _, err := helmTemplate(t, "smokealarm", "existingSecret: my-secret\nnotifications:\n  telegram:\n    chatIds: [\"42\"]\n"); err != nil {
+		t.Errorf("chat ids with an existing Secret: %v", err)
+	}
+}
+
+func TestTelegramChatIDsMustBeQuoted(t *testing.T) {
+	out, err := helmTemplate(t, "smokealarm", baseValues, "notifications:\n  telegram:\n    botToken: 1:abc\n    chatIds: [-1001234567890]\n")
+	if err == nil || !strings.Contains(out, "in quotes") {
+		t.Errorf("err = %v, output %q; want an error about the bare number", err, out)
 	}
 }
 
@@ -708,6 +796,22 @@ smtp:
   to: [me@example.com, ops@example.com]
   username: alice
   password: s3cret
+notifications:
+  allowHttp: true
+  webhook:
+    url: https://relay.example.org/hook
+    header: "Authorization: Bearer webhook-token"
+  ntfy:
+    server: https://ntfy.example.org
+    topic: smokealarm-alerts
+    token: tk_ntfy
+  telegram:
+    botToken: "123456:telegram-token"
+    chatIds: ["-1001234567890", "@ops_channel"]
+  slack:
+    webhookUrl: https://hooks.slack.com/services/T0/B0/slack-secret
+  teams:
+    webhookUrl: https://example.logic.azure.com/workflows/teams-secret
 `
 
 // config.Load ignores variables it does not know, so a typo in a template would
@@ -741,6 +845,16 @@ func TestEverySettingBecomesAnEnvironmentVariable(t *testing.T) {
 		"SMOKEALARM_SMTP_TO":                  "me@example.com,ops@example.com",
 		"SMOKEALARM_SMTP_USERNAME":            "alice",
 		"SMOKEALARM_SMTP_PASSWORD":            "s3cret",
+		"SMOKEALARM_NOTIFY_ALLOW_HTTP":        "true",
+		"SMOKEALARM_WEBHOOK_URL":              "https://relay.example.org/hook",
+		"SMOKEALARM_WEBHOOK_HEADER":           "Authorization: Bearer webhook-token",
+		"SMOKEALARM_NTFY_URL":                 "https://ntfy.example.org",
+		"SMOKEALARM_NTFY_TOPIC":               "smokealarm-alerts",
+		"SMOKEALARM_NTFY_TOKEN":               "tk_ntfy",
+		"SMOKEALARM_TELEGRAM_BOT_TOKEN":       "123456:telegram-token",
+		"SMOKEALARM_TELEGRAM_CHAT_IDS":        "-1001234567890,@ops_channel",
+		"SMOKEALARM_SLACK_WEBHOOK_URL":        "https://hooks.slack.com/services/T0/B0/slack-secret",
+		"SMOKEALARM_TEAMS_WEBHOOK_URL":        "https://example.logic.azure.com/workflows/teams-secret",
 	}
 	for name, value := range want {
 		if got[name] != value {
@@ -773,7 +887,8 @@ func TestRenderedEnvironmentIsAValidConfig(t *testing.T) {
 			}
 			if cfg.CheckInterval != 45*time.Second || cfg.Retention != 14*24*time.Hour || cfg.SessionTTL != 72*time.Hour ||
 				cfg.PodPendingAfter != 7*time.Minute || cfg.RestartThreshold != 10 || cfg.CookieSecure ||
-				!cfg.SMTP.Enabled() || len(cfg.SMTP.To) != 2 || len(cfg.IgnoreNamespaces) != 2 {
+				!cfg.SMTP.Enabled() || len(cfg.SMTP.To) != 2 || len(cfg.IgnoreNamespaces) != 2 ||
+				cfg.Notify.WebhookHeaderName != "Authorization" || len(cfg.Notify.TelegramChatIDs) != 2 || !cfg.Notify.AllowHTTP {
 				t.Errorf("config = %+v, not what the values say", cfg)
 			}
 		})

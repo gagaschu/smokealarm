@@ -20,14 +20,22 @@ import (
 var testStart = time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
 
 // fakeNotifier records what it was asked to send. When fail is set it
-// refuses, like a mail server that is down.
+// refuses, like a mail server that is down. An empty name means "fake".
 type fakeNotifier struct {
+	name     string
 	attempts int
 	sent     []notify.Notification
 	fail     bool
 }
 
-func (f *fakeNotifier) Name() string { return "fake" }
+func (f *fakeNotifier) Name() string {
+	if f.name == "" {
+		return "fake"
+	}
+	return f.name
+}
+
+func (f *fakeNotifier) Description() string { return f.Name() + " (test)" }
 
 func (f *fakeNotifier) Send(_ context.Context, n notify.Notification) error {
 	f.attempts++
@@ -44,7 +52,8 @@ type harness struct {
 	t         *testing.T
 	path      string
 	engine    *Engine
-	notifier  *fakeNotifier
+	notifier  *fakeNotifier   // the first target
+	others    []*fakeNotifier // more targets, see addTarget
 	findings  []checks.Finding
 	skipped   map[string]string // what the snapshot reports as unable to run
 	checkRuns int               // how often the fake check was executed
@@ -74,6 +83,7 @@ func (h *harness) start() {
 		h.t.Fatalf("store.Open: %v", err)
 	}
 	h.t.Cleanup(func() { _ = db.Close() })
+	h.syncTargets(db)
 
 	h.engine = &Engine{
 		Snapshot: func(_ context.Context, now time.Time) *checks.Snapshot {
@@ -89,10 +99,41 @@ func (h *harness) start() {
 		AlertAfter: 2 * time.Minute,
 		Retention:  30 * 24 * time.Hour,
 		Store:      db,
-		Notifier:   h.notifier,
+		Notifiers:  h.notifiers(),
 		Now:        func() time.Time { return h.now },
 		Logger:     slog.New(slog.NewTextHandler(h.logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
 	}
+}
+
+func (h *harness) notifiers() []notify.Notifier {
+	list := []notify.Notifier{h.notifier}
+	for _, n := range h.others {
+		list = append(list, n)
+	}
+	return list
+}
+
+// syncTargets registers the targets, as main does at startup.
+func (h *harness) syncTargets(db *store.Store) {
+	h.t.Helper()
+	var names []string
+	for _, n := range h.notifiers() {
+		names = append(names, n.Name())
+	}
+	if _, _, err := db.SyncTargets(context.Background(), names); err != nil {
+		h.t.Fatalf("SyncTargets: %v", err)
+	}
+}
+
+// addTarget adds another notification target, as if the process had just
+// been started with it in the configuration.
+func (h *harness) addTarget(name string) *fakeNotifier {
+	h.t.Helper()
+	n := &fakeNotifier{name: name}
+	h.others = append(h.others, n)
+	h.engine.Notifiers = h.notifiers()
+	h.syncTargets(h.engine.Store)
+	return n
 }
 
 func (h *harness) restart() {
@@ -307,8 +348,9 @@ func TestOneNotificationForSeveralChanges(t *testing.T) {
 
 func TestStatusShowsSendErrorUntilNextSuccess(t *testing.T) {
 	h := newHarness(t)
-	if got := h.engine.Status(); got.NotifierName != "fake" || got.LastNotifyError != "" {
-		t.Fatalf("initial status = %+v", got)
+	initial := h.engine.Status().Targets
+	if len(initial) != 1 || initial[0].Name != "fake" || initial[0].Description != "fake (test)" || initial[0].LastError != "" {
+		t.Fatalf("initial targets = %+v", initial)
 	}
 
 	h.findings = []checks.Finding{finding("a", checks.Critical)}
@@ -316,15 +358,16 @@ func TestStatusShowsSendErrorUntilNextSuccess(t *testing.T) {
 	h.notifier.fail = true
 	_ = h.run(2 * time.Minute)
 
-	got := h.engine.Status()
-	if !strings.Contains(got.LastNotifyError, "smtp server unreachable") || !got.LastNotifyErrorAt.Equal(h.now) {
+	got := h.engine.Status().Targets[0]
+	if !strings.Contains(got.LastError, "smtp server unreachable") || !got.LastErrorAt.Equal(h.now) || !got.LastSentAt.IsZero() {
 		t.Errorf("status after a failed send = %+v, want the error and its time", got)
 	}
 
 	h.notifier.fail = false
 	h.mustRun(30 * time.Second)
-	if got := h.engine.Status(); got.LastNotifyError != "" || !got.LastNotifyErrorAt.IsZero() {
-		t.Errorf("status after recovery = %+v, want the error cleared", got)
+	got = h.engine.Status().Targets[0]
+	if got.LastError != "" || !got.LastErrorAt.IsZero() || !got.LastSentAt.Equal(h.now) {
+		t.Errorf("status after recovery = %+v, want the error cleared and the time of the send", got)
 	}
 }
 

@@ -1,0 +1,19 @@
+{
+  "blocks": [
+    {
+      "text": {
+        "text": "[smokealarm] 2 new problems, 1 still critical, 1 resolved",
+        "type": "plain_text"
+      },
+      "type": "header"
+    },
+    {
+      "text": {
+        "text": "New:\n- CRITICAL Pod media/jellyfin: CrashLoopBackOff (since 2026-11-03 10:00 UTC)\n- WARNING Deployment media/sonarr: ReplicasUnavailable (since 2026-11-03 10:30 UTC)\nStill critical:\n- Node pi-2: NotReady (since 2026-11-03 10:00 UTC)\nResolved:\n- Deployment media/sonarr: ReplicasUnavailable (since 2026-11-03 10:30 UTC, resolved 2026-11-03 12:30 UTC)\n\nhttps://smokealarm.example.com",
+        "type": "plain_text"
+      },
+      "type": "section"
+    }
+  ],
+  "text": "[smokealarm] 2 new problems, 1 still critical, 1 resolved"
+}

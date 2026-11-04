@@ -34,6 +34,14 @@ type ObjectRef struct {
 	Name      string
 }
 
+// Label is "Pod media/jellyfin", or "Node pi-1" for cluster-scoped objects.
+func (r ObjectRef) Label() string {
+	if r.Namespace == "" {
+		return r.Kind + " " + r.Name
+	}
+	return r.Kind + " " + r.Namespace + "/" + r.Name
+}
+
 // Finding is one detected problem.
 type Finding struct {
 	// Key identifies "the same problem" across runs. It is built from the

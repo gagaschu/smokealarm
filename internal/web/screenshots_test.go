@@ -112,10 +112,16 @@ func screenshotPages(t *testing.T) http.Handler {
 	return securityHeaders(mux)
 }
 
-// screenshotStatus is what the engine reports: mail is set up, and Argo CD is
+// screenshotStatus is what the engine reports: mail and ntfy are set up, and Argo CD is
 // not installed, so its checks are skipped.
 func screenshotStatus() engine.Status {
-	status := engine.Status{LastRun: testNow.Add(-12 * time.Second), NotifierName: "mail"}
+	status := engine.Status{
+		LastRun: testNow.Add(-12 * time.Second),
+		Targets: []engine.TargetStatus{
+			{Name: "mail", Description: "mail (smtp.example.com)", LastSentAt: testNow.Add(-2 * time.Hour)},
+			{Name: "ntfy", Description: "ntfy (ntfy.sh)", LastSentAt: testNow.Add(-2 * time.Hour)},
+		},
+	}
 	for _, check := range checks.All() {
 		state := engine.CheckStatus{Name: check.Name, Active: true}
 		if check.Requires == checks.RequiresArgoCD {

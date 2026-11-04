@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "subject": "[smokealarm] 2 new problems, 1 still critical, 1 resolved",
+  "base_url": "https://smokealarm.example.com",
+  "counts": {
+    "new": 2,
+    "reminders": 1,
+    "resolved": 1
+  },
+  "new": [
+    {
+      "key": "pod-crashloop/Pod/media/jellyfin/CrashLoopBackOff",
+      "check": "pod-crashloop",
+      "severity": "critical",
+      "object": {
+        "kind": "Pod",
+        "namespace": "media",
+        "name": "jellyfin"
+      },
+      "reason": "CrashLoopBackOff",
+      "message": "container jellyfin keeps crashing (7 restarts), last exit code 137 (Error)",
+      "since": "2026-11-03T10:00:00Z",
+      "resolved_at": null
+    },
+    {
+      "key": "workload-replicas/Deployment/media/sonarr/ReplicasUnavailable",
+      "check": "workload-replicas",
+      "severity": "warning",
+      "object": {
+        "kind": "Deployment",
+        "namespace": "media",
+        "name": "sonarr"
+      },
+      "reason": "ReplicasUnavailable",
+      "message": "1/2 replicas available",
+      "since": "2026-11-03T10:30:00Z",
+      "resolved_at": null
+    }
+  ],
+  "reminders": [
+    {
+      "key": "node-not-ready/Node//pi-2/NotReady",
+      "check": "node-not-ready",
+      "severity": "critical",
+      "object": {
+        "kind": "Node",
+        "namespace": "",
+        "name": "pi-2"
+      },
+      "reason": "NotReady",
+      "message": "node is not ready for 10m0s (status Unknown): Kubelet stopped posting node status.",
+      "since": "2026-11-03T10:00:00Z",
+      "resolved_at": null
+    }
+  ],
+  "resolved": [
+    {
+      "key": "workload-replicas/Deployment/media/sonarr/ReplicasUnavailable",
+      "check": "workload-replicas",
+      "severity": "warning",
+      "object": {
+        "kind": "Deployment",
+        "namespace": "media",
+        "name": "sonarr"
+      },
+      "reason": "ReplicasUnavailable",
+      "message": "1/2 replicas available",
+      "since": "2026-11-03T10:30:00Z",
+      "resolved_at": "2026-11-03T12:30:00Z"
+    }
+  ]
+}

@@ -11,8 +11,11 @@ type Log struct {
 	Logger *slog.Logger
 }
 
-// Name identifies the notifier in log messages.
+// Name identifies the target.
 func (l *Log) Name() string { return "log" }
+
+// Description is shown on the status page.
+func (l *Log) Description() string { return "log only" }
 
 // Send logs one line per alert. It never fails.
 func (l *Log) Send(_ context.Context, n Notification) error {

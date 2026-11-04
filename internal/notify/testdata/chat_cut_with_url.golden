@@ -1,0 +1,9 @@
+New:
+- CRITICAL Pod media/app-000: CrashLoopBackOff (since 2026-11-03 10:00 UTC)
+- CRITICAL Pod media/app-001: CrashLoopBackOff (since 2026-11-03 10:00 UTC)
+- CRITICAL Pod media/app-002: CrashLoopBackOff (since 2026-11-03 10:00 UTC)
+- CRITICAL Pod media/app-003: CrashLoopBackOff (since 2026-11-03 10:00 UTC)
+- CRITICAL Pod media/app-004: CrashLoopBackOff (since 2026-11-03 10:00 UTC)
+- CRITICAL Pod media/app-005: CrashLoopBackOff (since 2026-11-03 10:00 UTC)
+- CRITICAL Pod media/app-006: CrashLoopBackOff (since 2026-11-03 10:00 UTC)
+… and 34 more, see https://smokealarm.example.com

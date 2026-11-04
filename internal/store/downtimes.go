@@ -74,11 +74,12 @@ func (s *Store) EndDowntime(ctx context.Context, id int64, now time.Time) (strin
 }
 
 // FinishDowntime removes a downtime that has ended and clears the "reported"
-// marker of the problem if it is still firing, so it is reported again as new.
-// That is what brings back an alarm that was reported before the downtime; the
-// reminder clock then runs from this new report. An acknowledged problem keeps
-// its marker, because it stays silent until it is resolved. Both changes happen
-// in one transaction, so a restart cannot lose the mail. A downtime that was
+// marker of the problem if it is still firing, for every notification target,
+// so it is reported again as new. That is what brings back an alarm that was
+// reported before the downtime; the reminder clock then runs from this new
+// report. An acknowledged problem keeps its marker, because it stays silent
+// until it is resolved. All changes happen in one transaction, so a restart
+// cannot lose the message. A downtime that was
 // extended in the meantime is left alone.
 func (s *Store) FinishDowntime(ctx context.Context, key string, now time.Time) error {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -98,10 +99,19 @@ func (s *Store) FinishDowntime(ctx context.Context, key string, now time.Time) e
 	if deleted == 0 {
 		return nil
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE findings SET firing_notified_at = NULL
-		WHERE key = ? AND state = 'firing' AND acknowledged_at IS NULL`, key)
-	if err != nil {
+	var id int64
+	err = tx.QueryRowContext(ctx, `UPDATE findings SET firing_notified_at = NULL
+		WHERE key = ? AND state = 'firing' AND acknowledged_at IS NULL
+		RETURNING id`, key).Scan(&id)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		// Nothing is firing, or it is acknowledged: no marker to clear.
+	case err != nil:
 		return fmt.Errorf("clear marker of finding %s: %w", key, err)
+	default:
+		if err := clearFiringDeliveries(ctx, tx, id); err != nil {
+			return err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit finished downtime: %w", err)

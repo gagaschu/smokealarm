@@ -4,7 +4,7 @@
 
 smokealarm runs inside your cluster and tells you what is broken right now.
 
-It runs a fixed set of checks that need no configuration, and shows current problems and their history on a web page that also works on a phone. When a problem starts or ends, it sends you a mail.
+It runs a fixed set of checks that need no configuration, and shows current problems and their history on a web page that also works on a phone. When a problem starts or ends, it tells you: by mail, through ntfy, Telegram, Slack or Microsoft Teams, or with a webhook to anything else.
 
 ![The overview with three critical problems and two warnings](docs/screenshots/overview.png)
 
@@ -16,7 +16,7 @@ It was developed and tested with k3s on a Raspberry Pi (arm64). Nothing in it de
 
 ## How it works
 
-Every 30 seconds smokealarm runs all checks against its in-memory copy of the cluster state and compares the result with the previous run. A new problem starts as **pending**. If it is still there after `SMOKEALARM_ALERT_AFTER` (2 minutes by default), it becomes **firing** and is reported. When it goes away, it is **resolved** and reported again. A problem that disappears before the wait is over is never reported. All changes from one run go into a single mail.
+Every 30 seconds smokealarm runs all checks against its in-memory copy of the cluster state and compares the result with the previous run. A new problem starts as **pending**. If it is still there after `SMOKEALARM_ALERT_AFTER` (2 minutes by default), it becomes **firing** and is reported. When it goes away, it is **resolved** and reported again. A problem that disappears before the wait is over is never reported. All changes from one run go into a single mail (or message, for the other [notification targets](#notification-targets)).
 
 If you already know about a critical problem, press **Acknowledge** on the overview. It stays on the page with a mark and sends no more reminders. You still get a mail when it is resolved. See [Acknowledging a problem](#acknowledging-a-problem) for the details.
 
@@ -40,7 +40,7 @@ The history lists resolved problems, newest first, and you can filter it by name
 
 ![The history with five resolved problems, one of them in a downtime](docs/screenshots/history.png)
 
-The status page tells you when the checks last ran, whether mail is set up and whether the last mail failed. It also lists every check. If one can't run, for example because Argo CD isn't installed, the reason is next to it.
+The status page tells you when the checks last ran, lists every notification target with the time of its last message and its last error, and lists every check. If one can't run, for example because Argo CD isn't installed, the reason is next to it.
 
 ![The status page in dark mode](docs/screenshots/status.png)
 
@@ -146,6 +146,151 @@ Details: https://smokealarm.example.com
 
 If one run finds several changes, the subject is a count (`[smokealarm] 3 new problems, 1 resolved`) and the body lists all of them, critical problems first. A problem you were already told about triggers a new mail if it becomes critical. Set `SMOKEALARM_CRITICAL_REPEAT_INTERVAL` (chart: `config.criticalRepeatInterval`) to be reminded of critical problems that are still open: each one is reported again as `[smokealarm] STILL CRITICAL: ...` once its last report is that old. Warnings are not repeated. If the mail server is down, smokealarm tries again on the next run, even after a restart.
 
+### 6. Other notification targets
+
+Besides mail, or instead of it, smokealarm can send to ntfy, Telegram, Slack, Microsoft Teams and a webhook. See [Notification targets](#notification-targets) for how to set each one up.
+
+## Notification targets
+
+Every target that is set up gets every notification. You can use any combination, mail included. Without any, notifications only go to the log. The targets only change *where* a notification goes: `SMOKEALARM_ALERT_AFTER`, the combined message per run, reminders, acknowledgements and downtimes work the same for all of them, and whatever this README says about "mail" applies to each target.
+
+Each target remembers on its own what it has been told. If one is down (say Telegram for an hour), only that one is tried again on the next runs, also after a restart, and the others get nothing twice. It also has its own reminder clock, which runs from its own last message. A target you add later doesn't get the history, but at its first run it hears about every problem that is firing and not acknowledged, like a target that has just learned of them. A target you remove is forgotten; if you add it back, it counts as new again. The very first start after upgrading from a version without targets takes over what the old version already reported, so nothing is sent twice; a target you add in that same step only hears what comes next.
+
+The chat targets (ntfy, Telegram, Slack, Teams) get a short message: the mail subject as the headline, then one line per problem with object, reason and since when, and the link to the web UI (`SMOKEALARM_BASE_URL`). If there are more problems than fit into one message, the last line says `… and 12 more, see <link>`. The limits are 4096 bytes for ntfy and Telegram, 3000 characters for Slack and about 26 KB for the whole Teams card. A message looks like this:
+
+```
+[smokealarm] 2 new problems, 1 resolved
+
+New:
+- CRITICAL Pod media/jellyfin: CrashLoopBackOff (since 2026-11-03 10:00 UTC)
+- WARNING Deployment media/sonarr: ReplicasUnavailable (since 2026-11-03 10:30 UTC)
+Resolved:
+- Node pi-2: NotReady (since 2026-11-03 10:00 UTC, resolved 2026-11-03 12:30 UTC)
+
+https://smokealarm.example.com
+```
+
+Tokens and webhook URLs are secrets: whoever has one can post to your channel. The Helm chart stores them in its Secret (or reads them from `existingSecret`), never as plain values in the Deployment. They never appear in the log, in error messages or on the status page; the status page only shows the name of the target, such as `slack`, `webhook`, `ntfy` or `telegram (chat -1001234567890)`.
+
+All URLs must use `https`. Plain `http` is accepted for `localhost`, and for the webhook and the ntfy server also with `SMOKEALARM_NOTIFY_ALLOW_HTTP=true` (chart: `notifications.allowHttp`), for a relay inside the cluster. smokealarm does not follow redirects: a webhook that answers with one is reported as an error. The pod needs outgoing HTTPS to the services you use; `HTTPS_PROXY` is honored.
+
+Other services, such as Discord, Matrix, Pushover, Gotify or PagerDuty, have no built-in target. Point the [webhook](#webhook) at a relay such as [Apprise](https://github.com/caronc/apprise-api) or [n8n](https://n8n.io) that forwards to them.
+
+### ntfy
+
+[ntfy](https://ntfy.sh) sends push notifications to phones and browsers. You subscribe to a *topic* in the app; smokealarm publishes to it.
+
+1. Pick a topic name that is hard to guess, for example `smokealarm-` followed by random characters (`openssl rand -hex 8`). On the public server ntfy.sh, anybody who knows the topic can read along, so treat the name like a password.
+2. Subscribe to it in the ntfy app or on <https://ntfy.sh/app>.
+3. Set it in the chart:
+
+```yaml
+notifications:
+  ntfy:
+    topic: smokealarm-3f9c2a17b04e5d68   # goes into the Secret
+    # server: https://ntfy.example.org   # your own server; empty means https://ntfy.sh
+    # token: tk_...                      # an access token, if the server needs one
+```
+
+On a self-hosted server with access control, create a token (`ntfy token add <user>`) and set `token` (`SMOKEALARM_NTFY_TOKEN`); it is sent as `Authorization: Bearer`. The message gets the mail subject as its title and a click action to the web UI. Its priority follows what it reports: **urgent** if there is a new critical problem (so it gets through), **high** for reminders only (you already know, but it is still on fire), **default** for new warnings, and **low** if everything is resolved.
+
+### Telegram
+
+1. Talk to [@BotFather](https://t.me/BotFather) in Telegram, send `/newbot` and follow the questions. At the end you get a token like `123456789:AAH...`.
+2. Start a chat with your new bot and send it any message. To use a group instead, add the bot to the group and send a message there. For a channel, add the bot as an administrator.
+3. Find the chat id: open `https://api.telegram.org/bot<token>/getUpdates` in a browser and look for `"chat":{"id":...}`. Groups have negative ids (`-100...`). A public channel can also be given as `@channelname`.
+4. Set both in the chart. Several chat ids are possible, and each chat is retried on its own. **Write the ids in quotes**, because Helm turns bare numbers into floats (the chart refuses them):
+
+```yaml
+notifications:
+  telegram:
+    botToken: "123456789:AAH..."              # goes into the Secret
+    chatIds: ["-1001234567890", "987654321"]
+```
+
+The message is plain text, so names with `_` or `<` need no escaping. The token is part of the request URL, which smokealarm never logs.
+
+### Slack
+
+1. Create a Slack app at <https://api.slack.com/apps> ("From scratch"), open **Incoming Webhooks**, switch them on and choose **Add New Webhook to Workspace** with the channel.
+2. Copy the webhook URL (`https://hooks.slack.com/services/...`) into the chart:
+
+```yaml
+notifications:
+  slack:
+    webhookUrl: https://hooks.slack.com/services/T000/B000/XXXX   # goes into the Secret
+```
+
+The message has the subject as its header and the problem list below it.
+
+### Microsoft Teams
+
+Teams is reached through a **Power Automate Workflows** webhook. The old Office 365 connector webhooks (`https://<tenant>.webhook.office.com/...`) were switched off by Microsoft and no longer work; smokealarm refuses such a URL at startup.
+
+1. In Teams, open the channel, choose **⋯ → Workflows**, and pick the template **Post to a channel when a webhook request is received**.
+2. Follow the steps (team and channel). At the end, copy the URL it shows (`https://...logic.azure.com/workflows/...` or `https://...powerplatform.com/...`).
+3. Set it in the chart:
+
+```yaml
+notifications:
+  teams:
+    webhookUrl: "https://prod-01.westeurope.logic.azure.com/workflows/..."   # goes into the Secret
+```
+
+smokealarm posts an Adaptive Card with the subject, the problem list and a button to the web UI. Workflows answers `202 Accepted`, and the card can take a few seconds to show up.
+
+### Webhook
+
+The generic webhook posts every notification as JSON to a URL of your choice. Use it for your own automation, or for a relay that forwards to services without a built-in target.
+
+```yaml
+notifications:
+  webhook:
+    url: https://relay.example.org/hooks/smokealarm   # goes into the Secret
+    header: "Authorization: Bearer <token>"           # optional, goes into the Secret
+```
+
+`header` (`SMOKEALARM_WEBHOOK_HEADER`) is one extra header of the form `Name: value`, usually for authentication. Any `2xx` answer counts as delivered. The request is a `POST` with `Content-Type: application/json`:
+
+```json
+{
+  "version": 1,
+  "subject": "[smokealarm] 1 new problem, 1 resolved",
+  "base_url": "https://smokealarm.example.com",
+  "counts": { "new": 1, "reminders": 0, "resolved": 1 },
+  "new": [
+    {
+      "key": "pod-crashloop/Pod/media/jellyfin/CrashLoopBackOff",
+      "check": "pod-crashloop",
+      "severity": "critical",
+      "object": { "kind": "Pod", "namespace": "media", "name": "jellyfin" },
+      "reason": "CrashLoopBackOff",
+      "message": "container jellyfin keeps crashing (7 restarts), last exit code 137 (Error)",
+      "since": "2026-11-03T10:00:00Z",
+      "resolved_at": null
+    }
+  ],
+  "reminders": [],
+  "resolved": [
+    {
+      "key": "node-not-ready/Node//pi-2/NotReady",
+      "check": "node-not-ready",
+      "severity": "critical",
+      "object": { "kind": "Node", "namespace": "", "name": "pi-2" },
+      "reason": "NotReady",
+      "message": "node is not ready for 10m0s (status Unknown): Kubelet stopped posting node status.",
+      "since": "2026-11-03T10:00:00Z",
+      "resolved_at": "2026-11-03T12:30:00Z"
+    }
+  ]
+}
+```
+
+- `version` changes only if a field is removed or changes its meaning. New fields may be added at any time, so ignore the ones you don't know.
+- `new`, `reminders` and `resolved` are always lists, possibly empty. `reminders` are critical problems that are still open (see `SMOKEALARM_CRITICAL_REPEAT_INTERVAL`).
+- `key` identifies the problem across messages; the same key in `resolved` ends what an earlier `new` started.
+- Times are RFC 3339 in UTC. `resolved_at` is `null` unless the problem is resolved. `namespace` is empty for cluster-scoped objects such as nodes. `base_url` is empty if `SMOKEALARM_BASE_URL` is not set.
+
 ## Acknowledging a problem
 
 Only firing critical problems can be acknowledged. Warnings are not repeated anyway.
@@ -202,6 +347,16 @@ All configuration is done through environment variables starting with `SMOKEALAR
 | `SMOKEALARM_SMTP_PASSWORD` | – | Password for the login. Required if a username is set. |
 | `SMOKEALARM_SMTP_FROM` | – (required if mail is on) | Sender address. |
 | `SMOKEALARM_SMTP_TO` | – (required if mail is on) | Comma-separated recipient addresses. |
+| `SMOKEALARM_WEBHOOK_URL` | – | Secret. Webhook URL; setting it switches the [webhook](#webhook) on. |
+| `SMOKEALARM_WEBHOOK_HEADER` | – | Secret. One extra header for the webhook, `Name: value`, e.g. `Authorization: Bearer <token>`. |
+| `SMOKEALARM_NTFY_TOPIC` | – | Secret. The [ntfy](#ntfy) topic; setting it switches ntfy on. Letters, digits, `-` and `_`. |
+| `SMOKEALARM_NTFY_URL` | `https://ntfy.sh` | The ntfy server, for a self-hosted one. |
+| `SMOKEALARM_NTFY_TOKEN` | – | Secret. Access token for the ntfy server (optional). |
+| `SMOKEALARM_TELEGRAM_BOT_TOKEN` | – | Secret. The bot token from @BotFather; setting it switches [Telegram](#telegram) on. |
+| `SMOKEALARM_TELEGRAM_CHAT_IDS` | – (required if Telegram is on) | Comma-separated chat ids (numbers such as `-1001234567890`) or `@channelname`s. |
+| `SMOKEALARM_SLACK_WEBHOOK_URL` | – | Secret. A Slack incoming webhook URL; setting it switches [Slack](#slack) on. |
+| `SMOKEALARM_TEAMS_WEBHOOK_URL` | – | Secret. A Teams Workflows webhook URL; setting it switches [Teams](#microsoft-teams) on. Old `webhook.office.com` connector URLs are refused. |
+| `SMOKEALARM_NOTIFY_ALLOW_HTTP` | `false` | Allow plain `http://` for the webhook and the ntfy server, e.g. a relay in the cluster. `localhost` is always allowed. |
 
 For local runs, smokealarm also reads the standard `KUBECONFIG` variable. In a pod it uses the service account.
 
@@ -254,7 +409,7 @@ There is one local admin, with the password stored as a bcrypt hash. Sessions ar
 
 Actions that change state, such as acknowledging a problem or setting a downtime, need a valid session and refuse requests that come from another site or another host of the same domain (Go's `http.CrossOriginProtection`). Your proxy has to pass on the original `Host` header if you use plain HTTP, otherwise these actions fail with 403. Over HTTPS, browsers send a `Sec-Fetch-Site` header and the `Host` does not matter.
 
-Passwords, hashes and session ids are never logged.
+Passwords, hashes, session ids, tokens and webhook URLs are never logged.
 
 `/healthz` and `/readyz` need no login, so Kubernetes can probe them.
 
@@ -281,7 +436,8 @@ make run         # runs against the cluster from KUBECONFIG, UI on http://localh
 ## Troubleshooting
 
 - **The pod restarts about two minutes after it starts; the log says `informer caches did not sync within 2m0s: <resources>` and, before that, `forbidden`.** smokealarm can't read the listed resources. The Helm chart grants them, so this happens with `rbac.create=false` and your own RBAC. Compare yours with `deploy/helm/smokealarm/templates/clusterrole.yaml`. Missing cert-manager or Argo CD permissions don't cause this; those checks are skipped, and the status page shows why.
-- **Something is broken but nothing is reported.** Problems are only reported after `SMOKEALARM_ALERT_AFTER` (2 minutes by default). Check the overview page and the log for `finding pending` and `finding firing`. Without `SMOKEALARM_SMTP_HOST`, notifications only go to the log.
+- **Something is broken but nothing is reported.** Problems are only reported after `SMOKEALARM_ALERT_AFTER` (2 minutes by default). Check the overview page and the log for `finding pending` and `finding firing`. Without a notification target (mail or one of the [others](#notification-targets)), notifications only go to the log.
+- **A target shows "sending failed" on the status page.** The error is next to it, with the HTTP status and the start of the answer (never the token or URL). That target is retried on every run; the others are not affected. A `401` or `403` usually means a wrong token, a `404` a wrong URL or Telegram chat id ("chat not found": send the bot a message first), and a `3xx` that the URL redirects, which smokealarm does not follow.
 - **A check shows as skipped on the status page.** The reason is next to it: disabled in the configuration, CRD not installed, or a missing permission.
 - **Login works, but I'm logged out again right away.** The cookie is `Secure` and you're using plain HTTP. Use HTTPS, or set `SMOKEALARM_COOKIE_SECURE=false` for local use.
 - **The history is gone after a restart.** The database wasn't on a persistent volume (`persistence.enabled=false`, or `SMOKEALARM_DB_PATH` outside the volume).

@@ -10,7 +10,7 @@ Primary test environment: k3s on Raspberry Pi (arm64). However, it must run on a
 The maintainer is not a Go developer. The code must be understandable for someone with an ops background and no Go experience. Readability takes priority over elegance, performance and abstraction.
 - Idiomatic, plain Go (Effective Go, Go Code Review Comments). gofmt, go vet and golangci-lint with the standard linters must be clean.
 - Explicit rather than clever: no generics, no reflection, no init() functions, no global variables except constants. Dependencies are created in main() and passed on as struct fields.
-- Interfaces only where there really are several implementations (e.g. Notifier: mail now, Telegram/webhook later). No interfaces just in case.
+- Interfaces only where there really are several implementations (e.g. Notifier: mail, webhook, ntfy, Telegram, Slack, Teams). No interfaces just in case.
 - Minimal concurrency: informers, one main loop with a ticker, the HTTP server. No channel pipelines, no worker pools.
 - Short functions (guideline < 50 lines), descriptive names. Always wrap errors with context (fmt.Errorf("load config: %w", err)), never swallow them.
 - Comments explain the why, not the what. Every package has a package doc comment. Every check has a doc comment: what is checked, why it is a problem, which severity.
@@ -25,7 +25,7 @@ Allowed, otherwise standard library only:
 - golang.org/x/crypto (bcrypt)
 - github.com/robfig/cron/v3 (only for parsing CronJob schedules)
 Explicitly not: controller-runtime, cobra, viper, web frameworks (gin, echo, chi), ORMs, Prometheus libraries, frontend build tooling.
-HTTP routing with net/http (Go 1.22+ patterns), HTML with html/template, mail with net/smtp and text/template, SQL with database/sql.
+HTTP routing with net/http (Go 1.22+ patterns), HTML with html/template, mail with net/smtp and text/template, SQL with database/sql. The other notification targets (webhook, ntfy, Telegram, Slack, Teams) use net/http, encoding/json and text/template only: no notification library (shoutrrr, nikoksr/notify, ...) and no vendor SDK.
 Further dependencies only after asking.
 
 ## Project structure
@@ -35,7 +35,7 @@ internal/kube            Clients, informers (core + dynamic for CRDs), detection
 internal/checks          One file per area (pods.go, workloads.go, nodes.go, jobs.go, storage.go, certs.go, argocd.go) plus tests
 internal/engine          Main loop: run checks, compare with stored state, trigger notifications
 internal/store           SQLite access, schema migrations as embedded .sql files, retention
-internal/notify          Notifier interface, mail implementation
+internal/notify          Notifier interface, mail, webhook, ntfy, Telegram, Slack and Teams (one file each)
 internal/auth            Local login, sessions, middleware
 internal/web             Handlers, templates, CSS (all via go:embed)
 deploy/helm/smokealarm   Helm chart
@@ -53,7 +53,7 @@ Finding (guideline):
 Sequence every SMOKEALARM_CHECK_INTERVAL (default 30s):
 1. Build the snapshot, run all enabled checks.
 2. Compare with the state in SQLite: new problem → pending; lasts longer than SMOKEALARM_ALERT_AFTER (default 2m) → firing; gone → resolved (only if it was firing before, otherwise discard silently). This way short flaps are not reported.
-3. Send all changes not yet reported (firing/resolved), plus any reminders that are due, as one combined notification. An acknowledged problem only reports its end, and a problem in a downtime reports nothing (see Notifications). Mark them as reported only after sending succeeded; if sending fails, it is retried in the next run. This also survives restarts.
+3. Send all changes not yet reported (firing/resolved), plus any reminders that are due, as one combined notification. An acknowledged problem only reports its end, and a problem in a downtime reports nothing (see Notifications). Mark them as reported only after sending succeeded, separately for every notification target; if sending to a target fails, it is retried for that target only in the next run, so the other targets get no duplicates. This also survives restarts.
 4. Delete resolved findings older than SMOKEALARM_RETENTION (default 30d).
 
 ## Checks (v0.1)
@@ -89,8 +89,9 @@ Ignoring:
 - In addition, an environment variable with a list of ignored namespaces.
 
 ## Notifications
-- v0.1: mail via SMTP only (STARTTLS and implicit TLS on port 465, optionally with auth, multiple recipients).
-- At most one mail per run, with all new state changes and due reminders.
+- Mail via SMTP (STARTTLS and implicit TLS on port 465, optionally with auth, multiple recipients).
+- Since phase 13, also: a generic webhook (structured JSON, optional static auth header), ntfy (ntfy.sh or self-hosted, optional access token), Telegram (Bot API, one or more chats, plain text), Slack (incoming webhook) and Microsoft Teams (Power Automate Workflows webhook with an Adaptive Card; the old Office 365 connector webhooks no longer work). Any combination can be active; none configured means the log only. Every rule in this section (ALERT_AFTER, one combined message per run, reminders, acknowledge, downtimes) applies to every target exactly as to mail: the targets change only where a notification goes. Each target remembers on its own what it has been told. Secrets (tokens, webhook URLs, header values, the ntfy topic) never appear in logs, errors or on the status page; a target is shown by its name only.
+- At most one message per run and target, with all new state changes and due reminders.
 - Reminders are optional: SMOKEALARM_CRITICAL_REPEAT_INTERVAL (default 0, off; otherwise at least SMOKEALARM_CHECK_INTERVAL) reports a critical problem that is still firing again once its last report is that old. Each problem has its own clock. Warnings are not repeated. No reminders for checks whose state is unknown in this run. A failed reminder is retried in the next run.
 - A firing critical problem can be acknowledged in the web UI. Warnings cannot, because they are not repeated anyway. An acknowledged problem sends no reminders. The acknowledgement lasts until the problem is resolved or until it is removed in the web UI, and "resolved" is still reported. If its first mail has not gone out yet (for example because sending failed), that mail is dropped, but "resolved" is reported anyway. If it becomes a warning and then critical again, it stays acknowledged and no mail is sent. If the problem returns after "resolved", it is a new alarm with a new mail. After removing an acknowledgement the problem behaves like any other: an overdue reminder or a first mail that was held back goes out in the next run, unless a downtime is running.
 - A downtime silences one problem (one finding key, warning or critical) until a fixed date and time in the future. It can be set for firing problems and from the history, because a flapping problem is often "resolved" right now.
@@ -101,7 +102,8 @@ Ignoring:
   - A new reason or a new object name is a new key and is not covered. The UI and the README say so.
 - The subject summarizes: specific for one change, e.g. "[smokealarm] CRITICAL: CrashLoopBackOff media/jellyfin" or, for a reminder, "[smokealarm] STILL CRITICAL: CrashLoopBackOff media/jellyfin"; for several, e.g. "[smokealarm] 3 new problems, 1 still critical, 1 resolved".
 - Body as plain text: new problems sorted by severity, then reminders, then resolved ones; each with object, reason, message, since when; link to the web UI (SMOKEALARM_BASE_URL).
-- Design the Notifier interface so that Telegram and a generic webhook can be added later as separate files without changing the engine. Do not implement them yet.
+- Chat targets (ntfy, Telegram, Slack, Teams) get a short version: the subject as the headline, then one line per problem (object, reason, since when) and the link to the web UI, cut to the length limit of the service with "… and N more". The webhook gets all fields as JSON.
+- No routing by severity or label per target, no webhook signatures yet.
 
 ## Web UI
 - Server-rendered HTML, no JavaScript framework, no build step. Auto-refresh via meta tag (30s). Plain custom CSS, light/dark via prefers-color-scheme, works well on a phone.
@@ -111,7 +113,7 @@ Ignoring:
   - History: resolved findings, filterable by namespace, with a link to the downtime form and a mark for a running downtime
   - Downtimes: running downtimes, each with its end and a button to end it now
   - Downtime form: an own page without auto-refresh, so a reload cannot discard the input. A POST form with `datetime-local`; the time is entered and shown in UTC. Times that are not in the future are refused.
-  - Status: last run, active/skipped checks with reason, whether mail is configured, last sending error
+  - Status: last run, active/skipped checks with reason, every configured notification target with its last success and its last sending error
 - Actions that change state need a valid session and are protected against cross-site requests (http.CrossOriginProtection from the standard library), in addition to the SameSite=Lax cookie.
 - /healthz (liveness) and /readyz (informer caches synced, DB reachable), both without auth.
 

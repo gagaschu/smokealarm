@@ -47,6 +47,7 @@ func TestLoadDefaults(t *testing.T) {
 		PVCPendingAfter:  5 * time.Minute,
 		CronJobGrace:     5 * time.Minute,
 		SMTP:             SMTPConfig{Port: 587, TLS: "starttls"},
+		Notify:           NotifyConfig{NtfyServer: "https://ntfy.sh"},
 
 		AdminUser:         "admin",
 		AdminPasswordHash: testHash,

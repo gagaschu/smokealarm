@@ -74,7 +74,7 @@ func (s *Server) downtimes(w http.ResponseWriter, r *http.Request) {
 	for _, d := range active {
 		data.Downtimes = append(data.Downtimes, downtimeView{
 			ID:        d.ID,
-			Object:    objectLabel(d.Object),
+			Object:    d.Object.Label(),
 			Reason:    d.Reason,
 			Until:     d.ExpiresAt.UTC().Format(timeFormat),
 			Remaining: formatAge(d.ExpiresAt.Sub(now)),
@@ -183,7 +183,7 @@ func (s *Server) renderDowntimeForm(w http.ResponseWriter, r *http.Request, rec 
 
 	form := downtimeFormView{
 		FindingID: rec.ID,
-		Object:    objectLabel(rec.Object),
+		Object:    rec.Object.Label(),
 		Reason:    rec.Reason,
 		Until:     until,
 		Min:       now.Format(dateTimeLocalFormat),

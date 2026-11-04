@@ -4,7 +4,7 @@ This page is for readers who know Kubernetes and operations, but not Go. It expl
 
 ## The idea
 
-Every 30 seconds smokealarm takes a **snapshot** of the cluster objects it keeps in memory, hands it to a list of **checks**, and gets back **findings** ("this pod is crash-looping"). It compares the findings with what it saw last time to find out what is *new* and what is *gone*, stores that in SQLite, and sends **one mail** for everything that changed.
+Every 30 seconds smokealarm takes a **snapshot** of the cluster objects it keeps in memory, hands it to a list of **checks**, and gets back **findings** ("this pod is crash-looping"). It compares the findings with what it saw last time to find out what is *new* and what is *gone*, stores that in SQLite, and sends **one notification** for everything that changed to every configured target: mail, ntfy, Telegram, Slack, Teams or a webhook.
 
 A check is a plain function: *snapshot in, findings out*. It never talks to the API and keeps no state. That is why checks are easy to read and easy to test with hand-made objects.
 
@@ -20,7 +20,8 @@ A check is a plain function: *snapshot in, findings out*. It never talks to the 
                                     internal/engine  ◄──►  internal/store (SQLite)
                                           │ changes
                                           ▼
-                                    internal/notify  ──►  mail (or the log)
+                                    internal/notify  ──►  mail, webhook, ntfy, Telegram,
+                                                          Slack, Teams (or the log)
 
   Browser ──► internal/web ──► internal/auth (login, sessions)
                     └─ reads the current state from internal/store and internal/engine
@@ -38,7 +39,7 @@ A check is a plain function: *snapshot in, findings out*. It never talks to the 
 | `internal/checks` | **The checks**, one file per area (`pods.go`, `workloads.go`, `nodes.go`, `jobs.go`, `storage.go`, `certs.go`, `argocd.go`), the finding and snapshot types, and the ignore rules. |
 | `internal/engine` | The main loop. Runs the checks, decides what is new/firing/resolved, sends notifications, cleans up old data. |
 | `internal/store` | SQLite: findings, downtimes and login sessions. The schema lives in numbered SQL files (`migrations/`) that are applied at startup. |
-| `internal/notify` | Sends notifications. `Notifier` is an interface with two implementations: mail and log. A Telegram or webhook notifier would be one more file. |
+| `internal/notify` | Sends notifications. `Notifier` is an interface with one implementation per target, each in its own file: `mail.go`, `webhook.go`, `ntfy.go`, `telegram.go`, `slack.go`, `teams.go`, and `log.go` when nothing is configured. `message.go` has the texts (mail subject and body, the short chat text), `http.go` the shared HTTP request that keeps secrets out of errors. |
 | `internal/auth` | Password check, sessions, the login rate limit. The middleware only asks "is there a valid session?", so another login method (OIDC) can be added without touching it. |
 | `internal/web` | The pages (overview, history, downtimes, status, login) and the actions (acknowledge and remove that, downtimes), as HTML templates, one CSS file, small SVG icons and a favicon, all embedded in the binary. |
 | `deploy/helm/smokealarm` | The Helm chart. |
@@ -55,13 +56,45 @@ A finding has a stable **key** (check + object + a fixed word), so smokealarm ca
 ```
 
 - A problem that appears and disappears within `ALERT_AFTER` is never reported.
-- Reporting is remembered in the database *after* a successful send, so a failed mail is retried at the next run, even after a restart.
+- Reporting is remembered in the database *after* a successful send, so a failed mail is retried at the next run, even after a restart. This is remembered **per notification target** (table `deliveries`), so if one target is down, only that one is retried and the others get nothing twice. See [Where notifications go](#where-notifications-go).
 - If a firing problem gets worse (warning → critical), it stays the same problem and is reported again as critical.
 - With `CRITICAL_REPEAT_INTERVAL` set, a critical problem that is still firing is reported again once its last report is that old. Warnings are not repeated.
 - A firing critical problem can be acknowledged in the web UI. From then on only its end is reported: no reminders, no mail if it goes from warning back to critical, and a first mail that has not gone out yet is dropped. The mark belongs to this one alarm, so a problem that returns after "resolved" is new again. If the mark is removed, the problem behaves like any other, so an overdue reminder goes out in the next run.
 - A downtime silences one key until a fixed time, whether the problem is there or not. While it runs, nothing is sent; a problem that goes away is marked as reported without a mail. At the start of each run the engine finishes the downtimes that have ended. If the problem is still firing and not acknowledged, its "reported" marker is cleared, so the normal path reports it as new. If a check's state is unknown, this waits until the check runs again.
 - If a check cannot get its data (for example the kubelet does not answer), it is skipped for that run and its open problems are left alone, because "no data" is not "all fine". They get no reminders either, until the check runs again.
 - If a check is switched off (configuration, or an optional CRD or permission is missing at startup), its open problems count as gone and are reported as resolved in the next run. The README says so, because switching a check off can look like a recovery.
+
+## Where notifications go
+
+`main` creates one notifier per configured target (`cmd/smokealarm/notifiers.go`); Telegram gets one per chat. At the end of each run, the engine goes through them one by one and, for each, does what it did for mail alone before:
+
+```
+ for every target:
+   what has this target not been told yet?   store.Unnotified(target)
+   + which reminders are due for it?          store.CriticalDueForReminder(target, ...)
+   minus problems in a downtime
+   ──► one combined notification ──► target.Send
+   if it worked: remember it for this target  store.MarkFiringNotified / MarkResolvedNotified
+```
+
+- Each target has its own markers, so its own retries and its own reminder clock. One that fails does not stop the others.
+- The columns `firing_notified_at` and `resolved_notified_at` in `findings` are the summary: "reported to at least one target". The web UI and the escalation rule use them. Clearing a marker (escalation, end of a downtime) clears it for every target, so all of them hear about it again.
+- At startup, `store.SyncTargets` registers the configured targets. A new one starts from the current state (it copies the summary markers, so it gets no history), and one that is gone is forgotten.
+- Secrets (tokens, webhook URLs, the ntfy topic) stay inside the notifier. `Name()` is a stable id for the database (`slack`, `telegram:-100123`), and `Description()` is the safe label for the log and the status page. Errors from `net/http` contain the request URL, so `http.go` takes it out before wrapping.
+
+## How do I add a new notification target?
+
+Example: a target `gotify` that posts to a Gotify server.
+
+1. **Write `internal/notify/gotify.go`** with a struct holding its settings and the shared `*http.Client`, and three methods:
+   - `Name()`: a fixed id, `"gotify"`. It is stored in the database, so never change it later.
+   - `Description()`: what the status page shows, without secrets, e.g. `"gotify (" + hostOf(g.Server) + ")"`.
+   - `Send(ctx, n)`: build the text with `Subject(n)` and `ChatBody(n, limit)` (limit = what the service accepts), then call `post(ctx, g.Client, request{...})`. Put every secret into `request.secrets`, so it is taken out of error messages; the URL is added automatically.
+2. **Test it** in `internal/notify/targets_test.go`: an `httptest` server checks method, path, headers and body (a golden file in `testdata/`), and `newEcho` plus `wantNoSecret` prove that the token never shows up in an error.
+3. **Configuration** in `internal/config/notify.go`: read the variables (`SMOKEALARM_GOTIFY_URL`, `SMOKEALARM_GOTIFY_TOKEN`), validate them in `validateNotify` (never print a secret value), and add table cases to `notify_test.go`.
+4. **Wire it** in `newNotifiers` in `cmd/smokealarm/notifiers.go`. The engine needs no change.
+5. **Helm chart**: plain settings in `values.yaml` and `deployment.yaml`, secrets in `smokealarm.notificationSecrets` in `_helpers.tpl` (they go into the Secret), and the new variables in `TestEverySettingBecomesAnEnvironmentVariable` and `TestNotificationSecretsAreOnlyInTheSecret` in `deploy/helm/chart_test.go`.
+6. **Document it**: a section and the variables in `README.md` (a test fails if a variable is missing), and a line in `CHANGELOG.md`.
 
 ## Go for ops people
 
