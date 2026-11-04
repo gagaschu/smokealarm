@@ -72,6 +72,7 @@ type problemView struct {
 	CanAcknowledge bool   // critical and not acknowledged yet
 	AcknowledgedAt string // exact time, empty if not acknowledged
 	DowntimeUntil  string // end of the running downtime, empty if there is none
+	Targets        string // "slack, mail" from the targets annotation, empty for every target
 }
 
 type historyView struct {
@@ -83,6 +84,7 @@ type historyView struct {
 	ResolvedAt    string
 	Lasted        string
 	DowntimeUntil string // end of the running downtime, empty if there is none
+	Targets       string // as in problemView
 }
 
 type statusView struct {
@@ -96,7 +98,8 @@ type statusView struct {
 // targetView is one notification target. The description never contains a
 // secret; the engine gets it from the notifier.
 type targetView struct {
-	Description string
+	Description  string
+	CriticalOnly bool // hears only about critical problems
 	LastSentAt  string // empty if nothing was sent since the start
 	LastError   string
 	LastErrorAt string
@@ -240,6 +243,7 @@ func newProblemView(rec store.Record, now time.Time) problemView {
 		Since:          rec.FirstSeen.UTC().Format(timeFormat),
 		Age:            formatAge(now.Sub(rec.FirstSeen)),
 		CanAcknowledge: rec.Severity == checks.Critical && rec.AcknowledgedAt == nil,
+		Targets:        strings.Join(rec.Targets, ", "),
 	}
 	if rec.AcknowledgedAt != nil {
 		view.AcknowledgedAt = rec.AcknowledgedAt.UTC().Format(timeFormat)
@@ -336,6 +340,7 @@ func (s *Server) history(w http.ResponseWriter, r *http.Request) {
 			Reason:        rec.Reason,
 			Message:       rec.Message,
 			DowntimeUntil: downtimeEnds[rec.Key],
+			Targets:       strings.Join(rec.Targets, ", "),
 		}
 		if rec.ResolvedAt != nil {
 			view.ResolvedAt = rec.ResolvedAt.UTC().Format(historyTimeFormat)
@@ -368,7 +373,8 @@ func targetViews(targets []engine.TargetStatus) []targetView {
 	var views []targetView
 	for _, t := range targets {
 		views = append(views, targetView{
-			Description: t.Description,
+			Description:  t.Description,
+			CriticalOnly: t.CriticalOnly,
 			LastSentAt:  formatOptionalTime(t.LastSentAt),
 			LastError:   t.LastError,
 			LastErrorAt: formatOptionalTime(t.LastErrorAt),

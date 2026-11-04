@@ -35,6 +35,7 @@
       <p class="object">{{.Object}}</p>
       <p class="message">{{.Message}}</p>
       <p class="meta">{{template "icon-clock"}}<span>since <time title="{{.Since}}">{{.Age}} ago</time>{{if .AcknowledgedAt}}, acknowledged {{.AcknowledgedAt}}{{end}}</span></p>
+      {{if .Targets}}<p class="meta">{{template "icon-info"}}<span>Notifies only: {{.Targets}}</span></p>{{end}}
       {{if .DowntimeUntil}}<p class="meta">{{template "icon-bell-off"}}<span>No mails during the downtime until {{.DowntimeUntil}}.</span></p>{{end}}
     </div>
     <div class="actions">
