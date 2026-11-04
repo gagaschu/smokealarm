@@ -290,13 +290,14 @@ func (e *Engine) RunOnce(ctx context.Context) error {
 	}
 
 	unknown := e.checksWithUnknownState(skipped)
+	down := checks.DownNodes(snap)
 	var errs []error
 	// Before saveState, which would otherwise write back the old "reported"
 	// markers from the copy it reads.
 	if err := e.finishDowntimes(ctx, findings, unknown, start); err != nil {
 		errs = append(errs, err)
 	}
-	if err := e.saveState(ctx, findings, unknown, start); err != nil {
+	if err := e.saveState(ctx, findings, unknown, down, start); err != nil {
 		errs = append(errs, err)
 	}
 	if err := e.notify(ctx, unknown, start); err != nil {
@@ -319,7 +320,8 @@ func (e *Engine) RunOnce(ctx context.Context) error {
 
 // saveState compares the findings with the stored problems and writes the
 // result back in one transaction.
-func (e *Engine) saveState(ctx context.Context, findings []checks.Finding, skipped []string, now time.Time) error {
+func (e *Engine) saveState(ctx context.Context, findings []checks.Finding, skipped []string,
+	down map[string]bool, now time.Time) error {
 	open, err := e.Store.OpenRecords(ctx)
 	if err != nil {
 		return fmt.Errorf("load open findings: %w", err)
@@ -327,7 +329,7 @@ func (e *Engine) saveState(ctx context.Context, findings []checks.Finding, skipp
 	// Problems of checks whose state is unknown stay as they are. Problems of
 	// checks that are disabled (or gone) are not in the skipped list and are
 	// resolved, not left "firing" forever.
-	changes := e.reconcile(open, findings, skipped, now)
+	changes := e.reconcile(open, findings, skipped, down, now)
 	if err := e.Store.Apply(ctx, changes); err != nil {
 		return fmt.Errorf("save findings: %w", err)
 	}
@@ -337,8 +339,10 @@ func (e *Engine) saveState(ctx context.Context, findings []checks.Finding, skipp
 // reconcile decides what changes: it compares the stored open problems with
 // the current findings. It does no I/O, which keeps the rules easy to test.
 // Problems of the skipped checks (checks whose state is unknown) are left
-// alone, because "no findings" would just mean "unknown".
-func (e *Engine) reconcile(open []store.Record, findings []checks.Finding, skipped []string, now time.Time) store.Changes {
+// alone, because "no findings" would just mean "unknown". down names the nodes
+// that are down in this run; their consequences are held back (see holdBack).
+func (e *Engine) reconcile(open []store.Record, findings []checks.Finding, skipped []string,
+	down map[string]bool, now time.Time) store.Changes {
 	var changes store.Changes
 
 	openByKey := map[string]store.Record{}
@@ -358,7 +362,7 @@ func (e *Engine) reconcile(open []store.Record, findings []checks.Finding, skipp
 			changes.Insert = append(changes.Insert, e.newRecord(f, now))
 			continue
 		}
-		updated := e.refresh(record, f, now)
+		updated := e.refresh(record, f, down, now)
 		if record.FiringNotifiedAt != nil && updated.FiringNotifiedAt == nil {
 			changes.Escalated = append(changes.Escalated,
 				store.Escalation{ID: record.ID, Targets: e.routedNames(updated)})
@@ -384,10 +388,14 @@ func (e *Engine) reconcile(open []store.Record, findings []checks.Finding, skipp
 }
 
 // newRecord creates the record for a problem seen for the first time. With
-// AlertAfter 0 it fires right away.
+// AlertAfter 0 it fires right away, unless a down node holds it back.
 func (e *Engine) newRecord(f checks.Finding, now time.Time) store.Record {
-	record := store.Record{Finding: f, State: store.StatePending, FirstSeen: now, LastSeen: now}
+	record := store.Record{Finding: f, State: store.StatePending, FirstSeen: now, LastSeen: now, PendingSince: now}
 	e.Logger.Info("finding pending", "key", f.Key, "severity", f.Severity)
+	if f.CausedBy != "" {
+		e.Logger.Info("finding held back, its node is down", "key", f.Key, "node", f.CausedBy)
+		return record
+	}
 	if e.AlertAfter <= 0 {
 		record.State = store.StateFiring
 		record.FiringAt = &now
@@ -397,8 +405,8 @@ func (e *Engine) newRecord(f checks.Finding, now time.Time) store.Record {
 }
 
 // refresh updates a known problem with the latest details and lets it fire
-// once it has lasted long enough.
-func (e *Engine) refresh(record store.Record, f checks.Finding, now time.Time) store.Record {
+// once it has lasted long enough and no down node holds it back.
+func (e *Engine) refresh(record store.Record, f checks.Finding, down map[string]bool, now time.Time) store.Record {
 	escalated := record.Severity == checks.Warning && f.Severity == checks.Critical
 	record.Severity = f.Severity
 	record.Reason = f.Reason
@@ -417,12 +425,48 @@ func (e *Engine) refresh(record store.Record, f checks.Finding, now time.Time) s
 		record.FiringNotifiedAt = nil
 		e.Logger.Info("finding escalated", "key", f.Key, "severity", f.Severity, "reason", f.Reason)
 	}
-	if record.State == store.StatePending && now.Sub(record.FirstSeen) >= e.AlertAfter {
+	if record.State == store.StatePending {
+		record = e.holdBack(record, f, down, now)
+	}
+	if record.State == store.StatePending && record.CausedBy == "" && now.Sub(clockStart(record)) >= e.AlertAfter {
 		record.State = store.StateFiring
 		record.FiringAt = &now
 		e.Logger.Info("finding firing", "key", f.Key, "severity", f.Severity)
 	}
 	return record
+}
+
+// holdBack decides whether a pending problem waits for a down node. It is
+// held back as soon as the check sees it as a consequence of a down node, and
+// stays held back as long as that node is down, even if the object no longer
+// points at it: after the eviction a replacement pod starts elsewhere, and the
+// Deployment would otherwise slip through. When the node is back, the
+// ALERT_AFTER clock starts again, because the pods need a moment to become
+// ready; a problem that lasts beyond that is a problem of its own. Firing
+// problems are never held back: what was reported stays reported.
+func (e *Engine) holdBack(record store.Record, f checks.Finding, down map[string]bool, now time.Time) store.Record {
+	switch {
+	case record.CausedBy != "" && down[record.CausedBy]:
+		// Still down: keep waiting for the same node.
+	case f.CausedBy != "":
+		if record.CausedBy == "" {
+			e.Logger.Info("finding held back, its node is down", "key", f.Key, "node", f.CausedBy)
+		}
+		record.CausedBy = f.CausedBy
+	case record.CausedBy != "":
+		e.Logger.Info("node is back, finding no longer held back", "key", f.Key, "node", record.CausedBy)
+		record.CausedBy = ""
+		record.PendingSince = now
+	}
+	return record
+}
+
+// clockStart is when the ALERT_AFTER clock of a pending problem started.
+func clockStart(record store.Record) time.Time {
+	if record.PendingSince.IsZero() {
+		return record.FirstSeen
+	}
+	return record.PendingSince
 }
 
 // finishDowntimes removes the downtimes that have ended and brings back the
@@ -465,9 +509,14 @@ func (e *Engine) notify(ctx context.Context, unknown []string, now time.Time) er
 	if err != nil {
 		return fmt.Errorf("load downtimes: %w", err)
 	}
+	open, err := e.Store.OpenRecords(ctx)
+	if err != nil {
+		return fmt.Errorf("load open findings: %w", err)
+	}
+	held := HeldBack(open)
 	var errs []error
 	for _, target := range e.Notifiers {
-		if err := e.notifyTarget(ctx, target, unknown, silenced, now); err != nil {
+		if err := e.notifyTarget(ctx, target, unknown, silenced, held, now); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -482,7 +531,7 @@ func (e *Engine) notify(ctx context.Context, unknown []string, now time.Time) er
 // acknowledged problem only the end is reported; the store leaves out the rest.
 // A problem in a downtime sends nothing at all.
 func (e *Engine) notifyTarget(ctx context.Context, target notify.Notifier, unknown []string,
-	silenced map[string]bool, now time.Time) error {
+	silenced map[string]bool, held map[string][]store.Record, now time.Time) error {
 	name := target.Name()
 	records, err := e.Store.Unnotified(ctx, name)
 	if err != nil {
@@ -494,6 +543,7 @@ func (e *Engine) notifyTarget(ctx context.Context, target notify.Notifier, unkno
 	}
 
 	r := e.buildReport(records, due, silenced, target)
+	e.addAffected(r.notification, held, target)
 	n := r.notification
 	if err := e.Store.MarkResolvedNotified(ctx, name, r.silentIDs, now); err != nil {
 		return fmt.Errorf("mark silently resolved findings for %s: %w", name, err)
@@ -574,6 +624,38 @@ func (e *Engine) buildReport(records, due []store.Record, silenced map[string]bo
 	return r
 }
 
+// HeldBack groups the problems that wait for a down node by the node's name.
+// The web server uses it too.
+func HeldBack(open []store.Record) map[string][]store.Record {
+	held := map[string][]store.Record{}
+	for _, r := range open {
+		if r.State == store.StatePending && r.CausedBy != "" {
+			held[r.CausedBy] = append(held[r.CausedBy], r)
+		}
+	}
+	return held
+}
+
+// addAffected lists under every node that is down the problems it holds back,
+// as far as the target would hear about them; the rest is not its business.
+// New problems and reminders get the list; the end of a node needs none,
+// because the problems it held back are gone or fire on their own then.
+func (e *Engine) addAffected(n notify.Notification, held map[string][]store.Record, target notify.Notifier) {
+	for _, alerts := range [][]notify.Alert{n.New, n.Reminders} {
+		for i := range alerts {
+			if !alerts[i].IsNodeDown() {
+				continue
+			}
+			for _, rec := range held[alerts[i].Object.Name] {
+				if e.routedTo(target, rec) {
+					alerts[i].Affected = append(alerts[i].Affected,
+						notify.AffectedProblem{Object: rec.Object, Reason: rec.Reason})
+				}
+			}
+		}
+	}
+}
+
 // dueReminders returns the critical problems whose last report to the target
 // is at least one repeat interval old. Problems of checks whose state is unknown are left
 // out, because a reminder would claim they still exist; they are reminded of
@@ -601,11 +683,15 @@ func alertFor(r store.Record) notify.Alert {
 	return alert
 }
 
-// sortAlerts puts critical problems first, then orders by key for a stable
-// result.
+// sortAlerts puts nodes that are down first, because the problems around them
+// are their consequences, then critical problems, then orders by key for a
+// stable result.
 func sortAlerts(alerts []notify.Alert) {
 	sort.Slice(alerts, func(i, j int) bool {
 		a, b := alerts[i], alerts[j]
+		if a.IsNodeDown() != b.IsNodeDown() {
+			return a.IsNodeDown()
+		}
 		if a.Severity != b.Severity {
 			return a.Severity == checks.Critical
 		}
@@ -629,7 +715,8 @@ func (e *Engine) cleanup(ctx context.Context, now time.Time) error {
 	return nil
 }
 
-// runChecks runs every check, applies the smokealarm annotations and returns
+// runChecks runs every check, applies the smokealarm annotations, marks the
+// consequences of down nodes and returns
 // all findings sorted by key, so the output order is stable between runs. The
 // second result lists the annotation values that could not be used.
 func runChecks(snap *checks.Snapshot, opts checks.Options, list []checks.Check) ([]checks.Finding, []string) {
@@ -638,6 +725,7 @@ func runChecks(snap *checks.Snapshot, opts checks.Options, list []checks.Check) 
 		findings = append(findings, c.Run(snap, opts)...)
 	}
 	findings, problems := checks.ApplyAnnotations(snap, findings)
+	findings = checks.ApplyNodeCauses(snap, findings)
 	sort.Slice(findings, func(i, j int) bool { return findings[i].Key < findings[j].Key })
 	return findings, problems
 }

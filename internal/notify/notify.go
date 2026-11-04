@@ -40,6 +40,22 @@ type Alert struct {
 	checks.Finding
 	Since      time.Time // when the problem was first seen
 	ResolvedAt time.Time // zero for new problems
+	// Affected lists, for a node that is down (IsNodeDown), the problems it
+	// holds back and that this target would hear about otherwise. They are
+	// not reported on their own while the node is down.
+	Affected []AffectedProblem
+}
+
+// AffectedProblem is a problem held back by a down node, as listed under it.
+type AffectedProblem struct {
+	Object checks.ObjectRef
+	Reason string
+}
+
+// IsNodeDown says whether the alert is about a node that is not ready. Such an
+// alert comes first: the problems around it are its consequences.
+func (a Alert) IsNodeDown() bool {
+	return a.Check == checks.CheckNodeNotReady
 }
 
 // Kind is the kind of target a Notifier.Name belongs to: "telegram" for
