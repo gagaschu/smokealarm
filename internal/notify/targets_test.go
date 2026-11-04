@@ -144,7 +144,7 @@ func TestNtfy(t *testing.T) {
 	}
 	wantRequest(t, got, "/smokealarm-x7k2", "text/plain; charset=utf-8")
 	for header, want := range map[string]string{
-		"Title":         "[smokealarm] 2 new problems, 1 still critical, 1 resolved",
+		"Title":         "[smokealarm] NODE DOWN: pi-3 (+ 2 new problems, 1 still critical, 1 resolved)",
 		"Priority":      "urgent",
 		"Tags":          "rotating_light",
 		"Click":         testBaseURL,

@@ -1,13 +1,45 @@
 {
   "version": 1,
-  "subject": "[smokealarm] 2 new problems, 1 still critical, 1 resolved",
+  "subject": "[smokealarm] NODE DOWN: pi-3 (+ 2 new problems, 1 still critical, 1 resolved)",
   "base_url": "https://smokealarm.example.com",
   "counts": {
-    "new": 2,
+    "new": 3,
     "reminders": 1,
     "resolved": 1
   },
   "new": [
+    {
+      "key": "node-not-ready/Node//pi-3/NotReady",
+      "check": "node-not-ready",
+      "severity": "critical",
+      "object": {
+        "kind": "Node",
+        "namespace": "",
+        "name": "pi-3"
+      },
+      "reason": "NotReady",
+      "message": "node is not ready for 10m0s (status Unknown): Kubelet stopped posting node status.",
+      "since": "2026-11-03T10:00:00Z",
+      "resolved_at": null,
+      "affected": [
+        {
+          "object": {
+            "kind": "Deployment",
+            "namespace": "media",
+            "name": "sonarr"
+          },
+          "reason": "ReplicasUnavailable"
+        },
+        {
+          "object": {
+            "kind": "Pod",
+            "namespace": "media",
+            "name": "sonarr-7d9f-x2k4"
+          },
+          "reason": "CrashLoopBackOff"
+        }
+      ]
+    },
     {
       "key": "pod-crashloop/Pod/media/jellyfin/CrashLoopBackOff",
       "check": "pod-crashloop",
@@ -20,7 +52,8 @@
       "reason": "CrashLoopBackOff",
       "message": "container jellyfin keeps crashing (7 restarts), last exit code 137 (Error)",
       "since": "2026-11-03T10:00:00Z",
-      "resolved_at": null
+      "resolved_at": null,
+      "affected": []
     },
     {
       "key": "workload-replicas/Deployment/media/sonarr/ReplicasUnavailable",
@@ -34,7 +67,8 @@
       "reason": "ReplicasUnavailable",
       "message": "1/2 replicas available",
       "since": "2026-11-03T10:30:00Z",
-      "resolved_at": null
+      "resolved_at": null,
+      "affected": []
     }
   ],
   "reminders": [
@@ -50,7 +84,8 @@
       "reason": "NotReady",
       "message": "node is not ready for 10m0s (status Unknown): Kubelet stopped posting node status.",
       "since": "2026-11-03T10:00:00Z",
-      "resolved_at": null
+      "resolved_at": null,
+      "affected": []
     }
   ],
   "resolved": [
@@ -66,7 +101,8 @@
       "reason": "ReplicasUnavailable",
       "message": "1/2 replicas available",
       "since": "2026-11-03T10:30:00Z",
-      "resolved_at": "2026-11-03T12:30:00Z"
+      "resolved_at": "2026-11-03T12:30:00Z",
+      "affected": []
     }
   ]
 }
