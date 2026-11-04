@@ -60,7 +60,7 @@ type harness struct {
 	namespaces []*corev1.Namespace // in the snapshot, for the annotations
 	nodes      []*corev1.Node      // in the snapshot, for the node causes
 	pods       []*corev1.Pod
-	checkRuns  int                 // how often the fake check was executed
+	checkRuns  int // how often the fake check was executed
 	now        time.Time
 	logs       *bytes.Buffer
 }

@@ -22,7 +22,7 @@
   </div>
   <p class="last-run"><span class="live"></span><span>Last check: <time title="{{.LastRun}}">{{.LastRunAgo}} ago</time></span></p>
 </div>
-<ul class="problems">
+{{if .Problems}}<ul class="problems">
   {{range .Problems}}
   <li class="problem {{.Severity}}{{if .AcknowledgedAt}} is-acknowledged{{end}}">
     <div class="details">
@@ -38,6 +38,7 @@
       {{if .NotifiesOnly}}<p class="meta">{{template "icon-info"}}<span>Notifies only: {{.NotifiesOnly}}</span></p>{{end}}
       {{if .NotifiesNobody}}<p class="meta">{{template "icon-bell-off"}}<span>Notifies nobody: the targets it is meant for get critical problems only.</span></p>{{end}}
       {{if .DowntimeUntil}}<p class="meta">{{template "icon-bell-off"}}<span>No mails during the downtime until {{.DowntimeUntil}}.</span></p>{{end}}
+      {{if .HoldsBack}}<p class="meta">{{template "icon-bell-off"}}<span>Holds back {{.HoldsBack}} {{if eq .HoldsBack 1}}problem{{else}}problems{{end}} while the node is down, see below.</span></p>{{end}}
     </div>
     <div class="actions">
       {{if .CanAcknowledge}}<form method="post" action="/problems/{{.ID}}/acknowledge"><button class="primary" type="submit">{{template "icon-check"}}Acknowledge</button></form>{{end}}
@@ -46,7 +47,29 @@
     </div>
   </li>
   {{end}}
-</ul>
+</ul>{{end}}
+{{range .HeldBack}}
+<section class="held-back">
+  <h2>Held back: node {{.Node}} is down</h2>
+  <p class="footnote">Not reported on their own while the node is down. A problem that lasts after the node is back is reported then.</p>
+  <ul class="problems">
+    {{range .Problems}}
+    <li class="problem {{.Severity}} is-held-back">
+      <div class="details">
+        <div class="badges">
+          <span class="badge {{.Severity}}">{{.Severity}}</span>
+          <span class="badge held-back">held back</span>
+        </div>
+        <h3 class="reason">{{.Reason}}</h3>
+        <p class="object">{{.Object}}</p>
+        <p class="message">{{.Message}}</p>
+        <p class="meta">{{template "icon-clock"}}<span>since <time title="{{.Since}}">{{.Age}} ago</time></span></p>
+      </div>
+    </li>
+    {{end}}
+  </ul>
+</section>
+{{end}}
 {{if or .CanAcknowledgeAny .AcknowledgedAny}}<aside class="hint">{{template "icon-info"}}<div>
 {{if .CanAcknowledgeAny}}<p>Acknowledge stops the reminders. You still get a mail when it is resolved.</p>
 {{end}}{{if .AcknowledgedAny}}<p>Removing an acknowledgement brings the reminders back, so a mail can go out in the next run.</p>
