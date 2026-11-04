@@ -152,7 +152,7 @@ Besides mail, or instead of it, smokealarm can send to ntfy, Telegram, Slack, Mi
 
 ## Notification targets
 
-Every target that is set up gets every notification. You can use any combination, mail included. Without any, notifications only go to the log. The targets only change *where* a notification goes: `SMOKEALARM_ALERT_AFTER`, the combined message per run, reminders, acknowledgements and downtimes work the same for all of them, and whatever this README says about "mail" applies to each target.
+Every target that is set up gets every notification, unless you [route](#routing) them. You can use any combination, mail included. Without any, notifications only go to the log. The targets only change *where* a notification goes: `SMOKEALARM_ALERT_AFTER`, the combined message per run, reminders, acknowledgements and downtimes work the same for all of them, and whatever this README says about "mail" applies to each target.
 
 Each target remembers on its own what it has been told. If one is down (say Telegram for an hour), only that one is tried again on the next runs, also after a restart, and the others get nothing twice. It also has its own reminder clock, which runs from its own last message. A target you add later doesn't get the history, but at its first run it hears about every problem that is firing and not acknowledged, like a target that has just learned of them. A target you remove is forgotten; if you add it back, it counts as new again. The very first start after upgrading from a version without targets takes over what the old version already reported, so nothing is sent twice; a target you add in that same step only hears what comes next.
 
@@ -175,6 +175,43 @@ Tokens and webhook URLs are secrets: whoever has one can post to your channel. T
 All URLs must use `https`. Plain `http` is accepted for `localhost`, and for the webhook and the ntfy server also with `SMOKEALARM_NOTIFY_ALLOW_HTTP=true` (chart: `notifications.allowHttp`), for a relay inside the cluster. smokealarm does not follow redirects: a webhook that answers with one is reported as an error. The pod needs outgoing HTTPS to the services you use; `HTTPS_PROXY` is honored.
 
 Other services, such as Discord, Matrix, Pushover, Gotify or PagerDuty, have no built-in target. Point the [webhook](#webhook) at a relay such as [Apprise](https://github.com/caronc/apprise-api) or [n8n](https://n8n.io) that forwards to them.
+
+### Routing
+
+By default every target hears about every problem. Two settings change that, and they can be combined.
+
+**Critical problems only, per target.** `SMOKEALARM_<TARGET>_MIN_SEVERITY=critical` sends only critical problems to that target (chart: `minSeverity` under `smtp` and under each target in `notifications`). `<TARGET>` is `SMTP`, `WEBHOOK`, `NTFY`, `TELEGRAM`, `SLACK` or `TEAMS`; for Telegram it applies to all chats. For example, critical problems to the phone with ntfy, everything to Slack:
+
+```
+SMOKEALARM_NTFY_MIN_SEVERITY=critical
+```
+
+**Per app or namespace, with annotations.** Put these on an object or on its namespace. The one on the object wins; each annotation is looked up on its own. For pods, setting them in the pod template is enough.
+
+| Annotation | Value | Effect |
+|---|---|---|
+| `smokealarm.gagaschu.github.io/targets` | Comma-separated: `mail`, `webhook`, `ntfy`, `telegram`, `slack`, `teams` | Its problems go only to these targets. `telegram` means all chats. |
+| `smokealarm.gagaschu.github.io/severity` | `warning` or `critical` | Replaces the severity of all its problems. |
+
+```yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: media
+  annotations:
+    smokealarm.gagaschu.github.io/targets: "slack"      # the media team's channel only
+    smokealarm.gagaschu.github.io/severity: "warning"   # never wake anybody up for it
+```
+
+A target hears about a problem if the problem's severity is high enough for it **and** the targets annotation, if there is one, names it. Good to know:
+
+- **A typo does not silence an alarm.** If the targets annotation names no target that is configured (`slak`), the problem goes to every target. Names that are not configured are logged as a warning, once, and so is a severity that is neither `warning` nor `critical`; that one is ignored and the check's severity counts.
+- **The end goes to whoever heard the start.** The filter applies to new problems and reminders. A target that was told about a problem is also told when it is resolved, even if the problem has become a warning or the annotation has changed since.
+- **Changing an annotation does not create a new problem.** It counts from the next run. A target that now gets the problem and has not heard of it yet hears about it as new; one that no longer gets it gets no more reminders.
+- **Getting worse reaches more targets.** A warning that becomes critical (`pvc-usage`, `cert-expiry`, `workload-replicas`, or `severity: critical` set later) is reported as new to the critical-only targets.
+- The severity annotation goes through all the usual rules: `critical` brings reminders and the acknowledge button, `warning` means a `pvc-usage` or `cert-expiry` problem stays a warning however bad it gets.
+- Like the ignore annotation, a problem reads the annotations of its own object: a pod problem those of the pod, a `workload-replicas` problem those of the Deployment (its `metadata`, not the pod template). The namespace is the easy way to cover both.
+- Acknowledgements and downtimes work as before. The overview and the history show the targets of a problem that has a targets annotation, and the status page shows which targets get critical problems only.
 
 ### ntfy
 
@@ -357,6 +394,12 @@ All configuration is done through environment variables starting with `SMOKEALAR
 | `SMOKEALARM_SLACK_WEBHOOK_URL` | – | Secret. A Slack incoming webhook URL; setting it switches [Slack](#slack) on. |
 | `SMOKEALARM_TEAMS_WEBHOOK_URL` | – | Secret. A Teams Workflows webhook URL; setting it switches [Teams](#microsoft-teams) on. Old `webhook.office.com` connector URLs are refused. |
 | `SMOKEALARM_NOTIFY_ALLOW_HTTP` | `false` | Allow plain `http://` for the webhook and the ntfy server, e.g. a relay in the cluster. `localhost` is always allowed. |
+| `SMOKEALARM_SMTP_MIN_SEVERITY` | `warning` | `critical` sends only critical problems by mail. See [Routing](#routing). Like the following five, refused if the target is not configured. |
+| `SMOKEALARM_WEBHOOK_MIN_SEVERITY` | `warning` | The same for the webhook. |
+| `SMOKEALARM_NTFY_MIN_SEVERITY` | `warning` | The same for ntfy. |
+| `SMOKEALARM_TELEGRAM_MIN_SEVERITY` | `warning` | The same for Telegram, all chats. |
+| `SMOKEALARM_SLACK_MIN_SEVERITY` | `warning` | The same for Slack. |
+| `SMOKEALARM_TEAMS_MIN_SEVERITY` | `warning` | The same for Teams. |
 
 For local runs, smokealarm also reads the standard `KUBECONFIG` variable. In a pod it uses the service account.
 
@@ -396,6 +439,7 @@ Notes:
 - Put the annotation `smokealarm.gagaschu.github.io/ignore: "true"` on an object or its namespace to silence all its findings. For pods, setting it in the pod template of the Deployment, StatefulSet, Job and so on is enough.
 - List namespaces in `SMOKEALARM_IGNORE_NAMESPACES`.
 - Switch off a whole check with `SMOKEALARM_DISABLED_CHECKS`.
+- To change where the problems of an app go, or how severe they are, without silencing them, see [Routing](#routing).
 
 ## Security
 

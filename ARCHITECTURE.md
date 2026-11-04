@@ -73,12 +73,14 @@ A finding has a stable **key** (check + object + a fixed word), so smokealarm ca
    what has this target not been told yet?   store.Unnotified(target)
    + which reminders are due for it?          store.CriticalDueForReminder(target, ...)
    minus problems in a downtime
+   minus problems not meant for it            routedTo: MinSeverity, targets annotation
    ──► one combined notification ──► target.Send
    if it worked: remember it for this target  store.MarkFiringNotified / MarkResolvedNotified
 ```
 
 - Each target has its own markers, so its own retries and its own reminder clock. One that fails does not stop the others.
 - The columns `firing_notified_at` and `resolved_notified_at` in `findings` are the summary: "reported to at least one target". The web UI and the escalation rule use them. Clearing a marker (escalation, end of a downtime) clears it for every target, so all of them hear about it again.
+- Routing: after the checks, `checks.ApplyAnnotations` sets the severity and the targets of each finding from the `smokealarm.gagaschu.github.io/severity` and `/targets` annotations of its object or namespace, so the checks themselves know nothing about it. The targets are stored with the problem (`findings.targets`). `routedTo` in the engine filters new problems and reminders per target; a problem not meant for a target gets no marker there, so the target hears it as new once that changes. The end goes to every target that heard the start, by its marker. A targets annotation that names no configured target counts as none, so a typo cannot silence an alarm.
 - At startup, `store.SyncTargets` registers the configured targets. A new one starts from the current state (it copies the summary markers, so it gets no history), and one that is gone is forgotten.
 - Secrets (tokens, webhook URLs, the ntfy topic) stay inside the notifier. `Name()` is a stable id for the database (`slack`, `telegram:-100123`), and `Description()` is the safe label for the log and the status page. Errors from `net/http` contain the request URL, so `http.go` takes it out before wrapping.
 
@@ -92,7 +94,7 @@ Example: a target `gotify` that posts to a Gotify server.
    - `Send(ctx, n)`: build the text with `Subject(n)` and `ChatBody(n, limit)` (limit = what the service accepts), then call `post(ctx, g.Client, request{...})`. Put every secret into `request.secrets`, so it is taken out of error messages; the URL is added automatically.
 2. **Test it** in `internal/notify/targets_test.go`: an `httptest` server checks method, path, headers and body (a golden file in `testdata/`), and `newEcho` plus `wantNoSecret` prove that the token never shows up in an error.
 3. **Configuration** in `internal/config/notify.go`: read the variables (`SMOKEALARM_GOTIFY_URL`, `SMOKEALARM_GOTIFY_TOKEN`), validate them in `validateNotify` (never print a secret value), and add table cases to `notify_test.go`.
-4. **Wire it** in `newNotifiers` in `cmd/smokealarm/notifiers.go`. The engine needs no change.
+4. **Wire it** in `newNotifiers` in `cmd/smokealarm/notifiers.go`. The engine needs no change. For routing, add a `SMOKEALARM_GOTIFY_MIN_SEVERITY` line to `minSeverityVariables` in `internal/config/routing.go`; the name `gotify` then also works in the targets annotation.
 5. **Helm chart**: plain settings in `values.yaml` and `deployment.yaml`, secrets in `smokealarm.notificationSecrets` in `_helpers.tpl` (they go into the Secret), and the new variables in `TestEverySettingBecomesAnEnvironmentVariable` and `TestNotificationSecretsAreOnlyInTheSecret` in `deploy/helm/chart_test.go`.
 6. **Document it**: a section and the variables in `README.md` (a test fails if a variable is missing), and a line in `CHANGELOG.md`.
 
