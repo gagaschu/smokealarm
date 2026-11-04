@@ -42,6 +42,11 @@ type Record struct {
 	FiringNotifiedAt   *time.Time
 	ResolvedNotifiedAt *time.Time
 	AcknowledgedAt     *time.Time
+	// PendingSince is when the ALERT_AFTER clock started: FirstSeen, or the
+	// run in which the down node that held the problem back came back.
+	// FirstSeen stays the real start for the reader. The cause itself is
+	// Finding.CausedBy.
+	PendingSince time.Time
 }
 
 // Changes is a set of modifications that is written in one transaction.
@@ -65,7 +70,8 @@ type Escalation struct {
 
 // selectColumns lists the columns in the order scanRecord reads them.
 const selectColumns = `id, key, check_name, severity, kind, namespace, name, reason, message,
-	state, first_seen, last_seen, firing_at, resolved_at, firing_notified_at, resolved_notified_at, acknowledged_at, targets`
+	state, first_seen, last_seen, firing_at, resolved_at, firing_notified_at, resolved_notified_at, acknowledged_at, targets,
+	caused_by, pending_since`
 
 // OpenRecords returns all problems that are pending or firing.
 func (s *Store) OpenRecords(ctx context.Context) ([]Record, error) {
@@ -136,10 +142,11 @@ func (s *Store) Apply(ctx context.Context, changes Changes) error {
 	for _, r := range changes.Insert {
 		_, err := tx.ExecContext(ctx, `INSERT INTO findings
 			(key, check_name, severity, kind, namespace, name, reason, message, targets,
-			 state, first_seen, last_seen, firing_at, resolved_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 state, first_seen, last_seen, firing_at, resolved_at, caused_by, pending_since)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			r.Key, r.Check, r.Severity, r.Object.Kind, r.Object.Namespace, r.Object.Name, r.Reason, r.Message,
-			joinTargets(r.Targets), r.State, unix(r.FirstSeen), unix(r.LastSeen), nullableUnix(r.FiringAt), nullableUnix(r.ResolvedAt))
+			joinTargets(r.Targets), r.State, unix(r.FirstSeen), unix(r.LastSeen), nullableUnix(r.FiringAt), nullableUnix(r.ResolvedAt),
+			r.CausedBy, pendingSince(r))
 		if err != nil {
 			return fmt.Errorf("insert finding %s: %w", r.Key, err)
 		}
@@ -147,10 +154,10 @@ func (s *Store) Apply(ctx context.Context, changes Changes) error {
 	for _, r := range changes.Update {
 		_, err := tx.ExecContext(ctx, `UPDATE findings
 			SET severity = ?, reason = ?, message = ?, targets = ?, state = ?, last_seen = ?, firing_at = ?,
-			    resolved_at = ?, firing_notified_at = ?
+			    resolved_at = ?, firing_notified_at = ?, caused_by = ?, pending_since = ?
 			WHERE id = ?`,
 			r.Severity, r.Reason, r.Message, joinTargets(r.Targets), r.State, unix(r.LastSeen), nullableUnix(r.FiringAt), nullableUnix(r.ResolvedAt),
-			nullableUnix(r.FiringNotifiedAt), r.ID)
+			nullableUnix(r.FiringNotifiedAt), r.CausedBy, pendingSince(r), r.ID)
 		if err != nil {
 			return fmt.Errorf("update finding %s: %w", r.Key, err)
 		}
@@ -265,12 +272,13 @@ func (s *Store) query(ctx context.Context, statement string, args ...any) ([]Rec
 func scanRecord(rows *sql.Rows) (Record, error) {
 	var r Record
 	var firstSeen, lastSeen int64
-	var firingAt, resolvedAt, firingNotifiedAt, resolvedNotifiedAt, acknowledgedAt sql.NullInt64
+	var firingAt, resolvedAt, firingNotifiedAt, resolvedNotifiedAt, acknowledgedAt, pendingSinceAt sql.NullInt64
 	var targets string
 
 	err := rows.Scan(&r.ID, &r.Key, &r.Check, &r.Severity, &r.Object.Kind, &r.Object.Namespace, &r.Object.Name,
 		&r.Reason, &r.Message, &r.State, &firstSeen, &lastSeen,
-		&firingAt, &resolvedAt, &firingNotifiedAt, &resolvedNotifiedAt, &acknowledgedAt, &targets)
+		&firingAt, &resolvedAt, &firingNotifiedAt, &resolvedNotifiedAt, &acknowledgedAt, &targets,
+		&r.CausedBy, &pendingSinceAt)
 	if err != nil {
 		return Record{}, fmt.Errorf("scan finding: %w", err)
 	}
@@ -282,7 +290,20 @@ func scanRecord(rows *sql.Rows) (Record, error) {
 	r.ResolvedNotifiedAt = fromNullable(resolvedNotifiedAt)
 	r.AcknowledgedAt = fromNullable(acknowledgedAt)
 	r.Targets = checks.ParseTargets(targets)
+	r.PendingSince = r.FirstSeen
+	if pendingSinceAt.Valid {
+		r.PendingSince = time.Unix(pendingSinceAt.Int64, 0).UTC()
+	}
 	return r, nil
+}
+
+// pendingSince stores the start of the ALERT_AFTER clock only when it differs
+// from first_seen, so most rows keep NULL.
+func pendingSince(r Record) sql.NullInt64 {
+	if r.PendingSince.IsZero() || r.PendingSince.Equal(r.FirstSeen) {
+		return sql.NullInt64{}
+	}
+	return sql.NullInt64{Int64: r.PendingSince.Unix(), Valid: true}
 }
 
 // joinTargets stores the target list as "mail,slack"; empty means every target.
