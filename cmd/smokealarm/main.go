@@ -91,7 +91,7 @@ func run() error {
 	}
 
 	notifiers := newNotifiers(cfg, logger, notify.NewHTTPClient(), time.Now)
-	if err := syncTargets(ctx, logger, db, notifiers); err != nil {
+	if err := syncTargets(ctx, logger, db, notifiers, cfg.CriticalOnly); err != nil {
 		return err
 	}
 	loop := newEngine(cfg, logger, cluster, db, activeChecks, unavailable, notifiers)
@@ -226,6 +226,7 @@ func newEngine(cfg config.Config, logger *slog.Logger, cluster *kube.Cluster, db
 		SkippedChecks:          skipped,
 		Store:                  db,
 		Notifiers:              notifiers,
+		MinSeverity:            minSeverities(notifiers, cfg.CriticalOnly),
 		BaseURL:                cfg.BaseURL,
 		Now:                    time.Now,
 		Logger:                 logger,

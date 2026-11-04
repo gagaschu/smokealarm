@@ -28,6 +28,9 @@ type Config struct {
 
 	SMTP   SMTPConfig
 	Notify NotifyConfig // the other notification targets
+	// CriticalOnly lists the kinds of targets ("mail", "ntfy", ...) that hear
+	// only about critical problems (SMOKEALARM_<TARGET>_MIN_SEVERITY).
+	CriticalOnly []string
 
 	AdminUser         string
 	AdminPasswordHash string // bcrypt hash, see "smokealarm hash-password"
@@ -94,6 +97,7 @@ func Load(getenv func(string) string) (Config, error) {
 	validateBaseURL(&r, cfg.BaseURL)
 	validateSMTP(&r, cfg.SMTP)
 	validateNotify(&r, cfg.Notify)
+	cfg.CriticalOnly = loadCriticalOnly(&r, cfg)
 	if cfg.RestartThreshold < 0 {
 		r.fail("SMOKEALARM_RESTART_THRESHOLD: must not be negative")
 	}
