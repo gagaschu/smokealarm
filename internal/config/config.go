@@ -95,6 +95,15 @@ func Load(getenv func(string) string) (Config, error) {
 	if cfg.SessionTTL <= 0 {
 		r.fail("SMOKEALARM_SESSION_TTL: must be greater than zero")
 	}
+	if cfg.PodPendingAfter < 0 {
+		r.fail("SMOKEALARM_POD_PENDING_AFTER: must not be negative")
+	}
+	if cfg.PVCPendingAfter < 0 {
+		r.fail("SMOKEALARM_PVC_PENDING_AFTER: must not be negative")
+	}
+	if cfg.CronJobGrace < 0 {
+		r.fail("SMOKEALARM_CRONJOB_GRACE: must not be negative")
+	}
 	if _, err := time.LoadLocation(cfg.CronJobTimeZone); err != nil {
 		r.fail("SMOKEALARM_CRONJOB_TIME_ZONE: %q is not a known time zone", cfg.CronJobTimeZone)
 	}

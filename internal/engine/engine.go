@@ -559,10 +559,13 @@ func (e *Engine) notifyTarget(ctx context.Context, target notify.Notifier, unkno
 	e.Logger.Info("notification sent", "target", target.Description(),
 		"new", len(n.New), "reminders", len(n.Reminders), "resolved", len(n.Resolved))
 
-	if err := e.Store.MarkFiringNotified(ctx, name, r.firingIDs, now); err != nil {
+	// The message is out, so this must be written even if the process is being
+	// stopped right now. Otherwise it goes out again after the restart.
+	markCtx := context.WithoutCancel(ctx)
+	if err := e.Store.MarkFiringNotified(markCtx, name, r.firingIDs, now); err != nil {
 		return fmt.Errorf("mark new findings as reported via %s: %w", name, err)
 	}
-	if err := e.Store.MarkResolvedNotified(ctx, name, r.resolvedIDs, now); err != nil {
+	if err := e.Store.MarkResolvedNotified(markCtx, name, r.resolvedIDs, now); err != nil {
 		return fmt.Errorf("mark resolved findings as reported via %s: %w", name, err)
 	}
 	return nil

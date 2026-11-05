@@ -402,7 +402,7 @@ All configuration is done through environment variables starting with `SMOKEALAR
 | `SMOKEALARM_COOKIE_SECURE` | `true` | Send the login cookie only over HTTPS. Set `false` only for local development over plain HTTP. |
 | `SMOKEALARM_SMTP_HOST` | – | Mail server. Setting it switches mail on. |
 | `SMOKEALARM_SMTP_PORT` | `587` | Mail server port. |
-| `SMOKEALARM_SMTP_TLS` | `starttls` | `starttls`, `tls` (encrypted from the start, usually port 465) or `none` (local testing only). With `starttls`, a server that does not offer it is an error; there is no silent downgrade. |
+| `SMOKEALARM_SMTP_TLS` | `starttls` | `starttls`, `tls` (encrypted from the start, usually port 465) or `none` (local testing only; a login is then only possible to `localhost`). With `starttls`, a server that does not offer it is an error; there is no silent downgrade. |
 | `SMOKEALARM_SMTP_USERNAME` | – | Login for the mail server (optional). |
 | `SMOKEALARM_SMTP_PASSWORD` | – | Password for the login. Required if a username is set. |
 | `SMOKEALARM_SMTP_FROM` | – (required if mail is on) | Sender address. |

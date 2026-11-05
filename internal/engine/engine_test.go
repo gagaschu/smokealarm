@@ -27,6 +27,7 @@ type fakeNotifier struct {
 	attempts int
 	sent     []notify.Notification
 	fail     bool
+	onSend   func() // runs while sending, if set
 }
 
 func (f *fakeNotifier) Name() string {
@@ -40,6 +41,9 @@ func (f *fakeNotifier) Description() string { return f.Name() + " (test)" }
 
 func (f *fakeNotifier) Send(_ context.Context, n notify.Notification) error {
 	f.attempts++
+	if f.onSend != nil {
+		f.onSend()
+	}
 	if f.fail {
 		return errors.New("smtp server unreachable")
 	}
@@ -1303,4 +1307,24 @@ func TestNoResolvedWhenTheFirstMailFailed(t *testing.T) {
 	h.findings = nil
 	h.mustRun(30 * time.Second)
 	h.wantSent(0)
+}
+
+// A message that went out while the process was told to stop counts as sent:
+// after the restart it must not go out a second time.
+func TestMessageSentDuringShutdownIsNotSentAgain(t *testing.T) {
+	h := newHarness(t)
+	h.findings = []checks.Finding{finding("a", checks.Critical)}
+	h.mustRun(0)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h.notifier.onSend = cancel // SIGTERM arrives while the mail is on its way
+	h.now = h.now.Add(2 * time.Minute)
+	_ = h.engine.RunOnce(ctx) // cleanup may fail on the cancelled context
+	h.notifier.onSend = nil
+	h.wantSent(1)
+
+	h.start()
+	h.mustRun(30 * time.Second)
+	h.wantSent(1)
 }

@@ -3,6 +3,7 @@ package config
 import (
 	"net/mail"
 	"net/url"
+	"slices"
 )
 
 // SMTPConfig holds the mail settings. Mail is switched on by setting a host.
@@ -42,6 +43,11 @@ func validateSMTP(r *reader, c SMTPConfig) {
 	}
 	if c.Username != "" && c.Password == "" {
 		r.fail("SMOKEALARM_SMTP_PASSWORD: required when SMOKEALARM_SMTP_USERNAME is set")
+	}
+	// net/smtp refuses to send a password unencrypted to anything but this
+	// machine, so every mail would fail later. Better to say so at startup.
+	if c.Username != "" && c.TLS == "none" && !slices.Contains([]string{"localhost", "127.0.0.1", "::1"}, c.Host) {
+		r.fail("SMOKEALARM_SMTP_TLS: none cannot be used with a login to %s; use starttls or tls, or remove SMOKEALARM_SMTP_USERNAME", c.Host)
 	}
 
 	if c.From == "" {
