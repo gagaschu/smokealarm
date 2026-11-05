@@ -5,64 +5,68 @@ import (
 	"time"
 )
 
-// Failed logins allowed per client within the window, before it is blocked.
+// Login tries allowed per client within the window, before it is blocked.
 const (
-	maxFailures   = 5
-	failureWindow = 15 * time.Minute
+	maxAttempts   = 5
+	attemptWindow = 15 * time.Minute
 )
 
-// RateLimiter slows down password guessing: after five failed logins within
-// 15 minutes a client is blocked until the oldest failure is out of the
-// window. It lives in memory, so a restart clears it.
+// RateLimiter slows down password guessing: a client gets five tries within 15
+// minutes and is then blocked until the oldest try is out of the window. A
+// successful login forgets the tries. It lives in memory, so a restart clears
+// it.
+//
+// A try counts as soon as it starts, not when the password turned out wrong.
+// The password check takes a moment, and all requests of a burst would get
+// through before the first failure is known.
 type RateLimiter struct {
 	Now func() time.Time
 
 	mu       sync.Mutex
-	failures map[string][]time.Time // client -> times of recent failures
+	attempts map[string][]time.Time // client -> times of recent tries
 }
 
-// Allowed reports whether the client may try to log in.
-func (l *RateLimiter) Allowed(client string) bool {
+// Attempt counts a login try and reports whether the client may make it. A
+// refused try does not count, so a blocked client cannot extend its own block.
+func (l *RateLimiter) Attempt(client string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return len(l.recent(client)) < maxFailures
-}
-
-// Failed records a failed login.
-func (l *RateLimiter) Failed(client string) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.failures == nil {
-		l.failures = map[string][]time.Time{}
+	recent := l.recent(client)
+	if len(recent) >= maxAttempts {
+		return false
 	}
-	l.failures[client] = append(l.recent(client), l.Now())
+	if l.attempts == nil {
+		l.attempts = map[string][]time.Time{}
+	}
+	l.attempts[client] = append(recent, l.Now())
 	// Forget clients that never came back, so the map does not grow without bound.
-	for other := range l.failures {
+	for other := range l.attempts {
 		l.recent(other)
 	}
+	return true
 }
 
-// Succeeded forgets the failures of a client.
+// Succeeded forgets the tries of a client.
 func (l *RateLimiter) Succeeded(client string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	delete(l.failures, client)
+	delete(l.attempts, client)
 }
 
-// recent returns the failures inside the window and drops the older ones. The
+// recent returns the tries inside the window and drops the older ones. The
 // caller must hold the lock.
 func (l *RateLimiter) recent(client string) []time.Time {
-	cutoff := l.Now().Add(-failureWindow)
+	cutoff := l.Now().Add(-attemptWindow)
 	var kept []time.Time
-	for _, t := range l.failures[client] {
+	for _, t := range l.attempts[client] {
 		if t.After(cutoff) {
 			kept = append(kept, t)
 		}
 	}
 	if len(kept) == 0 {
-		delete(l.failures, client)
+		delete(l.attempts, client)
 	} else {
-		l.failures[client] = kept
+		l.attempts[client] = kept
 	}
 	return kept
 }
