@@ -787,6 +787,7 @@ config:
   podPendingAfter: 7m
   pvcPendingAfter: 8m
   cronjobGrace: 9m
+  cronjobTimeZone: Europe/Berlin
 disabledChecks: [pod-restarts]
 smtp:
   host: mail.example.com
@@ -843,6 +844,7 @@ func TestEverySettingBecomesAnEnvironmentVariable(t *testing.T) {
 		"SMOKEALARM_POD_PENDING_AFTER":        "7m",
 		"SMOKEALARM_PVC_PENDING_AFTER":        "8m",
 		"SMOKEALARM_CRONJOB_GRACE":            "9m",
+		"SMOKEALARM_CRONJOB_TIME_ZONE":        "Europe/Berlin",
 		"SMOKEALARM_DISABLED_CHECKS":          "pod-restarts",
 		"SMOKEALARM_SMTP_HOST":                "mail.example.com",
 		"SMOKEALARM_SMTP_PORT":                "465",

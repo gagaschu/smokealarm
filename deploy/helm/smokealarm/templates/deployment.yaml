@@ -80,6 +80,10 @@ spec:
               value: {{ .Values.config.pvcPendingAfter | quote }}
             - name: SMOKEALARM_CRONJOB_GRACE
               value: {{ .Values.config.cronjobGrace | quote }}
+            {{- with .Values.config.cronjobTimeZone }}
+            - name: SMOKEALARM_CRONJOB_TIME_ZONE
+              value: {{ . | quote }}
+            {{- end }}
             {{- with include "smokealarm.baseUrl" . }}
             - name: SMOKEALARM_BASE_URL
               value: {{ . | quote }}

@@ -219,6 +219,7 @@ func newEngine(cfg config.Config, logger *slog.Logger, cluster *kube.Cluster, db
 			PodPendingAfter:   cfg.PodPendingAfter,
 			PVCPendingAfter:   cfg.PVCPendingAfter,
 			CronJobGrace:      cfg.CronJobGrace,
+			CronJobTimeZone:   cfg.CronJobTimeZone,
 			IgnoredNamespaces: cfg.IgnoreNamespaces,
 		},
 		Interval:               cfg.CheckInterval,

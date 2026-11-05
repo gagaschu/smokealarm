@@ -145,10 +145,13 @@ type VolumeUsage struct {
 
 // Options holds the configurable thresholds and the ignore list.
 type Options struct {
-	RestartThreshold  int
-	PodPendingAfter   time.Duration
-	PVCPendingAfter   time.Duration
-	CronJobGrace      time.Duration
+	RestartThreshold int
+	PodPendingAfter  time.Duration
+	PVCPendingAfter  time.Duration
+	CronJobGrace     time.Duration
+	// CronJobTimeZone is how schedules without spec.timeZone are read; empty
+	// means UTC. See parseSchedule.
+	CronJobTimeZone   string
 	IgnoredNamespaces []string
 }
 

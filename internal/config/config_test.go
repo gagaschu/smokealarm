@@ -144,6 +144,7 @@ func TestLoadRejectsBadAlertAndRetention(t *testing.T) {
 		{"negative repeat interval", map[string]string{"SMOKEALARM_CRITICAL_REPEAT_INTERVAL": "-1h"}, "SMOKEALARM_CRITICAL_REPEAT_INTERVAL"},
 		{"repeat interval below check interval", map[string]string{"SMOKEALARM_CRITICAL_REPEAT_INTERVAL": "10s"}, "SMOKEALARM_CRITICAL_REPEAT_INTERVAL"},
 		{"zero retention", map[string]string{"SMOKEALARM_RETENTION": "0s"}, "SMOKEALARM_RETENTION"},
+		{"unknown time zone", map[string]string{"SMOKEALARM_CRONJOB_TIME_ZONE": "Europe/Atlantis"}, "SMOKEALARM_CRONJOB_TIME_ZONE"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -198,5 +199,15 @@ func TestSessionAndCookieSettings(t *testing.T) {
 		if _, err := Load(env(values)); err == nil {
 			t.Errorf("%s: expected an error", name)
 		}
+	}
+}
+
+func TestCronJobTimeZoneIsRead(t *testing.T) {
+	cfg, err := Load(env(map[string]string{"SMOKEALARM_CRONJOB_TIME_ZONE": "Europe/Berlin"}))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.CronJobTimeZone != "Europe/Berlin" {
+		t.Errorf("CronJobTimeZone = %q", cfg.CronJobTimeZone)
 	}
 }

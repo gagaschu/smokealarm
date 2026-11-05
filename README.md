@@ -397,6 +397,7 @@ All configuration is done through environment variables starting with `SMOKEALAR
 | `SMOKEALARM_POD_PENDING_AFTER` | `5m` | `pod-pending` reports pods that are pending longer than this. |
 | `SMOKEALARM_PVC_PENDING_AFTER` | `5m` | `pvc-pending` reports claims that are pending longer than this. |
 | `SMOKEALARM_CRONJOB_GRACE` | `5m` | How late a CronJob run may be before `cronjob-missed` reports it. |
+| `SMOKEALARM_CRONJOB_TIME_ZONE` | (UTC) | The time zone the Kubernetes controller reads schedules in, for CronJobs without `spec.timeZone`, for example `Europe/Berlin`. See the note below. |
 | `SMOKEALARM_SESSION_TTL` | `7d` | How long a login stays valid. |
 | `SMOKEALARM_COOKIE_SECURE` | `true` | Send the login cookie only over HTTPS. Set `false` only for local development over plain HTTP. |
 | `SMOKEALARM_SMTP_HOST` | – | Mail server. Setting it switches mail on. |
@@ -453,6 +454,8 @@ Notes:
 - The cert-manager and Argo CD CRDs are detected once at startup, and only if an enabled check needs them. If a CRD is missing or the service account may not list it, the matching checks are skipped and the status page says why. After installing the CRD or granting the permission, restart smokealarm. While a permission is missing, open problems from those checks stay open, since they may still exist. If the CRD is not installed, they count as gone.
 - Disabling a check closes its problems. This applies to `SMOKEALARM_DISABLED_CHECKS` and to the chart's `rbac.*` switches, which disable the checks that need the permission. The open problems are reported as resolved in the next mail, even if the cause is still there. A check that is only skipped for a moment, for example because the kubelet doesn't answer, leaves its problems alone.
 - `pvc-usage`, `cert-expiry` and `workload-replicas` can go from warning to critical. It stays the same problem: it isn't reported as resolved, and you get a new mail saying it is now critical.
+- A CronJob without `spec.timeZone` runs in the local time of the Kubernetes controller. On k3s the controller runs inside the host process, so that should be the host's time zone (check with `timedatectl`). smokealarm cannot see it from the API and assumes UTC. If the host is not on UTC, set `SMOKEALARM_CRONJOB_TIME_ZONE` to the same zone, or daily and weekly CronJobs are reported as missed most of the day. Short schedules like `*/5 * * * *` are not affected.
+- A schedule that never comes true, like `0 0 31 2 *` for a CronJob that only runs by hand, is never reported as missed.
 - `pvc-usage` looks at the filesystem a volume lives on, because that is what the kubelet reports. With k3s `local-path` that is the node's disk, and the requested size is not enforced, so the check only fires when the node disk is nearly full. It is more useful for volumes with their own filesystem (Longhorn, Ceph, block volumes).
 - If `pvc-usage` can't read the volume stats (no permission, a node doesn't answer), it is skipped for that run, open problems stay open, and the status page shows the reason.
 
