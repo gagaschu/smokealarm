@@ -23,6 +23,16 @@ type Sessions struct {
 	TTL          time.Duration
 	SecureCookie bool
 	Now          func() time.Time
+	// Credentials identifies the current login data (see
+	// CredentialsFingerprint). A session started with other data is not valid,
+	// so changing the password also throws out whoever had the old one.
+	Credentials string
+}
+
+// CredentialsFingerprint turns the admin user and the password hash into the
+// value for Sessions.Credentials. The zero byte keeps the two parts apart.
+func CredentialsFingerprint(username, passwordHash string) string {
+	return hashID(username + "\x00" + passwordHash)
 }
 
 // Start logs a user in: it creates a session and sets the cookie. Every
@@ -36,6 +46,7 @@ func (s *Sessions) Start(w http.ResponseWriter, r *http.Request, username string
 	expires := now.Add(s.TTL)
 	err = s.Store.CreateSession(r.Context(), store.Session{
 		IDHash: hashID(id), Username: username, CreatedAt: now, ExpiresAt: expires,
+		CredentialsHash: s.Credentials,
 	})
 	if err != nil {
 		return fmt.Errorf("start session: %w", err)
@@ -68,7 +79,10 @@ func (s *Sessions) Valid(r *http.Request) (string, bool, error) {
 	if err != nil {
 		return "", false, fmt.Errorf("check session: %w", err)
 	}
-	return session.Username, found, nil
+	if !found || session.CredentialsHash != s.Credentials {
+		return "", false, nil
+	}
+	return session.Username, true, nil
 }
 
 // Require lets only requests with a valid session through; everybody else is

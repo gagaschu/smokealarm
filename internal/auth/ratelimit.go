@@ -36,6 +36,10 @@ func (l *RateLimiter) Failed(client string) {
 		l.failures = map[string][]time.Time{}
 	}
 	l.failures[client] = append(l.recent(client), l.Now())
+	// Forget clients that never came back, so the map does not grow without bound.
+	for other := range l.failures {
+		l.recent(other)
+	}
 }
 
 // Succeeded forgets the failures of a client.
@@ -45,8 +49,8 @@ func (l *RateLimiter) Succeeded(client string) {
 	delete(l.failures, client)
 }
 
-// recent returns the failures inside the window and drops the older ones, so
-// the map does not grow without bound. The caller must hold the lock.
+// recent returns the failures inside the window and drops the older ones. The
+// caller must hold the lock.
 func (l *RateLimiter) recent(client string) []time.Time {
 	cutoff := l.Now().Add(-failureWindow)
 	var kept []time.Time

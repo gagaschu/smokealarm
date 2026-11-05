@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -268,5 +269,52 @@ func TestBcryptCostIsReasonable(t *testing.T) {
 	cost, err := bcrypt.Cost([]byte(hash))
 	if err != nil || cost < 10 {
 		t.Errorf("cost = %d, %v; want at least 10", cost, err)
+	}
+}
+
+// A changed password or admin user must end the sessions from before, or an
+// attacker stays logged in until the session expires.
+func TestSessionEndsWhenTheCredentialsChange(t *testing.T) {
+	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	s, _ := newTestSessions(t, &now, true)
+	s.Credentials = CredentialsFingerprint("admin", "old-hash")
+	cookie := login(t, s)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(cookie)
+	if _, ok, err := s.Valid(req); err != nil || !ok {
+		t.Fatalf("Valid before the change = %v, %v", ok, err)
+	}
+
+	for _, changed := range []string{
+		CredentialsFingerprint("admin", "new-hash"),
+		CredentialsFingerprint("other", "old-hash"),
+	} {
+		s.Credentials = changed
+		if _, ok, err := s.Valid(req); err != nil || ok {
+			t.Errorf("Valid after the change = %v, %v; want no valid session", ok, err)
+		}
+	}
+}
+
+func TestCredentialsFingerprintDoesNotMixUpItsParts(t *testing.T) {
+	if CredentialsFingerprint("ab", "c") == CredentialsFingerprint("a", "bc") {
+		t.Error("different credentials must have different fingerprints")
+	}
+}
+
+// Clients that never come back must not stay in the map.
+func TestRateLimiterForgetsOldClients(t *testing.T) {
+	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	l := &RateLimiter{Now: func() time.Time { return now }}
+	for i := range 100 {
+		l.Failed(fmt.Sprintf("10.0.0.%d", i))
+	}
+
+	now = now.Add(failureWindow + time.Second)
+	l.Failed("10.0.1.1")
+
+	if len(l.failures) != 1 {
+		t.Errorf("map holds %d clients, want only the recent one", len(l.failures))
 	}
 }

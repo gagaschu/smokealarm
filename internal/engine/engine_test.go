@@ -27,6 +27,7 @@ type fakeNotifier struct {
 	attempts int
 	sent     []notify.Notification
 	fail     bool
+	onSend   func() // runs while sending, if set
 }
 
 func (f *fakeNotifier) Name() string {
@@ -40,6 +41,9 @@ func (f *fakeNotifier) Description() string { return f.Name() + " (test)" }
 
 func (f *fakeNotifier) Send(_ context.Context, n notify.Notification) error {
 	f.attempts++
+	if f.onSend != nil {
+		f.onSend()
+	}
 	if f.fail {
 		return errors.New("smtp server unreachable")
 	}
@@ -1258,4 +1262,69 @@ func TestAcknowledgingAgainAfterRemovingIsSilentUntilResolved(t *testing.T) {
 	h.mustRun(time.Minute)
 	h.wantSent(2)
 	h.wantLastResolved("a")
+}
+
+// A target that was told "warning" hears the end, even if the mail about the
+// escalation never went out.
+func TestResolvedIsReportedAfterAFailedEscalation(t *testing.T) {
+	h := newHarness(t)
+	h.findings = []checks.Finding{escalating(checks.Warning)}
+	h.mustRun(0)
+	h.mustRun(2 * time.Minute)
+	if len(h.notifier.sent) != 1 {
+		t.Fatalf("sent %d, want the warning", len(h.notifier.sent))
+	}
+
+	h.notifier.fail = true
+	h.findings = []checks.Finding{escalating(checks.Critical)}
+	if err := h.run(30 * time.Second); err == nil {
+		t.Fatal("expected the failed send to be returned")
+	}
+
+	h.notifier.fail = false
+	h.findings = nil
+	h.mustRun(30 * time.Second)
+	h.mustRun(30 * time.Second)
+
+	if len(h.notifier.sent) != 2 {
+		t.Fatalf("sent %d, want the warning and its end", len(h.notifier.sent))
+	}
+	h.wantLastResolved(escalating(checks.Warning).Key)
+}
+
+// A problem nobody was told about stays silent when it ends, also if the first
+// mail failed: nobody heard the start.
+func TestNoResolvedWhenTheFirstMailFailed(t *testing.T) {
+	h := newHarness(t)
+	h.findings = []checks.Finding{escalating(checks.Warning)}
+	h.mustRun(0)
+	h.notifier.fail = true
+	if err := h.run(2 * time.Minute); err == nil {
+		t.Fatal("expected the failed send to be returned")
+	}
+
+	h.notifier.fail = false
+	h.findings = nil
+	h.mustRun(30 * time.Second)
+	h.wantSent(0)
+}
+
+// A message that went out while the process was told to stop counts as sent:
+// after the restart it must not go out a second time.
+func TestMessageSentDuringShutdownIsNotSentAgain(t *testing.T) {
+	h := newHarness(t)
+	h.findings = []checks.Finding{finding("a", checks.Critical)}
+	h.mustRun(0)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h.notifier.onSend = cancel // SIGTERM arrives while the mail is on its way
+	h.now = h.now.Add(2 * time.Minute)
+	_ = h.engine.RunOnce(ctx) // cleanup may fail on the cancelled context
+	h.notifier.onSend = nil
+	h.wantSent(1)
+
+	h.start()
+	h.mustRun(30 * time.Second)
+	h.wantSent(1)
 }

@@ -15,13 +15,15 @@ type Session struct {
 	Username  string
 	CreatedAt time.Time
 	ExpiresAt time.Time
+	// CredentialsHash says which credentials the session was started with.
+	CredentialsHash string
 }
 
 // CreateSession stores a new session.
 func (s *Store) CreateSession(ctx context.Context, session Session) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO sessions (id_hash, username, created_at, expires_at) VALUES (?, ?, ?, ?)`,
-		session.IDHash, session.Username, unix(session.CreatedAt), unix(session.ExpiresAt))
+		`INSERT INTO sessions (id_hash, username, created_at, expires_at, credentials_hash) VALUES (?, ?, ?, ?, ?)`,
+		session.IDHash, session.Username, unix(session.CreatedAt), unix(session.ExpiresAt), session.CredentialsHash)
 	if err != nil {
 		return fmt.Errorf("create session: %w", err)
 	}
@@ -34,8 +36,8 @@ func (s *Store) Session(ctx context.Context, idHash string, now time.Time) (Sess
 	var session Session
 	var createdAt, expiresAt int64
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id_hash, username, created_at, expires_at FROM sessions WHERE id_hash = ? AND expires_at > ?`,
-		idHash, unix(now)).Scan(&session.IDHash, &session.Username, &createdAt, &expiresAt)
+		`SELECT id_hash, username, created_at, expires_at, credentials_hash FROM sessions WHERE id_hash = ? AND expires_at > ?`,
+		idHash, unix(now)).Scan(&session.IDHash, &session.Username, &createdAt, &expiresAt, &session.CredentialsHash)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Session{}, false, nil
 	}

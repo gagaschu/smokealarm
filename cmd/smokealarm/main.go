@@ -25,7 +25,8 @@ import (
 	"github.com/gagaschu/smokealarm/internal/web"
 )
 
-// shutdownTimeout is how long the HTTP server gets to finish open requests.
+// shutdownTimeout is how long the HTTP server gets to finish open requests and
+// the engine gets to finish its current run.
 const shutdownTimeout = 5 * time.Second
 
 func main() {
@@ -121,7 +122,11 @@ func run() error {
 	if err := cluster.WaitForSync(ctx); err != nil {
 		return fmt.Errorf("wait for informer caches: %w", err)
 	}
-	go loop.Run(ctx)
+	loopDone := make(chan struct{})
+	go func() {
+		defer close(loopDone)
+		loop.Run(ctx)
+	}()
 
 	select {
 	case err := <-serverErr:
@@ -134,6 +139,14 @@ func run() error {
 	defer cancel()
 	if err := server.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("shut down http server: %w", err)
+	}
+
+	// A run that is sending a message must get the chance to finish and to
+	// remember that it did, or the message goes out again after the restart.
+	select {
+	case <-loopDone:
+	case <-shutdownCtx.Done():
+		logger.Warn("check run did not finish in time, a message may be sent twice after the restart")
 	}
 	return nil
 }
@@ -219,6 +232,7 @@ func newEngine(cfg config.Config, logger *slog.Logger, cluster *kube.Cluster, db
 			PodPendingAfter:   cfg.PodPendingAfter,
 			PVCPendingAfter:   cfg.PVCPendingAfter,
 			CronJobGrace:      cfg.CronJobGrace,
+			CronJobTimeZone:   cfg.CronJobTimeZone,
 			IgnoredNamespaces: cfg.IgnoreNamespaces,
 		},
 		Interval:               cfg.CheckInterval,
@@ -252,6 +266,7 @@ func newHandler(cfg config.Config, logger *slog.Logger, cluster *kube.Cluster, d
 			TTL:          cfg.SessionTTL,
 			SecureCookie: cfg.CookieSecure,
 			Now:          time.Now,
+			Credentials:  auth.CredentialsFingerprint(cfg.AdminUser, cfg.AdminPasswordHash),
 		},
 		Limiter:  &auth.RateLimiter{Now: time.Now},
 		Status:   loop.Status,

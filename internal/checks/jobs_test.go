@@ -270,3 +270,50 @@ func TestCronJobMissedInvalidSchedule(t *testing.T) {
 		t.Errorf("unknown zone: got %+v, want one InvalidSchedule finding", got)
 	}
 }
+
+// February 31 is a common way to write a CronJob that only runs by hand. The
+// schedule has no next run, so no run can be missed.
+func TestCronJobMissedScheduleWithoutNextRun(t *testing.T) {
+	cj := newCronJob("manual")
+	cj.Spec.Schedule = "0 0 31 2 *"
+	cj.CreationTimestamp = metav1.NewTime(testNow.Add(-24 * time.Hour))
+	snap := &Snapshot{Now: testNow, CronJobs: []*batchv1.CronJob{cj}}
+
+	if got := CronJobMissed(snap, cronOptions()); len(got) != 0 {
+		t.Errorf("got %+v, want no findings", got)
+	}
+}
+
+// Without spec.timeZone the controller reads a schedule in its own local time.
+// A job at 03:00 Berlin time really runs at 02:00 UTC; judged in UTC, it would
+// count as missed for almost the whole day.
+func TestCronJobMissedUsesConfiguredTimeZone(t *testing.T) {
+	berlin := "Europe/Berlin"
+	lastRun := metav1.NewTime(time.Date(2026, 11, 5, 2, 0, 0, 0, time.UTC)) // 03:00 in Berlin
+	const key = "cronjob-missed/CronJob/batch/backup/MissedSchedule"
+
+	tests := []struct {
+		name     string
+		zone     string
+		specZone *string
+		now      time.Time
+		want     []string
+	}{
+		{"no zone configured, judged in UTC", "", nil, time.Date(2026, 11, 5, 3, 6, 0, 0, time.UTC), []string{key}},
+		{"zone configured, same hour", berlin, nil, time.Date(2026, 11, 5, 3, 6, 0, 0, time.UTC), nil},
+		{"zone configured, late next day", berlin, nil, time.Date(2026, 11, 6, 1, 59, 0, 0, time.UTC), nil},
+		{"zone configured, run really missed", berlin, nil, time.Date(2026, 11, 6, 2, 6, 0, 0, time.UTC), []string{key}},
+		{"spec.timeZone wins over the configured zone", "Asia/Tokyo", &berlin, time.Date(2026, 11, 5, 3, 6, 0, 0, time.UTC), nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cj := newCronJob("backup")
+			cj.Spec.Schedule = "0 3 * * *"
+			cj.Spec.TimeZone = tt.specZone
+			cj.Status.LastScheduleTime = &lastRun
+			opts := cronOptions()
+			opts.CronJobTimeZone = tt.zone
+			wantFindings(t, CronJobMissed(&Snapshot{Now: tt.now, CronJobs: []*batchv1.CronJob{cj}}, opts), tt.want, Warning)
+		})
+	}
+}

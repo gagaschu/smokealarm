@@ -8,6 +8,7 @@ All notable changes to this project are documented here. The format is based on
 
 ### Added
 
+- `SMOKEALARM_CRONJOB_TIME_ZONE` (Helm: `config.cronjobTimeZone`) says which time zone the Kubernetes controller reads schedules in, for CronJobs without `spec.timeZone`. On k3s that should be the time zone of the host.
 - **Reminders for critical problems**: `SMOKEALARM_CRITICAL_REPEAT_INTERVAL` reports critical problems that are still open again at that interval. Off by default.
 - **Acknowledge critical problems** in the web UI: an acknowledged problem stays on the overview with a mark and sends no more reminders until it is resolved. "Resolved" is still reported. A first mail that has not gone out yet is dropped.
 - An acknowledgement can be removed again. The problem then behaves like any other, so a mail can go out in the next run.
@@ -20,8 +21,20 @@ All notable changes to this project are documented here. The format is based on
 - **Routing**: `SMOKEALARM_<TARGET>_MIN_SEVERITY=critical` sends only critical problems to a target (for example ntfy), while the others still get everything. The annotations `smokealarm.gagaschu.github.io/targets` (e.g. `"slack,mail"`) and `smokealarm.gagaschu.github.io/severity` (`warning` or `critical`) on an object or its namespace choose the targets and the severity of its problems. A target that heard about a problem always hears its end; an annotation that names no configured target sends to all of them. The status page shows which targets get critical problems only; the overview and the history show the targets of a problem. Helm chart: `minSeverity` per target.
 - **A node that is down is the alarm**: the problems of the pods and workloads on it are held back while it is down, instead of arriving one by one. The notification starts with `NODE DOWN: <node>` and lists the affected problems; the overview shows them below the node. When the node is back, they get `SMOKEALARM_ALERT_AFTER` again and are reported only if they last. A test node can be silenced with the ignore annotation on the node; its consequences stay quiet too. The webhook gets an `affected` list on every alert.
 
+### Fixed
+
+- **`cronjob-missed`**: daily and weekly CronJobs no longer count as missed most of the day when the controller is not on UTC, once `SMOKEALARM_CRONJOB_TIME_ZONE` is set. A schedule that never comes true (`0 0 31 2 *`) no longer alarms.
+- **`pvc-usage`**: a full volume no longer reports "resolved" when its node goes down, and alarms again when it returns. While a node is down, a problem whose volume was not measured stays as it is.
+- **Lost "resolved"**: a target that heard the start of a problem now always hears its end, also if the message after an escalation or a downtime failed.
+- **Duplicate message after a restart**: smokealarm waits for the running check at shutdown, and a message that went out is remembered even while the process stops.
+- **Logout** now has the same cross-site protection as the other actions.
+- Sessions end when the password or the admin user changes. **Everybody has to log in once more after the upgrade.**
+- The login rate limiter no longer keeps clients that never come back.
+
 ### Changed
 
+- **Startup is stricter**: negative `SMOKEALARM_POD_PENDING_AFTER`, `SMOKEALARM_PVC_PENDING_AFTER` and `SMOKEALARM_CRONJOB_GRACE` are refused, and so is `SMOKEALARM_SMTP_TLS=none` with a login to another host, where every mail would have failed.
+- The README explains that all clients behind an Ingress share one login limit, and how to protect the UI.
 - **New look for the web UI**: a top bar with logo, slimmer buttons with icons and a clear main action, problem cards with severity counters above them, tables as cards, a status page with state pills, and a favicon. Still no JavaScript and no external files; light and dark mode and the phone layout are kept. The history shows the duration below the time and the severity above the reason, so the table fits on a small laptop screen.
 - The README shows screenshots of the web interface.
 - Database migration `005_deliveries.sql`. On the upgrade, the configured targets start from the current state, so nothing is sent twice.

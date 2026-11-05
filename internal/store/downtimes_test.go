@@ -139,7 +139,7 @@ func TestFinishDowntimeClearsTheMarkerOfFiringProblems(t *testing.T) {
 			}
 			mustSetDowntime(t, s, newDowntime("a", testNow))
 
-			if err := s.FinishDowntime(ctx, "a", testNow, []string{testTarget}); err != nil {
+			if err := s.FinishDowntime(ctx, "a", testNow, []string{testTarget}, false); err != nil {
 				t.Fatalf("FinishDowntime: %v", err)
 			}
 
@@ -169,7 +169,7 @@ func TestFinishDowntimeLeavesAnExtendedDowntimeAlone(t *testing.T) {
 	}
 	mustSetDowntime(t, s, newDowntime("a", testNow.Add(time.Hour)))
 
-	if err := s.FinishDowntime(ctx, "a", testNow, []string{testTarget}); err != nil {
+	if err := s.FinishDowntime(ctx, "a", testNow, []string{testTarget}, false); err != nil {
 		t.Fatalf("FinishDowntime: %v", err)
 	}
 

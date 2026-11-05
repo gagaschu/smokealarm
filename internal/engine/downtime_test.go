@@ -459,3 +459,26 @@ func TestOtherProblemsStillSendWhileOneIsInADowntime(t *testing.T) {
 	h.wantSent(2)
 	h.wantLastNew("b")
 }
+
+// A target that heard the start before a downtime hears the end, even if the
+// new mail after the downtime failed and the problem ended later.
+func TestResolvedIsReportedAfterAFailedMailAtTheEndOfADowntime(t *testing.T) {
+	h := newHarness(t)
+	f := finding("a", checks.Critical)
+	h.findings = []checks.Finding{f}
+	h.mustRun(0)
+	h.mustRun(2 * time.Minute)
+	h.wantSent(1)
+	h.setDowntime(f.Key, time.Minute)
+
+	h.notifier.fail = true
+	if err := h.run(2 * time.Minute); err == nil {
+		t.Fatal("expected the failed send to be returned")
+	}
+
+	h.notifier.fail = false
+	h.findings = nil
+	h.mustRun(30 * time.Second)
+	h.wantSent(2)
+	h.wantLastResolved(f.Key)
+}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"slices"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -42,6 +43,7 @@ func (c *Cluster) addVolumeUsage(ctx context.Context, snap *checks.Snapshot) {
 		return
 	}
 	snap.VolumeUsage = usage
+	snap.VolumeUsagePartial = slices.ContainsFunc(snap.Nodes, func(n *corev1.Node) bool { return !nodeIsReady(n) })
 }
 
 // collectVolumeUsage reads the stats of every Ready node. If any node fails,
@@ -49,7 +51,9 @@ func (c *Cluster) addVolumeUsage(ctx context.Context, snap *checks.Snapshot) {
 // would look "fine again" and their problems would be resolved by mistake.
 //
 // Nodes that are not Ready are not asked at all. A dead node must not switch
-// the check off for the whole cluster; node-not-ready reports it anyway.
+// the check off for the whole cluster; node-not-ready reports it anyway. The
+// problems of volumes that were not measured then stay as they are (see
+// checks.VolumeUsageUnknown).
 func (c *Cluster) collectVolumeUsage(ctx context.Context, nodes []*corev1.Node) (map[string]checks.VolumeUsage, string) {
 	usage := map[string]checks.VolumeUsage{}
 	for _, node := range nodes {

@@ -828,3 +828,37 @@ func TestRemoveAcknowledgementRefusesOtherOrigins(t *testing.T) {
 		})
 	}
 }
+
+// Logging out changes state, so it refuses requests from another site too.
+func TestLogoutCrossOriginProtection(t *testing.T) {
+	tests := []struct {
+		name  string
+		site  string
+		want  int
+		ended bool
+	}{
+		{"same origin", "same-origin", http.StatusSeeOther, true},
+		{"other site", "cross-site", http.StatusForbidden, false},
+		{"other host of the same site", "same-site", http.StatusForbidden, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newTestEnv(t)
+			cookie := e.login()
+
+			req := httptest.NewRequest(http.MethodPost, "/logout", nil)
+			req.Header.Set("Sec-Fetch-Site", tt.site)
+			req.AddCookie(cookie)
+			rec := httptest.NewRecorder()
+			e.handler.ServeHTTP(rec, req)
+
+			if rec.Code != tt.want {
+				t.Errorf("status = %d, want %d", rec.Code, tt.want)
+			}
+			stillLoggedIn := e.do(http.MethodGet, "/", nil, cookie).Code == http.StatusOK
+			if stillLoggedIn == tt.ended {
+				t.Errorf("still logged in = %v, want %v", stillLoggedIn, !tt.ended)
+			}
+		})
+	}
+}

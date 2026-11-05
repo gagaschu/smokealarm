@@ -55,6 +55,10 @@ config:
   podPendingAfter: 5m       # SMOKEALARM_POD_PENDING_AFTER
   pvcPendingAfter: 5m       # SMOKEALARM_PVC_PENDING_AFTER
   cronjobGrace: 5m          # SMOKEALARM_CRONJOB_GRACE
+  # SMOKEALARM_CRONJOB_TIME_ZONE: the time zone the Kubernetes controller reads
+  # schedules in, for CronJobs without spec.timeZone. On k3s that is the time
+  # zone of the host, e.g. Europe/Berlin. Empty means UTC.
+  cronjobTimeZone: ""
 
 # Your own list of checks to switch off (SMOKEALARM_DISABLED_CHECKS), e.g.
 # [pod-restarts]. Checks whose permission you switch off under "rbac" are added

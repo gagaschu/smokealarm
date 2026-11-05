@@ -78,7 +78,9 @@ func failedMessage(job *batchv1.Job, cond *batchv1.JobCondition) string {
 // creation if it never ran). It counts as missed once it is more than the
 // grace period in the past. Suspended CronJobs are skipped on purpose, and so
 // are CronJobs with concurrencyPolicy Forbid that still have a running Job,
-// because the controller skips runs in that case by design.
+// because the controller skips runs in that case by design. A schedule that
+// never comes true (February 31, a common way to write "only by hand") has no
+// expected run, so nothing can be missed.
 func CronJobMissed(snap *Snapshot, opts Options) []Finding {
 	var findings []Finding
 	for _, cj := range snap.CronJobs {
@@ -90,7 +92,7 @@ func CronJobMissed(snap *Snapshot, opts Options) []Finding {
 		}
 		ref := ObjectRef{Kind: KindCronJob, Namespace: cj.Namespace, Name: cj.Name}
 
-		schedule, err := parseSchedule(cj)
+		schedule, err := parseSchedule(cj, opts.CronJobTimeZone)
 		if err != nil {
 			msg := fmt.Sprintf("cannot parse schedule %q: %v", cj.Spec.Schedule, err)
 			findings = append(findings, newFinding(checkCronJobMissed, Warning, ref, "InvalidSchedule", msg))
@@ -102,6 +104,9 @@ func CronJobMissed(snap *Snapshot, opts Options) []Finding {
 			since, lastRun = last.Time, last.Format(time.RFC3339)
 		}
 		expected := schedule.Next(since)
+		if expected.IsZero() {
+			continue
+		}
 		if snap.Now.After(expected.Add(opts.CronJobGrace)) {
 			msg := fmt.Sprintf("expected run at %s, last run: %s", expected.UTC().Format(time.RFC3339), lastRun)
 			findings = append(findings, newFinding(checkCronJobMissed, Warning, ref, "MissedSchedule", msg))
@@ -112,12 +117,19 @@ func CronJobMissed(snap *Snapshot, opts Options) []Finding {
 
 // parseSchedule turns the cron expression into a schedule. The robfig parser
 // is the same one Kubernetes uses; a time zone is passed as a CRON_TZ prefix.
-func parseSchedule(cj *batchv1.CronJob) (cron.Schedule, error) {
-	spec := cj.Spec.Schedule
+//
+// Without spec.timeZone the controller reads the schedule in its own local
+// time, which smokealarm cannot see from the API. On k3s that is the time zone
+// of the host. defaultZone says what it is; empty means UTC.
+func parseSchedule(cj *batchv1.CronJob, defaultZone string) (cron.Schedule, error) {
+	zone := defaultZone
 	if tz := cj.Spec.TimeZone; tz != nil && *tz != "" {
-		spec = "CRON_TZ=" + *tz + " " + spec
+		zone = *tz
 	}
-	return cron.ParseStandard(spec)
+	if zone == "" {
+		return cron.ParseStandard(cj.Spec.Schedule)
+	}
+	return cron.ParseStandard("CRON_TZ=" + zone + " " + cj.Spec.Schedule)
 }
 
 func isSuspended(cj *batchv1.CronJob) bool {

@@ -41,6 +41,7 @@ type Config struct {
 	PodPendingAfter  time.Duration
 	PVCPendingAfter  time.Duration
 	CronJobGrace     time.Duration
+	CronJobTimeZone  string // how schedules without spec.timeZone are read; empty = UTC
 }
 
 // Load builds the configuration. The lookup function is injected (instead of
@@ -72,6 +73,7 @@ func Load(getenv func(string) string) (Config, error) {
 		PodPendingAfter:   r.duration("SMOKEALARM_POD_PENDING_AFTER", 5*time.Minute),
 		PVCPendingAfter:   r.duration("SMOKEALARM_PVC_PENDING_AFTER", 5*time.Minute),
 		CronJobGrace:      r.duration("SMOKEALARM_CRONJOB_GRACE", 5*time.Minute),
+		CronJobTimeZone:   r.text("SMOKEALARM_CRONJOB_TIME_ZONE", ""),
 	}
 
 	if cfg.CheckInterval <= 0 {
@@ -92,6 +94,18 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	if cfg.SessionTTL <= 0 {
 		r.fail("SMOKEALARM_SESSION_TTL: must be greater than zero")
+	}
+	if cfg.PodPendingAfter < 0 {
+		r.fail("SMOKEALARM_POD_PENDING_AFTER: must not be negative")
+	}
+	if cfg.PVCPendingAfter < 0 {
+		r.fail("SMOKEALARM_PVC_PENDING_AFTER: must not be negative")
+	}
+	if cfg.CronJobGrace < 0 {
+		r.fail("SMOKEALARM_CRONJOB_GRACE: must not be negative")
+	}
+	if _, err := time.LoadLocation(cfg.CronJobTimeZone); err != nil {
+		r.fail("SMOKEALARM_CRONJOB_TIME_ZONE: %q is not a known time zone", cfg.CronJobTimeZone)
 	}
 	validatePasswordHash(&r, cfg.AdminPasswordHash)
 	validateBaseURL(&r, cfg.BaseURL)

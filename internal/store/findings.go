@@ -29,6 +29,9 @@ const (
 // read for one notification target (see Unnotified) carry that target's
 // markers; all other records carry the summary over all targets: the latest
 // report to any of them, empty if no target has been told.
+// StartHeardAt is only read per target: when that target first heard about the
+// problem. Unlike FiringNotifiedAt it stays when the problem is to be reported
+// again, so a target that heard the start always hears the end.
 // AcknowledgedAt is set once somebody has acknowledged the problem in the web
 // UI; from then on only its end is reported.
 type Record struct {
@@ -40,6 +43,7 @@ type Record struct {
 	FiringAt           *time.Time
 	ResolvedAt         *time.Time
 	FiringNotifiedAt   *time.Time
+	StartHeardAt       *time.Time
 	ResolvedNotifiedAt *time.Time
 	AcknowledgedAt     *time.Time
 	// PendingSince is when the ALERT_AFTER clock started: FirstSeen, or the
@@ -68,10 +72,11 @@ type Escalation struct {
 	Targets []string
 }
 
-// selectColumns lists the columns in the order scanRecord reads them.
+// selectColumns lists the columns in the order scanRecord reads them. The start
+// marker exists per target only, see targetColumns.
 const selectColumns = `id, key, check_name, severity, kind, namespace, name, reason, message,
 	state, first_seen, last_seen, firing_at, resolved_at, firing_notified_at, resolved_notified_at, acknowledged_at, targets,
-	caused_by, pending_since`
+	caused_by, pending_since, NULL`
 
 // OpenRecords returns all problems that are pending or firing.
 func (s *Store) OpenRecords(ctx context.Context) ([]Record, error) {
@@ -272,13 +277,13 @@ func (s *Store) query(ctx context.Context, statement string, args ...any) ([]Rec
 func scanRecord(rows *sql.Rows) (Record, error) {
 	var r Record
 	var firstSeen, lastSeen int64
-	var firingAt, resolvedAt, firingNotifiedAt, resolvedNotifiedAt, acknowledgedAt, pendingSinceAt sql.NullInt64
+	var firingAt, resolvedAt, firingNotifiedAt, resolvedNotifiedAt, acknowledgedAt, pendingSinceAt, startHeardAt sql.NullInt64
 	var targets string
 
 	err := rows.Scan(&r.ID, &r.Key, &r.Check, &r.Severity, &r.Object.Kind, &r.Object.Namespace, &r.Object.Name,
 		&r.Reason, &r.Message, &r.State, &firstSeen, &lastSeen,
 		&firingAt, &resolvedAt, &firingNotifiedAt, &resolvedNotifiedAt, &acknowledgedAt, &targets,
-		&r.CausedBy, &pendingSinceAt)
+		&r.CausedBy, &pendingSinceAt, &startHeardAt)
 	if err != nil {
 		return Record{}, fmt.Errorf("scan finding: %w", err)
 	}
@@ -287,6 +292,7 @@ func scanRecord(rows *sql.Rows) (Record, error) {
 	r.FiringAt = fromNullable(firingAt)
 	r.ResolvedAt = fromNullable(resolvedAt)
 	r.FiringNotifiedAt = fromNullable(firingNotifiedAt)
+	r.StartHeardAt = fromNullable(startHeardAt)
 	r.ResolvedNotifiedAt = fromNullable(resolvedNotifiedAt)
 	r.AcknowledgedAt = fromNullable(acknowledgedAt)
 	r.Targets = checks.ParseTargets(targets)

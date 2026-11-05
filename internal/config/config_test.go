@@ -144,6 +144,10 @@ func TestLoadRejectsBadAlertAndRetention(t *testing.T) {
 		{"negative repeat interval", map[string]string{"SMOKEALARM_CRITICAL_REPEAT_INTERVAL": "-1h"}, "SMOKEALARM_CRITICAL_REPEAT_INTERVAL"},
 		{"repeat interval below check interval", map[string]string{"SMOKEALARM_CRITICAL_REPEAT_INTERVAL": "10s"}, "SMOKEALARM_CRITICAL_REPEAT_INTERVAL"},
 		{"zero retention", map[string]string{"SMOKEALARM_RETENTION": "0s"}, "SMOKEALARM_RETENTION"},
+		{"negative pod pending", map[string]string{"SMOKEALARM_POD_PENDING_AFTER": "-1m"}, "SMOKEALARM_POD_PENDING_AFTER"},
+		{"negative pvc pending", map[string]string{"SMOKEALARM_PVC_PENDING_AFTER": "-1m"}, "SMOKEALARM_PVC_PENDING_AFTER"},
+		{"negative cronjob grace", map[string]string{"SMOKEALARM_CRONJOB_GRACE": "-1m"}, "SMOKEALARM_CRONJOB_GRACE"},
+		{"unknown time zone", map[string]string{"SMOKEALARM_CRONJOB_TIME_ZONE": "Europe/Atlantis"}, "SMOKEALARM_CRONJOB_TIME_ZONE"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -198,5 +202,47 @@ func TestSessionAndCookieSettings(t *testing.T) {
 		if _, err := Load(env(values)); err == nil {
 			t.Errorf("%s: expected an error", name)
 		}
+	}
+}
+
+func TestCronJobTimeZoneIsRead(t *testing.T) {
+	cfg, err := Load(env(map[string]string{"SMOKEALARM_CRONJOB_TIME_ZONE": "Europe/Berlin"}))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.CronJobTimeZone != "Europe/Berlin" {
+		t.Errorf("CronJobTimeZone = %q", cfg.CronJobTimeZone)
+	}
+}
+
+// net/smtp refuses to send a password over an unencrypted connection to another
+// host, so every mail would fail at runtime.
+func TestSMTPLoginWithoutEncryption(t *testing.T) {
+	tests := []struct {
+		host    string
+		wantErr bool
+	}{
+		{"mail.example.com", true},
+		{"localhost", false},
+		{"127.0.0.1", false},
+		{"::1", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.host, func(t *testing.T) {
+			_, err := Load(env(map[string]string{
+				"SMOKEALARM_SMTP_HOST":     tt.host,
+				"SMOKEALARM_SMTP_TLS":      "none",
+				"SMOKEALARM_SMTP_FROM":     "smokealarm@example.com",
+				"SMOKEALARM_SMTP_TO":       "me@example.com",
+				"SMOKEALARM_SMTP_USERNAME": "alice",
+				"SMOKEALARM_SMTP_PASSWORD": "s3cret",
+			}))
+			if tt.wantErr && (err == nil || !strings.Contains(err.Error(), "SMOKEALARM_SMTP_TLS")) {
+				t.Errorf("got %v, want an error mentioning SMOKEALARM_SMTP_TLS", err)
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
 	}
 }

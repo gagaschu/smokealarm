@@ -397,11 +397,12 @@ All configuration is done through environment variables starting with `SMOKEALAR
 | `SMOKEALARM_POD_PENDING_AFTER` | `5m` | `pod-pending` reports pods that are pending longer than this. |
 | `SMOKEALARM_PVC_PENDING_AFTER` | `5m` | `pvc-pending` reports claims that are pending longer than this. |
 | `SMOKEALARM_CRONJOB_GRACE` | `5m` | How late a CronJob run may be before `cronjob-missed` reports it. |
+| `SMOKEALARM_CRONJOB_TIME_ZONE` | (UTC) | The time zone the Kubernetes controller reads schedules in, for CronJobs without `spec.timeZone`, for example `Europe/Berlin`. See the note below. |
 | `SMOKEALARM_SESSION_TTL` | `7d` | How long a login stays valid. |
 | `SMOKEALARM_COOKIE_SECURE` | `true` | Send the login cookie only over HTTPS. Set `false` only for local development over plain HTTP. |
 | `SMOKEALARM_SMTP_HOST` | – | Mail server. Setting it switches mail on. |
 | `SMOKEALARM_SMTP_PORT` | `587` | Mail server port. |
-| `SMOKEALARM_SMTP_TLS` | `starttls` | `starttls`, `tls` (encrypted from the start, usually port 465) or `none` (local testing only). With `starttls`, a server that does not offer it is an error; there is no silent downgrade. |
+| `SMOKEALARM_SMTP_TLS` | `starttls` | `starttls`, `tls` (encrypted from the start, usually port 465) or `none` (local testing only; a login is then only possible to `localhost`). With `starttls`, a server that does not offer it is an error; there is no silent downgrade. |
 | `SMOKEALARM_SMTP_USERNAME` | – | Login for the mail server (optional). |
 | `SMOKEALARM_SMTP_PASSWORD` | – | Password for the login. Required if a username is set. |
 | `SMOKEALARM_SMTP_FROM` | – (required if mail is on) | Sender address. |
@@ -453,8 +454,11 @@ Notes:
 - The cert-manager and Argo CD CRDs are detected once at startup, and only if an enabled check needs them. If a CRD is missing or the service account may not list it, the matching checks are skipped and the status page says why. After installing the CRD or granting the permission, restart smokealarm. While a permission is missing, open problems from those checks stay open, since they may still exist. If the CRD is not installed, they count as gone.
 - Disabling a check closes its problems. This applies to `SMOKEALARM_DISABLED_CHECKS` and to the chart's `rbac.*` switches, which disable the checks that need the permission. The open problems are reported as resolved in the next mail, even if the cause is still there. A check that is only skipped for a moment, for example because the kubelet doesn't answer, leaves its problems alone.
 - `pvc-usage`, `cert-expiry` and `workload-replicas` can go from warning to critical. It stays the same problem: it isn't reported as resolved, and you get a new mail saying it is now critical.
+- A CronJob without `spec.timeZone` runs in the local time of the Kubernetes controller. On k3s the controller runs inside the host process, so that should be the host's time zone (check with `timedatectl`). smokealarm cannot see it from the API and assumes UTC. If the host is not on UTC, set `SMOKEALARM_CRONJOB_TIME_ZONE` to the same zone, or daily and weekly CronJobs are reported as missed most of the day. Short schedules like `*/5 * * * *` are not affected.
+- A schedule that never comes true, like `0 0 31 2 *` for a CronJob that only runs by hand, is never reported as missed.
 - `pvc-usage` looks at the filesystem a volume lives on, because that is what the kubelet reports. With k3s `local-path` that is the node's disk, and the requested size is not enforced, so the check only fires when the node disk is nearly full. It is more useful for volumes with their own filesystem (Longhorn, Ceph, block volumes).
 - If `pvc-usage` can't read the volume stats (no permission, a node doesn't answer), it is skipped for that run, open problems stay open, and the status page shows the reason.
+- While a node is down it can't be asked. A `pvc-usage` problem whose volume isn't measured then stays open, because the volume may live on that node. It also stays open if its pod is deleted meanwhile, until all nodes are back.
 
 ### Ignoring things
 
@@ -471,7 +475,9 @@ smokealarm only needs `get`, `list` and `watch` on a short list of resources, an
 
 The container runs as non-root with a read-only root filesystem, all capabilities dropped, no privilege escalation and the default seccomp profile. It can only write to the data volume.
 
-There is one local admin, with the password stored as a bcrypt hash. Sessions are kept in the database, which stores only a hash of the session id. The cookie is `HttpOnly` and `SameSite=Lax`, and `Secure` unless you turn that off. Failed logins are limited to 5 per 15 minutes per client address; behind a proxy, all clients share one limit.
+There is one local admin, with the password stored as a bcrypt hash. Sessions are kept in the database, which stores only a hash of the session id. The cookie is `HttpOnly` and `SameSite=Lax`, and `Secure` unless you turn that off. Failed logins are limited to 5 per 15 minutes per client address. A session ends when the password or the admin user changes.
+
+Behind an Ingress or another proxy, all clients have the same address and share one limit. Five wrong logins by anybody then block the login for everybody for up to 15 minutes, and somebody who repeats that can keep you locked out. Existing sessions keep working. So don't expose the UI to the internet without restricting access first, for example with an allowlist or authentication at the Ingress, or a VPN.
 
 Actions that change state, such as acknowledging a problem or setting a downtime, need a valid session and refuse requests that come from another site or another host of the same domain (Go's `http.CrossOriginProtection`). Your proxy has to pass on the original `Host` header if you use plain HTTP, otherwise these actions fail with 403. Over HTTPS, browsers send a `Sec-Fetch-Site` header and the `Host` does not matter.
 

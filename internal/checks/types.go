@@ -112,6 +112,9 @@ type Snapshot struct {
 
 	// VolumeUsage comes from the kubelet stats, keyed "namespace/pvcName".
 	VolumeUsage map[string]VolumeUsage
+	// VolumeUsagePartial says that VolumeUsage misses at least one node,
+	// because a node that is down cannot be asked. See VolumeUsageUnknown.
+	VolumeUsagePartial bool
 
 	// Skipped names checks that cannot run in this run because their data
 	// could not be collected, with the reason. The engine does not run them
@@ -145,10 +148,13 @@ type VolumeUsage struct {
 
 // Options holds the configurable thresholds and the ignore list.
 type Options struct {
-	RestartThreshold  int
-	PodPendingAfter   time.Duration
-	PVCPendingAfter   time.Duration
-	CronJobGrace      time.Duration
+	RestartThreshold int
+	PodPendingAfter  time.Duration
+	PVCPendingAfter  time.Duration
+	CronJobGrace     time.Duration
+	// CronJobTimeZone is how schedules without spec.timeZone are read; empty
+	// means UTC. See parseSchedule.
+	CronJobTimeZone   string
 	IgnoredNamespaces []string
 }
 
