@@ -37,7 +37,7 @@ func TestReconcile(t *testing.T) {
 		alertAfter time.Duration
 		open       []store.Record
 		findings   []checks.Finding
-		skipped    []string
+		unknown    []string
 
 		wantInsert []store.State // states of inserted records
 		wantUpdate []store.State // states of updated records
@@ -92,13 +92,13 @@ func TestReconcile(t *testing.T) {
 			name:       "problem of a skipped check is left alone",
 			alertAfter: 2 * time.Minute,
 			open:       []store.Record{openRecord(1, "k", "fake", store.StateFiring, now.Add(-time.Hour))},
-			skipped:    []string{"fake"},
+			unknown:    []string{"fake"},
 		},
 		{
 			name:       "problem of a disabled check is resolved",
 			alertAfter: 2 * time.Minute,
 			open:       []store.Record{openRecord(1, "k", "removed-check", store.StateFiring, now.Add(-time.Hour))},
-			skipped:    []string{"fake"},
+			unknown:    []string{"fake"},
 			wantUpdate: []store.State{store.StateResolved},
 		},
 		{
@@ -110,7 +110,7 @@ func TestReconcile(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			changes := reconcileEngine(tt.alertAfter).reconcile(tt.open, tt.findings, tt.skipped, now)
+			changes := reconcileEngine(tt.alertAfter).reconcile(tt.open, tt.findings, tt.unknown, now)
 
 			if got := states(changes.Insert); !slices.Equal(got, tt.wantInsert) {
 				t.Errorf("inserted states = %v, want %v", got, tt.wantInsert)

@@ -12,13 +12,13 @@ import (
 
 // saveState compares the findings with the stored problems and writes the
 // result back in one transaction.
-func (e *Engine) saveState(ctx context.Context, snap *checks.Snapshot, findings []checks.Finding, skipped []string, now time.Time) error {
+func (e *Engine) saveState(ctx context.Context, snap *checks.Snapshot, findings []checks.Finding, unknown []string, now time.Time) error {
 	open, err := e.Store.OpenRecords(ctx)
 	if err != nil {
 		return fmt.Errorf("load open findings: %w", err)
 	}
 	// Problems of checks whose state is unknown stay as they are. Problems of
-	// checks that are disabled (or gone) are not in the skipped list and are
+	// checks that are disabled (or gone) are not in the unknown list and are
 	// resolved, not left "firing" forever.
 	// The same goes for a single problem this run says nothing about. Reminders
 	// go on: a problem that was firing when its node went down is not touched,
@@ -33,7 +33,7 @@ func (e *Engine) saveState(ctx context.Context, snap *checks.Snapshot, findings 
 		}
 		return true
 	})
-	changes := e.reconcile(open, findings, skipped, now)
+	changes := e.reconcile(open, findings, unknown, now)
 	changes.Update = append(changes.Update, unmeasured...)
 	if err := e.Store.Apply(ctx, changes); err != nil {
 		return fmt.Errorf("save findings: %w", err)
@@ -43,10 +43,10 @@ func (e *Engine) saveState(ctx context.Context, snap *checks.Snapshot, findings 
 
 // reconcile decides what changes: it compares the stored open problems with
 // the current findings. It does no I/O, which keeps the rules easy to test.
-// Problems of the skipped checks (checks whose state is unknown) are left
-// alone, because "no findings" would just mean "unknown". Findings caused by a
-// down node are held back (see holdBack).
-func (e *Engine) reconcile(open []store.Record, findings []checks.Finding, skipped []string, now time.Time) store.Changes {
+// Problems of the checks whose state is unknown are left alone, because "no
+// findings" would just mean "unknown". Findings caused by a down node are held
+// back (see holdBack).
+func (e *Engine) reconcile(open []store.Record, findings []checks.Finding, unknown []string, now time.Time) store.Changes {
 	var changes store.Changes
 
 	openByKey := map[string]store.Record{}
@@ -78,7 +78,7 @@ func (e *Engine) reconcile(open []store.Record, findings []checks.Finding, skipp
 		if seen[record.Key] {
 			continue
 		}
-		if slices.Contains(skipped, record.Check) {
+		if slices.Contains(unknown, record.Check) {
 			if record.GoneSince != nil {
 				changes.Update = append(changes.Update, restartResolveWait(record, now))
 			}
