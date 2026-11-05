@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -287,6 +289,52 @@ func TestLoginIsRateLimited(t *testing.T) {
 	rec := e.do(http.MethodPost, "/login", loginForm("admin", "secret"), nil)
 	if rec.Code != http.StatusTooManyRequests || len(rec.Result().Cookies()) != 0 {
 		t.Errorf("status %d, cookies %v; want 429 and no session", rec.Code, rec.Result().Cookies())
+	}
+}
+
+// Guesses sent all at once must not get more tries than guesses sent one by
+// one. The password check takes long enough that every request of a burst
+// would otherwise start before the first failure is counted.
+func TestLoginBurstGetsOnlyFiveTries(t *testing.T) {
+	e := newTestEnv(t)
+	hash, err := bcrypt.GenerateFromPassword([]byte("secret"), bcrypt.DefaultCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.server.Login.Hash = hash
+
+	var mu sync.Mutex
+	codes := map[int]int{}
+	var requests sync.WaitGroup
+	for range 20 {
+		requests.Go(func() {
+			rec := e.do(http.MethodPost, "/login", loginForm("admin", "wrong"), nil)
+			mu.Lock()
+			defer mu.Unlock()
+			codes[rec.Code]++
+		})
+	}
+	requests.Wait()
+
+	if codes[http.StatusUnauthorized] != 5 || codes[http.StatusTooManyRequests] != 15 {
+		t.Errorf("status codes = %v; want 5 times 401 and 15 times 429", codes)
+	}
+}
+
+// People sometimes type their password into the user field, so what was typed
+// there must not reach the log.
+func TestFailedLoginDoesNotLogWhatWasTyped(t *testing.T) {
+	e := newTestEnv(t)
+	var logged bytes.Buffer
+	e.server.Logger = slog.New(slog.NewTextHandler(&logged, nil))
+
+	e.do(http.MethodPost, "/login", loginForm("my-real-password", "wrong"), nil)
+
+	if strings.Contains(logged.String(), "my-real-password") {
+		t.Errorf("the log holds what was typed as the user name: %s", logged.String())
+	}
+	if !strings.Contains(logged.String(), "login failed") || !strings.Contains(logged.String(), "192.0.2.1") {
+		t.Errorf("a failed login must still be logged with the client address: %s", logged.String())
 	}
 }
 

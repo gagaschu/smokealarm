@@ -157,7 +157,7 @@ func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {
 // nobody can be redirected to another site.
 func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 	client := clientIP(r)
-	if !s.Limiter.Allowed(client) {
+	if !s.Limiter.Attempt(client) {
 		// No password check at all, so a blocked client learns nothing.
 		s.Logger.Warn("login blocked after too many failures", "client", client)
 		s.render(w, http.StatusTooManyRequests, "login", page{
@@ -174,9 +174,9 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 	username, password := r.PostFormValue("username"), r.PostFormValue("password")
 
 	if !s.Login.Verify(username, password) {
-		s.Limiter.Failed(client)
-		// The password is never logged; the user name is not a secret.
-		s.Logger.Warn("login failed", "client", client, "username", username)
+		// What was typed is never logged: people sometimes type their password
+		// into the user field.
+		s.Logger.Warn("login failed", "client", client)
 		s.render(w, http.StatusUnauthorized, "login", page{
 			Title: "Log in", Error: "Invalid username or password.",
 		})

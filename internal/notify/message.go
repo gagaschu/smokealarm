@@ -207,13 +207,22 @@ func entries(alerts []Alert) []bodyEntry {
 			Severity:   strings.ToUpper(string(a.Severity)),
 			Reason:     a.Reason,
 			Object:     a.Object.Label(),
-			Message:    a.Message,
+			Message:    oneLine(a.Message),
 			Since:      formatTime(a.Since),
 			ResolvedAt: formatTime(a.ResolvedAt),
 			Affected:   affectedLines(a.Affected),
 		})
 	}
 	return result
+}
+
+// oneLine puts a text on a single line. Part of a message comes from the
+// cluster (image pull errors, event texts), and whoever can write there could
+// otherwise add lines that look like a section of the mail or a link.
+// strings.Fields splits at every kind of whitespace, also at Unicode line
+// breaks.
+func oneLine(text string) string {
+	return strings.Join(strings.Fields(text), " ")
 }
 
 func affectedLines(affected []AffectedProblem) []string {

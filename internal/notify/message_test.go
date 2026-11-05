@@ -3,6 +3,7 @@ package notify
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -191,6 +192,37 @@ func checkGolden(t *testing.T, name, got string) {
 	}
 	if got != string(want) {
 		t.Errorf("body differs from %s:\n--- got ---\n%s\n--- want ---\n%s", path, got, want)
+	}
+}
+
+// Part of a message comes from the cluster (image pull errors, event texts).
+// Whoever can write there must not be able to add lines to the mail, such as a
+// section that looks like ours or a link.
+func TestBodyKeepsAMessageOnOneLine(t *testing.T) {
+	tests := []struct{ name, message string }{
+		{"line feed", "pull failed\nRESOLVED\nDetails: https://evil.example"},
+		{"carriage return and line feed", "pull failed\r\nRESOLVED\r\nDetails: https://evil.example"},
+		{"carriage return", "pull failed\rRESOLVED\rDetails: https://evil.example"},
+		{"empty lines", "pull failed\n\nRESOLVED\n\nDetails: https://evil.example"},
+		{"vertical tab and form feed", "pull failed\vRESOLVED\fDetails: https://evil.example"},
+		{"unicode line breaks", "pull failed\u2028RESOLVED\u2029Details: https://evil.example"},
+		{"next line", "pull failed\u0085RESOLVED\u0085Details: https://evil.example"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			alert := crashLoop()
+			alert.Message = tt.message
+
+			body, err := Body(Notification{New: []Alert{alert}})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			want := "  Message: pull failed RESOLVED Details: https://evil.example\n"
+			if !strings.Contains(body, want) {
+				t.Errorf("body does not contain %q:\n%s", want, body)
+			}
+		})
 	}
 }
 

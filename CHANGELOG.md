@@ -32,6 +32,9 @@ All notable changes to this project are documented here. The format is based on
 - **Logout** now has the same cross-site protection as the other actions.
 - Sessions end when the password or the admin user changes. **Everybody has to log in once more after the upgrade.**
 - The login rate limiter no longer keeps clients that never come back.
+- **Login rate limit**: requests sent all at once no longer get around the limit of 5 tries. A try now counts when it starts, not when the password turned out wrong.
+- A failed login no longer logs what was typed as the user name, because that can be a password typed into the wrong field.
+- **Mail**: a message from the cluster stays on one line, so it cannot add lines that look like a section of the mail or a link.
 
 ### Changed
 

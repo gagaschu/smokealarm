@@ -221,42 +221,36 @@ func TestRateLimiter(t *testing.T) {
 	limiter := &RateLimiter{Now: func() time.Time { return now }}
 	const client = "10.0.0.1"
 
-	for i := 0; i < 4; i++ {
-		limiter.Failed(client)
-		if !limiter.Allowed(client) {
-			t.Fatalf("blocked after %d failures, want to allow 5 tries", i+1)
+	for i := range 5 {
+		if !limiter.Attempt(client) {
+			t.Fatalf("try %d was refused, want to allow 5 tries", i+1)
 		}
 	}
-	limiter.Failed(client) // the fifth failure
-	if limiter.Allowed(client) {
-		t.Error("still allowed after 5 failures")
+	if limiter.Attempt(client) {
+		t.Error("the sixth try was allowed")
 	}
-	if !limiter.Allowed("10.0.0.2") {
+	if !limiter.Attempt("10.0.0.2") {
 		t.Error("another client must not be affected")
 	}
 
+	// A refused try does not count, so this one must not extend the block.
 	now = testNow.Add(14 * time.Minute)
-	if limiter.Allowed(client) {
+	if limiter.Attempt(client) {
 		t.Error("allowed again before the window ended")
 	}
 	now = testNow.Add(15*time.Minute + time.Second)
-	if !limiter.Allowed(client) {
+	if !limiter.Attempt(client) {
 		t.Error("still blocked after the window ended")
-	}
-	if len(limiter.failures) != 0 {
-		t.Errorf("old failures were not pruned: %v", limiter.failures)
 	}
 }
 
 func TestRateLimiterResetOnSuccess(t *testing.T) {
-	now := testNow
-	limiter := &RateLimiter{Now: func() time.Time { return now }}
-	for i := 0; i < 4; i++ {
-		limiter.Failed("c")
+	limiter := &RateLimiter{Now: func() time.Time { return testNow }}
+	for range 5 {
+		limiter.Attempt("c")
 	}
 	limiter.Succeeded("c")
-	limiter.Failed("c")
-	if !limiter.Allowed("c") {
+	if !limiter.Attempt("c") {
 		t.Error("a successful login must reset the counter")
 	}
 }
@@ -308,13 +302,13 @@ func TestRateLimiterForgetsOldClients(t *testing.T) {
 	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
 	l := &RateLimiter{Now: func() time.Time { return now }}
 	for i := range 100 {
-		l.Failed(fmt.Sprintf("10.0.0.%d", i))
+		l.Attempt(fmt.Sprintf("10.0.0.%d", i))
 	}
 
-	now = now.Add(failureWindow + time.Second)
-	l.Failed("10.0.1.1")
+	now = now.Add(attemptWindow + time.Second)
+	l.Attempt("10.0.1.1")
 
-	if len(l.failures) != 1 {
-		t.Errorf("map holds %d clients, want only the recent one", len(l.failures))
+	if len(l.attempts) != 1 {
+		t.Errorf("map holds %d clients, want only the recent one", len(l.attempts))
 	}
 }
