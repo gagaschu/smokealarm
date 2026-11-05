@@ -1,0 +1,124 @@
+package engine
+
+import (
+	"fmt"
+	"slices"
+	"strings"
+
+	"github.com/gagaschu/smokealarm/internal/checks"
+	"github.com/gagaschu/smokealarm/internal/notify"
+	"github.com/gagaschu/smokealarm/internal/store"
+)
+
+// routedTo says whether the target is meant to hear about a problem: its
+// severity is high enough for the target, and the targets annotation, if any,
+// names the kind of the target.
+func (e *Engine) routedTo(target notify.Notifier, rec store.Record) bool {
+	if e.MinSeverity[target.Name()] == checks.Critical && rec.Severity != checks.Critical {
+		return false
+	}
+	return e.listedTarget(rec.Targets, target)
+}
+
+// Audience says who hears about a problem, for the web UI: the descriptions of
+// the targets it is meant for, and whether that is every target. It uses the
+// same rule as the sending, so a typo in an annotation (which goes to every
+// target) or a warning for critical-only targets shows what really happens.
+// The web server calls it; it reads only fields that do not change after the
+// start.
+func (e *Engine) Audience(rec store.Record) (targets []string, all bool) {
+	for _, n := range e.Notifiers {
+		if e.routedTo(n, rec) {
+			targets = append(targets, n.Description())
+		}
+	}
+	return targets, len(targets) == len(e.Notifiers)
+}
+
+// routedNamesNow returns the targets the open problem with this key is meant for
+// in this run. It runs before the findings are saved, so the severity and the
+// targets come from the current finding, if there is one.
+func (e *Engine) routedNamesNow(open []store.Record, findings []checks.Finding, key string) []string {
+	for _, r := range open {
+		if r.Key != key {
+			continue
+		}
+		for _, f := range findings {
+			if f.Key == key {
+				r.Severity, r.Targets = f.Severity, f.Targets
+			}
+		}
+		return e.routedNames(r)
+	}
+	return nil
+}
+
+// routedNames returns the names of the targets the problem is meant for.
+func (e *Engine) routedNames(rec store.Record) []string {
+	var names []string
+	for _, n := range e.Notifiers {
+		if e.routedTo(n, rec) {
+			names = append(names, n.Name())
+		}
+	}
+	return names
+}
+
+// listedTarget says whether the target is one of the listed kinds. A list that
+// names no configured target at all (a typo, a target that was removed) counts
+// as no list, so a mistake in an annotation never makes an alarm silent.
+func (e *Engine) listedTarget(listed []string, target notify.Notifier) bool {
+	if len(listed) == 0 || slices.Contains(listed, notify.Kind(target.Name())) {
+		return true
+	}
+	return !slices.ContainsFunc(listed, e.configuredKind)
+}
+
+// warnAboutAnnotations logs annotation values that cannot be used (an invalid
+// severity, target names that are not configured) and targets lists that send
+// a problem to no target at all (only critical-only targets, for a warning).
+// Each sentence names the object or namespace that carries the annotation and
+// is logged once while the process runs, not in every run.
+func (e *Engine) warnAboutAnnotations(findings []checks.Finding, severityProblems []string) {
+	for _, problem := range severityProblems {
+		e.warnOnce("annotation ignored", problem)
+	}
+	for _, f := range findings {
+		if len(f.Targets) == 0 {
+			continue
+		}
+		for _, name := range f.Targets {
+			if !e.configuredKind(name) {
+				e.warnOnce("annotation ignored", fmt.Sprintf("%s: %s lists %q, which is not a configured notification target",
+					f.TargetsFrom, checks.TargetsAnnotation, name))
+			}
+		}
+		if len(e.routedNames(store.Record{Finding: f})) == 0 {
+			e.warnOnce("problems reach no notification target", fmt.Sprintf(
+				"%s: its %s problems reach no notification target: %s %q lists only targets that get critical problems only",
+				f.TargetsFrom, f.Severity, checks.TargetsAnnotation, strings.Join(f.Targets, ",")))
+		}
+	}
+}
+
+// warnOnce logs a warning the first time this process sees it.
+func (e *Engine) warnOnce(msg, problem string) {
+	if e.loggedAnnotationWarnings[problem] {
+		return
+	}
+	if e.loggedAnnotationWarnings == nil {
+		e.loggedAnnotationWarnings = map[string]bool{}
+	}
+	e.loggedAnnotationWarnings[problem] = true
+	e.Logger.Warn(msg, "problem", problem)
+}
+
+// configuredKind says whether a target of this kind is configured.
+func (e *Engine) configuredKind(kind string) bool {
+	for _, n := range e.Notifiers {
+		if notify.Kind(n.Name()) == kind {
+			return true
+		}
+	}
+	return false
+}
