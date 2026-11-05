@@ -180,7 +180,14 @@ func TestReconcileEscalation(t *testing.T) {
 		finding      checks.Finding
 		wantReported bool // FiringNotifiedAt still set
 	}{
-		{"firing warning gets critical: reported again", warning(store.StateFiring), finding(checks.Critical, "CritReason"), false},
+		{"firing warning gets critical: waits for AlertAfter", warning(store.StateFiring), finding(checks.Critical, "CritReason"), true},
+		{"critical for AlertAfter: reported again", func() store.Record {
+			r := warning(store.StateFiring)
+			r.Severity = checks.Critical
+			since := now.Add(-2 * time.Minute)
+			r.EscalatingSince = &since
+			return r
+		}(), finding(checks.Critical, "CritReason"), false},
 		{"firing critical gets better: stays reported", func() store.Record {
 			r := warning(store.StateFiring)
 			r.Severity = checks.Critical

@@ -390,13 +390,14 @@ func TestEscalationIsReportedAgainWithoutResolving(t *testing.T) {
 
 	h.findings = []checks.Finding{escalating(checks.Critical)}
 	h.mustRun(30 * time.Second)
+	h.mustRun(2 * time.Minute) // it has lasted ALERT_AFTER
 
 	// Same problem, still firing: nothing resolved, nothing pending.
 	if h.countRows("resolved") != 0 || h.countRows("pending") != 0 || h.countRows("firing") != 1 {
 		t.Errorf("%d resolved, %d pending, %d firing; want just the one firing problem",
 			h.countRows("resolved"), h.countRows("pending"), h.countRows("firing"))
 	}
-	// ... and the reader hears about it at once, as a new critical problem
+	// ... and the reader hears about it, as a new critical problem
 	// with the original start time, without a "resolved" for the warning.
 	if len(h.notifier.sent) != 2 {
 		t.Fatalf("got %d notifications, want one more for the escalation", len(h.notifier.sent))
@@ -925,7 +926,8 @@ func TestEscalationRestartsTheReminderClock(t *testing.T) {
 	h.mustRun(2 * time.Minute) // reported as a warning
 
 	h.findings = []checks.Finding{escalating(checks.Critical)}
-	h.mustRun(2 * time.Hour) // long past the interval, but this is a new report
+	h.mustRun(2 * time.Hour)   // long past the interval, but no reminder for a warning
+	h.mustRun(2 * time.Minute) // the escalation has lasted ALERT_AFTER: a new report
 	if len(h.notifier.sent) != 2 {
 		t.Fatalf("got %d notifications, want the warning and the escalation", len(h.notifier.sent))
 	}
@@ -1216,6 +1218,7 @@ func TestRemovingTheAcknowledgementOfAWarningSendsNothingUntilItIsCritical(t *te
 
 	h.findings = []checks.Finding{escalating(checks.Critical)}
 	h.mustRun(time.Minute)
+	h.mustRun(2 * time.Minute)
 	h.wantSent(2)
 	h.wantLastNew("vol")
 }
@@ -1277,7 +1280,8 @@ func TestResolvedIsReportedAfterAFailedEscalation(t *testing.T) {
 
 	h.notifier.fail = true
 	h.findings = []checks.Finding{escalating(checks.Critical)}
-	if err := h.run(30 * time.Second); err == nil {
+	h.mustRun(30 * time.Second)
+	if err := h.run(2 * time.Minute); err == nil {
 		t.Fatal("expected the failed send to be returned")
 	}
 

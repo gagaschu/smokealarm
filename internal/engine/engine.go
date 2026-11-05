@@ -409,23 +409,15 @@ func (e *Engine) newRecord(f checks.Finding, now time.Time) store.Record {
 // refresh updates a known problem with the latest details and lets it fire
 // once it has lasted long enough and no down node holds it back.
 func (e *Engine) refresh(record store.Record, f checks.Finding, now time.Time) store.Record {
-	escalated := record.Severity == checks.Warning && f.Severity == checks.Critical
+	worse := record.Severity == checks.Warning && f.Severity == checks.Critical
 	record.Severity = f.Severity
 	record.Reason = f.Reason
 	record.Message = f.Message
 	record.Targets = f.Targets // a changed annotation counts from now on
 	record.LastSeen = now
 
-	// A problem that gets worse is still the same problem, so it is not
-	// resolved and restarted. But somebody who read "warning" must hear that
-	// it is critical now: clearing the marker lists it as new again. If it is
-	// still pending, it is simply reported with the higher severity when it
-	// fires. Getting better again is not reported; the resolution will be.
-	// An acknowledged problem stays acknowledged: somebody already knows, so
-	// the escalation is not reported.
-	if escalated && record.State == store.StateFiring && record.AcknowledgedAt == nil {
-		record.FiringNotifiedAt = nil
-		e.Logger.Info("finding escalated", "key", f.Key, "severity", f.Severity, "reason", f.Reason)
+	if record.State == store.StateFiring {
+		record = e.trackEscalation(record, worse, now)
 	}
 	if record.State == store.StatePending {
 		record = e.holdBack(record, f, now)
@@ -434,6 +426,34 @@ func (e *Engine) refresh(record store.Record, f checks.Finding, now time.Time) s
 		record.State = store.StateFiring
 		record.FiringAt = &now
 		e.Logger.Info("finding firing", "key", f.Key, "severity", f.Severity)
+	}
+	return record
+}
+
+// trackEscalation decides when a firing problem that got worse is reported. It
+// is still the same problem, so it is not resolved and restarted. But somebody
+// who read "warning" must hear that it is critical now, once that has lasted
+// AlertAfter: a problem that flips between the two reports nothing per flip.
+// Clearing the marker then lists the problem as new again. Getting better is
+// not reported; the resolution will be. An acknowledged problem stays
+// acknowledged: somebody already knows, so the escalation is not reported. (A
+// problem that is still pending is simply reported with the higher severity
+// when it fires.)
+func (e *Engine) trackEscalation(record store.Record, worse bool, now time.Time) store.Record {
+	if record.Severity != checks.Critical {
+		record.EscalatingSince = nil
+		return record
+	}
+	if worse {
+		record.EscalatingSince = &now
+	}
+	if record.EscalatingSince == nil || now.Sub(*record.EscalatingSince) < e.AlertAfter {
+		return record
+	}
+	record.EscalatingSince = nil
+	if record.AcknowledgedAt == nil {
+		record.FiringNotifiedAt = nil
+		e.Logger.Info("finding escalated", "key", record.Key, "severity", record.Severity, "reason", record.Reason)
 	}
 	return record
 }
@@ -592,6 +612,9 @@ func (e *Engine) buildReport(records, due []store.Record, silenced map[string]bo
 		switch {
 		case silenced[rec.Key] && firing:
 			// Not marked as reported: the mail goes out when the downtime ends.
+		case firing && rec.EscalatingSince != nil:
+			// It just got worse. Whoever has not heard about it yet, like a
+			// target for critical problems only, hears when that has lasted.
 		case silenced[rec.Key]:
 			// It went away during the downtime, so nothing is sent, not even
 			// after it ends. The downtime also wins over an acknowledgement.
@@ -661,7 +684,8 @@ func (e *Engine) addAffected(n notify.Notification, held map[string][]store.Reco
 // is at least one repeat interval old. Problems of checks whose state is unknown are left
 // out, because a reminder would claim they still exist; they are reminded of
 // as soon as the check runs again. Problems in a downtime are left out too, and
-// so are problems no longer meant for the target (the annotation changed).
+// so are problems no longer meant for the target (the annotation changed), and
+// problems that just became critical: nobody has heard about that yet.
 func (e *Engine) dueReminders(ctx context.Context, target notify.Notifier, unknown []string,
 	silenced map[string]bool, now time.Time) ([]store.Record, error) {
 	if e.CriticalRepeatInterval <= 0 {
@@ -672,7 +696,7 @@ func (e *Engine) dueReminders(ctx context.Context, target notify.Notifier, unkno
 		return nil, err
 	}
 	return slices.DeleteFunc(records, func(r store.Record) bool {
-		return slices.Contains(unknown, r.Check) || silenced[r.Key] || !e.routedTo(target, r)
+		return slices.Contains(unknown, r.Check) || silenced[r.Key] || r.EscalatingSince != nil || !e.routedTo(target, r)
 	}), nil
 }
 

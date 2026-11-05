@@ -43,6 +43,8 @@ func TestCriticalOnlyTargetHearsAnEscalationAndItsEnd(t *testing.T) {
 
 	h.findings = []checks.Finding{escalating(checks.Critical)}
 	h.mustRun(time.Minute)
+	wantNotifications(t, second) // not before it has lasted ALERT_AFTER
+	h.mustRun(2 * time.Minute)
 	wantNotifications(t, second, "new:vol/reminders:/resolved:")
 
 	// Better again, then gone: it heard the start, so it hears the end.
@@ -190,6 +192,7 @@ func TestEscalationKeepsTheEndForATargetTheProblemMovedAwayFrom(t *testing.T) {
 	moved.Targets = []string{"second"}
 	h.findings = []checks.Finding{moved}
 	h.mustRun(time.Minute) // now critical, and only for the second target
+	h.mustRun(2 * time.Minute)
 	h.findings = nil
 	h.mustRun(time.Minute)
 
