@@ -290,3 +290,28 @@ func TestPVCUsageKeyIsStableAcrossSeverities(t *testing.T) {
 		t.Errorf("key changed with the severity: %q vs %q", warnKey, critKey)
 	}
 }
+
+func TestVolumeUsageUnknown(t *testing.T) {
+	db := ObjectRef{Kind: KindPVC, Namespace: "data", Name: "db"}
+	measured := map[string]VolumeUsage{"data/db": {UsedBytes: 1, CapacityBytes: 100}}
+	tests := []struct {
+		name    string
+		check   string
+		partial bool
+		usage   map[string]VolumeUsage
+		want    bool
+	}{
+		{"all nodes asked, not measured", PVCUsageCheck, false, nil, false},
+		{"node down, not measured", PVCUsageCheck, true, nil, true},
+		{"node down, measured", PVCUsageCheck, true, measured, false},
+		{"node down, another check", CheckNodeNotReady, true, nil, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			snap := &Snapshot{VolumeUsagePartial: tt.partial, VolumeUsage: tt.usage}
+			if got := VolumeUsageUnknown(snap, tt.check, db); got != tt.want {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

@@ -132,6 +132,18 @@ func PVCUsage(snap *Snapshot, opts Options) []Finding {
 	return findings
 }
 
+// VolumeUsageUnknown reports whether this run says nothing about an open
+// problem of pvc-usage: a node is down and the volume was not measured, so it
+// may live on that node. "Not measured" is then not "fine", and the problem
+// stays as it is. A volume that was measured is judged as usual.
+func VolumeUsageUnknown(snap *Snapshot, check string, object ObjectRef) bool {
+	if check != checkPVCUsage || !snap.VolumeUsagePartial {
+		return false
+	}
+	_, measured := snap.VolumeUsage[object.Namespace+"/"+object.Name]
+	return !measured
+}
+
 // pvcMeta returns the metadata of the claim if it is in the snapshot, so its
 // ignore annotation counts. Otherwise only the namespace rules apply.
 func pvcMeta(snap *Snapshot, namespace, name string) metav1.ObjectMeta {

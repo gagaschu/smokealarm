@@ -458,6 +458,7 @@ Notes:
 - A schedule that never comes true, like `0 0 31 2 *` for a CronJob that only runs by hand, is never reported as missed.
 - `pvc-usage` looks at the filesystem a volume lives on, because that is what the kubelet reports. With k3s `local-path` that is the node's disk, and the requested size is not enforced, so the check only fires when the node disk is nearly full. It is more useful for volumes with their own filesystem (Longhorn, Ceph, block volumes).
 - If `pvc-usage` can't read the volume stats (no permission, a node doesn't answer), it is skipped for that run, open problems stay open, and the status page shows the reason.
+- While a node is down it can't be asked. A `pvc-usage` problem whose volume isn't measured then stays open, because the volume may live on that node. It also stays open if its pod is deleted meanwhile, until all nodes are back.
 
 ### Ignoring things
 

@@ -293,10 +293,10 @@ func (e *Engine) RunOnce(ctx context.Context) error {
 	var errs []error
 	// Before saveState, which would otherwise write back the old "reported"
 	// markers from the copy it reads.
-	if err := e.finishDowntimes(ctx, findings, unknown, start); err != nil {
+	if err := e.finishDowntimes(ctx, snap, findings, unknown, start); err != nil {
 		errs = append(errs, err)
 	}
-	if err := e.saveState(ctx, findings, unknown, start); err != nil {
+	if err := e.saveState(ctx, snap, findings, unknown, start); err != nil {
 		errs = append(errs, err)
 	}
 	if err := e.notify(ctx, unknown, start); err != nil {
@@ -319,7 +319,7 @@ func (e *Engine) RunOnce(ctx context.Context) error {
 
 // saveState compares the findings with the stored problems and writes the
 // result back in one transaction.
-func (e *Engine) saveState(ctx context.Context, findings []checks.Finding, skipped []string, now time.Time) error {
+func (e *Engine) saveState(ctx context.Context, snap *checks.Snapshot, findings []checks.Finding, skipped []string, now time.Time) error {
 	open, err := e.Store.OpenRecords(ctx)
 	if err != nil {
 		return fmt.Errorf("load open findings: %w", err)
@@ -327,6 +327,11 @@ func (e *Engine) saveState(ctx context.Context, findings []checks.Finding, skipp
 	// Problems of checks whose state is unknown stay as they are. Problems of
 	// checks that are disabled (or gone) are not in the skipped list and are
 	// resolved, not left "firing" forever.
+	// The same goes for a single problem this run says nothing about. Reminders
+	// go on: a problem that was firing when its node went down is not touched.
+	open = slices.DeleteFunc(open, func(r store.Record) bool {
+		return checks.VolumeUsageUnknown(snap, r.Check, r.Object)
+	})
 	changes := e.reconcile(open, findings, skipped, now)
 	if err := e.Store.Apply(ctx, changes); err != nil {
 		return fmt.Errorf("save findings: %w", err)
@@ -469,7 +474,7 @@ func clockStart(record store.Record) time.Time {
 // the problem silent; the next run tries again. The downtime of a check whose
 // state is unknown waits until the check runs again: a mail now would claim a
 // problem that may be gone.
-func (e *Engine) finishDowntimes(ctx context.Context, findings []checks.Finding, unknown []string, now time.Time) error {
+func (e *Engine) finishDowntimes(ctx context.Context, snap *checks.Snapshot, findings []checks.Finding, unknown []string, now time.Time) error {
 	expired, err := e.Store.ExpiredDowntimes(ctx, now)
 	if err != nil {
 		return fmt.Errorf("load expired downtimes: %w", err)
@@ -482,7 +487,7 @@ func (e *Engine) finishDowntimes(ctx context.Context, findings []checks.Finding,
 		return fmt.Errorf("load open findings: %w", err)
 	}
 	for _, d := range expired {
-		if slices.Contains(unknown, d.Check) {
+		if slices.Contains(unknown, d.Check) || checks.VolumeUsageUnknown(snap, d.Check, d.Object) {
 			continue
 		}
 		targets := e.routedNamesNow(open, findings, d.Key)

@@ -112,6 +112,9 @@ type Snapshot struct {
 
 	// VolumeUsage comes from the kubelet stats, keyed "namespace/pvcName".
 	VolumeUsage map[string]VolumeUsage
+	// VolumeUsagePartial says that VolumeUsage misses at least one node,
+	// because a node that is down cannot be asked. See VolumeUsageUnknown.
+	VolumeUsagePartial bool
 
 	// Skipped names checks that cannot run in this run because their data
 	// could not be collected, with the reason. The engine does not run them

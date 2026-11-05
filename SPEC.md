@@ -113,6 +113,7 @@ Ignoring:
   - Nothing is held back while the NotReady check does not run (switched off, or unable to run in this run), because then nobody would hear about the node.
   - When the node is back, or the problem is no longer a consequence (the down node no longer explains it), the ALERT_AFTER clock of a held-back problem starts again from that run: if it goes away in that time, nothing is sent; if it lasts, it is reported as a problem of its own.
   - A problem that was already firing when the node went down is not touched: it keeps its reminders, acknowledgement and downtime, and its end is reported.
+  - While a node is down, a pvc-usage problem whose volume was not measured in this run stays as it is, because it may live on that node: "not measured" is not "fine". A volume that was measured is judged as usual. Its downtime waits as for a check whose state is unknown.
   - Notifications list NotReady first. In the mail body new NotReady problems get their own first section NODE DOWN; a NotReady problem (new or reminder) lists the problems held back because of it that the target would hear about, as "Affected". Chat targets get a first section "Node down:" with the number of affected problems; the webhook gets an "affected" list on every alert (new field, format version unchanged).
   - The overview lists NotReady first, says how many problems a down node holds back, and shows the held-back problems grouped by node, also for an ignored node. "All good" only when nothing is firing and nothing is held back.
 
