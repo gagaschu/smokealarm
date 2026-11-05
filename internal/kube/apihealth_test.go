@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -201,4 +202,197 @@ func TestFailingWatchOfAnInformerReachesTheSnapshot(t *testing.T) {
 	if snap.APIProblem == nil || snap.APIProblem.Blind || !slices.Contains(snap.APIProblem.Resources, "pods") {
 		t.Errorf("APIProblem = %+v, want pods, and the other resources still fine", snap.APIProblem)
 	}
+}
+
+// fakeAPIServer answers like an API server with no objects. While failing is set
+// it answers every request with a 500, and it ends the watches that are open, as
+// an API server does that is in trouble but still takes connections.
+type fakeAPIServer struct {
+	*httptest.Server
+	failing atomic.Bool
+	failed  chan struct{} // closed to end the open watches
+	once    sync.Once
+}
+
+func newFakeAPIServer(t *testing.T) *fakeAPIServer {
+	t.Helper()
+	api := &fakeAPIServer{failed: make(chan struct{})}
+	api.Server = httptest.NewServer(http.HandlerFunc(api.serve))
+	t.Cleanup(func() {
+		api.fail()
+		api.Close()
+	})
+	return api
+}
+
+func (a *fakeAPIServer) fail() {
+	a.failing.Store(true)
+	a.once.Do(func() { close(a.failed) })
+}
+
+func (a *fakeAPIServer) serve(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	switch {
+	case a.failing.Load():
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"kind":"Status","apiVersion":"v1","status":"Failure","reason":"InternalError","code":500}`))
+	case r.URL.Query().Get("sendInitialEvents") == "true":
+		// Not supported here: client-go falls back to a plain list and watch.
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(`{"kind":"Status","apiVersion":"v1","status":"Failure","reason":"Invalid","code":422}`))
+	case r.URL.Query().Get("watch") == "true":
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		select {
+		case <-a.failed:
+		case <-r.Context().Done():
+		}
+	case r.URL.Path == "/version":
+		_, _ = w.Write([]byte(`{}`))
+	default:
+		_, _ = w.Write([]byte(`{"kind":"List","apiVersion":"v1","metadata":{"resourceVersion":"1"},"items":[]}`))
+	}
+}
+
+// An API server that answers with errors is a case the watch error handler does
+// see, unlike "connection refused". When it answers again the errors of that time
+// are over at once, although client-go does not say so.
+func TestOutageWithErrorAnswersEndsWhenTheServerAnswersAgain(t *testing.T) {
+	api := newFakeAPIServer(t)
+	client, err := kubernetes.NewForConfig(&rest.Config{Host: api.URL})
+	if err != nil {
+		t.Fatalf("NewForConfig: %v", err)
+	}
+	cluster, err := New(client, nil, Options{APIProbe: APIProbe(client)}, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	var clock atomic.Int64
+	clock.Store(healthStart.Unix())
+	cluster.now = func() time.Time { return time.Unix(clock.Load(), 0).UTC() }
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cluster.Start(ctx)
+	if err := cluster.WaitForSync(ctx); err != nil {
+		t.Fatalf("WaitForSync: %v", err)
+	}
+	if snap := cluster.BuildSnapshot(ctx, healthStart); snap.APIProblem != nil {
+		t.Fatalf("APIProblem = %+v, want none before the outage", snap.APIProblem)
+	}
+
+	api.fail()
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		cluster.health.mu.Lock()
+		failing := len(cluster.health.watches)
+		cluster.health.mu.Unlock()
+		if failing == len(cluster.syncedInformers()) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d watches noticed the outage", failing)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cluster.BuildSnapshot(ctx, healthStart.Add(30*time.Second))
+
+	// The errors go on. Small steps, so it stays one series of errors, up to
+	// shortly before the return.
+	back := healthStart.Add(150 * time.Second)
+	for _, step := range []time.Time{healthStart.Add(70 * time.Second), back.Add(-10 * time.Second)} {
+		clock.Store(step.Unix())
+		deadline = time.Now().Add(30 * time.Second)
+		for {
+			cluster.health.mu.Lock()
+			failure := cluster.health.watches["pods"]
+			cluster.health.mu.Unlock()
+			if failure.last.Equal(step) {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("no new watch error")
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	// Back after 2:30. The last errors are not 2 minutes old for a while yet,
+	// but the outage is over and must not turn into a problem now.
+	api.failing.Store(false)
+	clock.Store(back.Unix())
+	if snap := cluster.BuildSnapshot(ctx, back); snap.APIProblem != nil {
+		t.Errorf("APIProblem = %+v right after the return", snap.APIProblem)
+	}
+	soon := back.Add(time.Minute)
+	clock.Store(soon.Unix())
+	if snap := cluster.BuildSnapshot(ctx, soon); snap.APIProblem != nil {
+		t.Errorf("APIProblem = %+v a minute after the return", snap.APIProblem)
+	}
+}
+
+func TestProbeRecoveryForgetsOnlyTheFailuresOfThatOutage(t *testing.T) {
+	refused := errors.New("connection refused")
+	broken := errors.New("500")
+	forbidden := errors.New("forbidden")
+
+	t.Run("first watch error comes before the first failed probe", func(t *testing.T) {
+		h := newAPIHealth()
+		h.probed(nil, healthStart)
+		h.watchFailed("pods", broken, healthStart.Add(5*time.Second))
+		h.probed(broken, healthStart.Add(30*time.Second))
+		h.probed(nil, healthStart.Add(time.Minute))
+		if len(h.watches) != 0 {
+			t.Errorf("watches = %v, want none", h.watches)
+		}
+	})
+
+	t.Run("one missed probe keeps a failure that was there before", func(t *testing.T) {
+		h := newAPIHealth()
+		h.probed(nil, healthStart)
+		h.watchFailed("certificates", forbidden, healthStart.Add(time.Second))
+		now := healthStart.Add(30 * time.Second)
+		for ; now.Before(healthStart.Add(apiProblemAfter + time.Minute)); now = now.Add(30 * time.Second) {
+			h.probed(nil, now)
+			h.watchFailed("certificates", forbidden, now)
+		}
+		h.probed(refused, now)
+		now = now.Add(30 * time.Second)
+		h.probed(nil, now)
+
+		got := h.problem(2, now)
+		if got == nil || got.Blind || !slices.Equal(got.Resources, []string{"certificates"}) || !got.Since.Equal(healthStart.Add(time.Second)) {
+			t.Errorf("problem = %+v, want certificates still reported, since the start", got)
+		}
+	})
+
+	t.Run("a lasting failure that began in the outage comes back and starts over", func(t *testing.T) {
+		h := newAPIHealth()
+		h.probed(nil, healthStart)
+		h.probed(refused, healthStart.Add(30*time.Second))
+		h.watchFailed("pods", forbidden, healthStart.Add(40*time.Second))
+		back := healthStart.Add(time.Minute)
+		h.probed(nil, back)
+
+		again := back.Add(45 * time.Second)
+		h.watchFailed("pods", forbidden, again)
+		now := again
+		for now.Before(again.Add(apiProblemAfter)) {
+			now = now.Add(time.Minute)
+			h.watchFailed("pods", forbidden, now)
+		}
+		got := h.problem(2, now)
+		if got == nil || !got.Since.Equal(again) {
+			t.Errorf("problem = %+v, want it reported, since %v", got, again)
+		}
+	})
+
+	t.Run("without a failed probe the watches keep their 2 minutes", func(t *testing.T) {
+		h := newAPIHealth()
+		h.probed(nil, healthStart)
+		h.watchFailed("pods", broken, healthStart.Add(time.Second))
+		h.probed(nil, healthStart.Add(30*time.Second))
+		if len(h.watches) != 1 {
+			t.Errorf("watches = %v, want pods still failing", h.watches)
+		}
+	})
 }

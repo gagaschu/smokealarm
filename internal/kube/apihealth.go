@@ -24,7 +24,8 @@ import (
 //     refused" on its own without calling the handler, and that is what a
 //     stopped API server looks like.
 //   - A small request in every check run sees that the API server does not
-//     answer. It cannot see the problems with one resource.
+//     answer. It cannot see the problems with one resource, but it does see the
+//     end of an outage, which the watch errors cannot tell.
 
 const (
 	// apiProblemAfter is how long a failure must last before it counts: a
@@ -33,7 +34,8 @@ const (
 	apiProblemAfter = 3 * time.Minute
 	// watchFailureEnds is how long after its last error a watch counts as working
 	// again, because client-go does not report that it recovered. It is longer
-	// than client-go's longest wait between two attempts (about 40 seconds).
+	// than client-go's longest wait between two attempts (about 40 seconds). An
+	// outage of the API server ends sooner, see apiHealth.probed.
 	watchFailureEnds = 2 * time.Minute
 	// probeTimeout limits how long the API server may take to answer.
 	probeTimeout = 5 * time.Second
@@ -70,6 +72,7 @@ type apiHealth struct {
 	watches      map[string]watchFailure // by resource
 	probeSince   time.Time               // zero while the API server answers
 	probeMessage string
+	lastAnswer   time.Time // when the API server last answered
 }
 
 func newAPIHealth() *apiHealth {
@@ -95,12 +98,23 @@ func (h *apiHealth) watchFailed(resource string, err error, now time.Time) {
 }
 
 // probed records the result of the request to the API server. Unlike a watch it
-// says at once when the server is back.
+// says at once when the server is back. The watch errors that began since it
+// last answered belong to that outage, so they end with it. A watch that was
+// failing before stays: its problem has nothing to do with the outage. And if a
+// watch still fails after that, its next error starts a new series.
 func (h *apiHealth) probed(err error, now time.Time) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if err == nil {
+		if !h.probeSince.IsZero() {
+			for resource, failure := range h.watches {
+				if !failure.since.Before(h.lastAnswer) {
+					delete(h.watches, resource)
+				}
+			}
+		}
 		h.probeSince, h.probeMessage = time.Time{}, ""
+		h.lastAnswer = now
 		return
 	}
 	if h.probeSince.IsZero() {

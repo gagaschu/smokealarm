@@ -354,12 +354,14 @@ A node counts as down when its Ready condition is `False` or `Unknown`, as for t
 
 smokealarm works on its own copy of the cluster, which the Kubernetes API keeps up to date. If that stops, the copy gets old without anything looking wrong. So smokealarm watches for it:
 
-- **The check `api-connection`** reports a critical problem once the API server has not answered, or a watch has failed, for 3 minutes. With `SMOKEALARM_ALERT_AFTER` that makes 5 minutes by default, so a restart of the API server is no alarm. Its message names the last error.
+- **The check `api-connection`** reports a critical problem once the API server has not answered, or a watch has been failing, for 3 minutes. With `SMOKEALARM_ALERT_AFTER` that makes 5 minutes by default, so a restart of the API server is no alarm. Its message names the last error.
 - **If nothing can be read**, all other checks count as unknown: their problems stay as they are and send no reminders, and the status page gives the reason. They are judged again as soon as there is fresh data. New problems stay unseen until then.
 - **If only a part fails** (a missing permission, a CRD that was deleted), the other checks run as usual and only the alarm tells about it. Findings about the failing part may be out of date.
 - **The overview** shows a notice with the start at the top and no longer says "All good". `/readyz` does not change, because a new pod would not help.
 
-The alarm can only go out if the notification target can be reached without the cluster. A failing watch counts as working again 2 minutes after its last error, so the alarm and the notice can last that much longer than the failure. Like every other problem, the alarm is resolved after `SMOKEALARM_RESOLVE_AFTER`. If smokealarm is restarted during an outage, it cannot start until the API is back, and the pod is restarted until then.
+**How long it takes.** A permission that is removed does not end a watch that is already open. It only shows when that watch ends, which takes 5 to 10 minutes, so the notice comes after 8 to 13 minutes and the alarm after 10 to 15 (with `SMOKEALARM_ALERT_AFTER` at 2 minutes). When the API server answers again after an outage, the outage is over at once. If it answers but some watches still fail, each of those counts as working again 2 minutes after its last error, because Kubernetes' client library does not report that it recovered, so the notice and the alarm can last that much longer than the failure. If all watches are affected, the other checks stay paused for that time too. If it answers again and a watch still fails for a lasting reason, its 3 minutes start over from then.
+
+The alarm can only go out if the notification target can be reached without the cluster. Like every other problem, the alarm is resolved after `SMOKEALARM_RESOLVE_AFTER`. If smokealarm is restarted during an outage, it cannot start until the API is back, and the pod is restarted until then.
 
 ## Acknowledging a problem
 
