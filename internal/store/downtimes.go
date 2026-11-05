@@ -82,7 +82,12 @@ func (s *Store) EndDowntime(ctx context.Context, id int64, now time.Time) (strin
 // until it is resolved. All changes happen in one transaction, so a restart
 // cannot lose the message. A downtime that was
 // extended in the meantime is left alone.
-func (s *Store) FinishDowntime(ctx context.Context, key string, now time.Time, targets []string) error {
+//
+// goneNow says the problem is no longer there in this run. It then counts as
+// gone during the downtime, so these targets also forget that they heard the
+// start, and its end stays silent. An acknowledged problem is not affected:
+// it always reports its end.
+func (s *Store) FinishDowntime(ctx context.Context, key string, now time.Time, targets []string, goneNow bool) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
@@ -112,6 +117,11 @@ func (s *Store) FinishDowntime(ctx context.Context, key string, now time.Time, t
 	default:
 		if err := clearFiringDeliveries(ctx, tx, id, targets); err != nil {
 			return err
+		}
+		if goneNow {
+			if err := forgetStartHeard(ctx, tx, id, targets); err != nil {
+				return err
+			}
 		}
 	}
 	if err := tx.Commit(); err != nil {

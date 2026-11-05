@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -115,7 +116,7 @@ func TestClearingTheMarkerReachesEveryTarget(t *testing.T) {
 		mustMarkFiring(t, s, "ntfy", id, testNow)
 		mustSetDowntime(t, s, newDowntime("a", testNow))
 
-		if err := s.FinishDowntime(ctx, "a", testNow, []string{"slack", "ntfy"}); err != nil {
+		if err := s.FinishDowntime(ctx, "a", testNow, []string{"slack", "ntfy"}, false); err != nil {
 			t.Fatalf("FinishDowntime: %v", err)
 		}
 		for _, target := range []string{"slack", "ntfy"} {
@@ -228,7 +229,7 @@ func TestUpgradeSendsNothingTwice(t *testing.T) {
 	ctx := context.Background()
 	id := firingRecord(t, s, "a")
 	_, err = s.db.ExecContext(ctx, `DROP TABLE deliveries; DROP TABLE targets;
-		DELETE FROM schema_migrations WHERE version = 5;
+		DELETE FROM schema_migrations WHERE version IN (5, 8);
 		UPDATE findings SET firing_notified_at = ? WHERE id = ?`, unix(testNow), id)
 	if err != nil {
 		t.Fatalf("turn the database back into the old schema: %v", err)
@@ -269,7 +270,7 @@ func TestClearingTheMarkerSparesTheTargetsNotListed(t *testing.T) {
 		},
 		"end of a downtime": func(s *Store, _ int64) error {
 			mustSetDowntime(t, s, newDowntime("a", testNow))
-			return s.FinishDowntime(context.Background(), "a", testNow, []string{"ntfy"})
+			return s.FinishDowntime(context.Background(), "a", testNow, []string{"ntfy"}, false)
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -287,5 +288,43 @@ func TestClearingTheMarkerSparesTheTargetsNotListed(t *testing.T) {
 				t.Errorf("slack: Unnotified = %q, want nothing: it keeps its marker", keys)
 			}
 		})
+	}
+}
+
+// A target that was told about a problem before this column existed counts as
+// having heard the start.
+func TestStartHeardIsFilledOnUpgrade(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	s, err := Open(path, func() time.Time { return testNow })
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	ctx := context.Background()
+	id := firingRecord(t, s, "a")
+	if err := s.MarkFiringNotified(ctx, testTarget, []int64{id}, testNow); err != nil {
+		t.Fatalf("MarkFiringNotified: %v", err)
+	}
+	for _, statement := range []string{
+		`ALTER TABLE deliveries DROP COLUMN start_heard_at`,
+		`DELETE FROM schema_migrations WHERE version = 8`,
+	} {
+		if _, err := s.db.ExecContext(ctx, statement); err != nil {
+			t.Fatalf("%s: %v", statement, err)
+		}
+	}
+	_ = s.Close()
+
+	s, err = Open(path, func() time.Time { return testNow })
+	if err != nil {
+		t.Fatalf("Open after the upgrade: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	var heard sql.NullInt64
+	err = s.db.QueryRowContext(ctx, `SELECT start_heard_at FROM deliveries WHERE finding_id = ?`, id).Scan(&heard)
+	if err != nil {
+		t.Fatalf("read start marker: %v", err)
+	}
+	if !heard.Valid || heard.Int64 != unix(testNow) {
+		t.Errorf("start_heard_at = %+v, want %d", heard, unix(testNow))
 	}
 }

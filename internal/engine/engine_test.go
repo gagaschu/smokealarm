@@ -1259,3 +1259,48 @@ func TestAcknowledgingAgainAfterRemovingIsSilentUntilResolved(t *testing.T) {
 	h.wantSent(2)
 	h.wantLastResolved("a")
 }
+
+// A target that was told "warning" hears the end, even if the mail about the
+// escalation never went out.
+func TestResolvedIsReportedAfterAFailedEscalation(t *testing.T) {
+	h := newHarness(t)
+	h.findings = []checks.Finding{escalating(checks.Warning)}
+	h.mustRun(0)
+	h.mustRun(2 * time.Minute)
+	if len(h.notifier.sent) != 1 {
+		t.Fatalf("sent %d, want the warning", len(h.notifier.sent))
+	}
+
+	h.notifier.fail = true
+	h.findings = []checks.Finding{escalating(checks.Critical)}
+	if err := h.run(30 * time.Second); err == nil {
+		t.Fatal("expected the failed send to be returned")
+	}
+
+	h.notifier.fail = false
+	h.findings = nil
+	h.mustRun(30 * time.Second)
+	h.mustRun(30 * time.Second)
+
+	if len(h.notifier.sent) != 2 {
+		t.Fatalf("sent %d, want the warning and its end", len(h.notifier.sent))
+	}
+	h.wantLastResolved(escalating(checks.Warning).Key)
+}
+
+// A problem nobody was told about stays silent when it ends, also if the first
+// mail failed: nobody heard the start.
+func TestNoResolvedWhenTheFirstMailFailed(t *testing.T) {
+	h := newHarness(t)
+	h.findings = []checks.Finding{escalating(checks.Warning)}
+	h.mustRun(0)
+	h.notifier.fail = true
+	if err := h.run(2 * time.Minute); err == nil {
+		t.Fatal("expected the failed send to be returned")
+	}
+
+	h.notifier.fail = false
+	h.findings = nil
+	h.mustRun(30 * time.Second)
+	h.wantSent(0)
+}

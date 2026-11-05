@@ -18,7 +18,7 @@ import (
 const targetColumns = `f.id, f.key, f.check_name, f.severity, f.kind, f.namespace, f.name, f.reason, f.message,
 	f.state, f.first_seen, f.last_seen, f.firing_at, f.resolved_at,
 	d.firing_notified_at, d.resolved_notified_at, f.acknowledged_at, f.targets,
-	f.caused_by, f.pending_since`
+	f.caused_by, f.pending_since, d.start_heard_at`
 
 const targetJoin = ` FROM findings f LEFT JOIN deliveries d ON d.finding_id = f.id AND d.target = ?`
 
@@ -50,8 +50,10 @@ func (s *Store) CriticalDueForReminder(ctx context.Context, target string, befor
 // firing problems, for the first time or as a reminder.
 func (s *Store) MarkFiringNotified(ctx context.Context, target string, ids []int64, at time.Time) error {
 	return s.markNotified(ctx, ids, at,
-		`INSERT INTO deliveries (finding_id, target, firing_notified_at) VALUES (?, ?, ?)
-			ON CONFLICT (finding_id, target) DO UPDATE SET firing_notified_at = excluded.firing_notified_at`,
+		`INSERT INTO deliveries (finding_id, target, firing_notified_at, start_heard_at) VALUES (?1, ?2, ?3, ?3)
+			ON CONFLICT (finding_id, target) DO UPDATE SET
+				firing_notified_at = excluded.firing_notified_at,
+				start_heard_at = COALESCE(start_heard_at, excluded.start_heard_at)`,
 		`UPDATE findings SET firing_notified_at = ? WHERE id = ?`, target)
 }
 
@@ -100,6 +102,19 @@ func clearFiringDeliveries(ctx context.Context, tx *sql.Tx, findingID int64, tar
 			WHERE finding_id = ? AND target = ?`, findingID, target)
 		if err != nil {
 			return fmt.Errorf("clear delivery marker of finding %d for %s: %w", findingID, target, err)
+		}
+	}
+	return nil
+}
+
+// forgetStartHeard makes these targets forget that they heard the start of this
+// problem, so its end is not reported to them.
+func forgetStartHeard(ctx context.Context, tx *sql.Tx, findingID int64, targets []string) error {
+	for _, target := range targets {
+		_, err := tx.ExecContext(ctx, `UPDATE deliveries SET start_heard_at = NULL
+			WHERE finding_id = ? AND target = ?`, findingID, target)
+		if err != nil {
+			return fmt.Errorf("clear start marker of finding %d for %s: %w", findingID, target, err)
 		}
 	}
 	return nil
@@ -184,12 +199,13 @@ func addTarget(ctx context.Context, tx *sql.Tx, name string, copyFiring bool) er
 		ON CONFLICT (finding_id, target) DO UPDATE SET
 			resolved_notified_at = excluded.resolved_notified_at`
 	if copyFiring {
-		seed = `INSERT INTO deliveries (finding_id, target, firing_notified_at, resolved_notified_at)
-		SELECT id, ?, firing_notified_at, resolved_notified_at FROM findings
+		seed = `INSERT INTO deliveries (finding_id, target, firing_notified_at, resolved_notified_at, start_heard_at)
+		SELECT id, ?, firing_notified_at, resolved_notified_at, firing_notified_at FROM findings
 		WHERE firing_notified_at IS NOT NULL OR resolved_notified_at IS NOT NULL
 		ON CONFLICT (finding_id, target) DO UPDATE SET
 			firing_notified_at = excluded.firing_notified_at,
-			resolved_notified_at = excluded.resolved_notified_at`
+			resolved_notified_at = excluded.resolved_notified_at,
+			start_heard_at = excluded.start_heard_at`
 	}
 	if _, err := tx.ExecContext(ctx, seed, name); err != nil {
 		return fmt.Errorf("copy markers to notification target %s: %w", name, err)

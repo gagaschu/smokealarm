@@ -486,7 +486,7 @@ func (e *Engine) finishDowntimes(ctx context.Context, findings []checks.Finding,
 			continue
 		}
 		targets := e.routedNamesNow(open, findings, d.Key)
-		if err := e.Store.FinishDowntime(ctx, d.Key, now, targets); err != nil {
+		if err := e.Store.FinishDowntime(ctx, d.Key, now, targets, !hasFinding(findings, d.Key)); err != nil {
 			return fmt.Errorf("finish downtime: %w", err)
 		}
 		e.Logger.Info("downtime finished", "key", d.Key)
@@ -593,7 +593,7 @@ func (e *Engine) buildReport(records, due []store.Record, silenced map[string]bo
 		case firing:
 			n.New = append(n.New, alertFor(rec))
 			r.firingIDs = append(r.firingIDs, rec.ID)
-		case rec.FiringNotifiedAt == nil && (rec.AcknowledgedAt == nil || !e.routedTo(target, rec)):
+		case rec.StartHeardAt == nil && (rec.AcknowledgedAt == nil || !e.routedTo(target, rec)):
 			// It was fixed before this target heard about it. Telling the
 			// reader it is resolved would be confusing. After an
 			// acknowledgement somebody did hear about it, so that case
@@ -777,6 +777,11 @@ func (e *Engine) routedNamesNow(open []store.Record, findings []checks.Finding, 
 		return e.routedNames(r)
 	}
 	return nil
+}
+
+// hasFinding reports whether the problem with this key was found in this run.
+func hasFinding(findings []checks.Finding, key string) bool {
+	return slices.ContainsFunc(findings, func(f checks.Finding) bool { return f.Key == key })
 }
 
 // routedNames returns the names of the targets the problem is meant for.
