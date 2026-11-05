@@ -61,6 +61,12 @@ type Cluster struct {
 
 	// syncTimeout is a field so tests can make it short.
 	syncTimeout time.Duration
+
+	// health remembers whether the caches are still being updated. probe asks
+	// the API server; without it only the watch errors are looked at.
+	health *apiHealth
+	probe  func(context.Context) error
+	now    func() time.Time
 }
 
 // namedInformer pairs an informer with the name of its resource, for messages.
@@ -75,6 +81,9 @@ type Options struct {
 	// VolumeStats collects the volume usage from the kubelets (needs the RBAC
 	// permission nodes/proxy). Leave it off if pvc-usage is disabled.
 	VolumeStats bool
+	// APIProbe asks whether the API server answers, see APIProbe. Without it a
+	// stopped API server is not noticed, so only tests leave it out.
+	APIProbe func(context.Context) error
 }
 
 // New prepares the informers but does not start them; call Start for that.
@@ -86,6 +95,9 @@ func New(client kubernetes.Interface, dynamicClient dynamic.Interface, options O
 		volumeStats: options.VolumeStats,
 		fetchStats:  kubeletStatsFetcher(client),
 		syncTimeout: syncTimeout,
+		health:      newAPIHealth(),
+		probe:       options.APIProbe,
+		now:         time.Now,
 		coreFactory: informers.NewSharedInformerFactory(client, resyncPeriod),
 		eventFactory: informers.NewSharedInformerFactoryWithOptions(client, resyncPeriod,
 			informers.WithTweakListOptions(onlyWarnings)),
@@ -111,6 +123,11 @@ func New(client kubernetes.Interface, dynamicClient dynamic.Interface, options O
 
 	if err := c.addCustomResources(dynamicClient, options.Features); err != nil {
 		return nil, err
+	}
+	for _, n := range c.syncedInformers() {
+		if err := c.reportWatchErrors(n); err != nil {
+			return nil, fmt.Errorf("set watch error handler for %s: %w", n.name, err)
+		}
 	}
 	return c, nil
 }

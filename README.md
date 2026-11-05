@@ -16,7 +16,7 @@ It was developed and tested with k3s on a Raspberry Pi (arm64). Nothing in it de
 
 ## How it works
 
-Every 30 seconds smokealarm runs all checks against its in-memory copy of the cluster state and compares the result with the previous run. A new problem starts as **pending**. If it is still there after `SMOKEALARM_ALERT_AFTER` (2 minutes by default), it becomes **firing** and is reported. When it goes away, it is **resolved** and reported again. A problem that disappears before the wait is over is never reported. All changes from one run go into a single mail (or message, for the other [notification targets](#notification-targets)).
+Every 30 seconds smokealarm runs all checks against its in-memory copy of the cluster state and compares the result with the previous run. A new problem starts as **pending**. If it is still there after `SMOKEALARM_ALERT_AFTER` (2 minutes by default), it becomes **firing** and is reported. When it has been gone for `SMOKEALARM_RESOLVE_AFTER` (5 minutes by default), it is **resolved** and reported again. A problem that disappears before the first wait is over is never reported. A problem that gets worse (warning to critical) is reported again once that has lasted `SMOKEALARM_ALERT_AFTER`. All changes from one run go into a single mail (or message, for the other [notification targets](#notification-targets)).
 
 If you already know about a critical problem, press **Acknowledge** on the overview. It stays on the page with a mark and sends no more reminders. You still get a mail when it is resolved. See [Acknowledging a problem](#acknowledging-a-problem) for the details.
 
@@ -350,6 +350,19 @@ kubectl annotate node pi-test smokealarm.gagaschu.github.io/ignore=true
 
 A node counts as down when its Ready condition is `False` or `Unknown`, as for the `node-not-ready` check. Being held back is decided per problem and in every run: a Deployment that misses only its pod on the failed node is held back, while a pod of it that crashes on another node is reported. If `node-not-ready` is switched off, nothing is held back, because nobody would hear about the node. A node that is removed from the cluster counts as back.
 
+## When the API cannot be read
+
+smokealarm works on its own copy of the cluster, which the Kubernetes API keeps up to date. If that stops, the copy gets old without anything looking wrong. So smokealarm watches for it:
+
+- **The check `api-connection`** reports a critical problem once the API server has not answered, or a watch has been failing, for 3 minutes. With `SMOKEALARM_ALERT_AFTER` that makes 5 minutes by default, so a restart of the API server is no alarm. Its message names the last error.
+- **If nothing can be read**, all other checks count as unknown: their problems stay as they are and send no reminders, and the status page gives the reason. They are judged again as soon as there is fresh data. New problems stay unseen until then.
+- **If only a part fails** (a missing permission, a CRD that was deleted), the other checks run as usual and only the alarm tells about it. Findings about the failing part may be out of date.
+- **The overview** shows a notice with the start at the top and no longer says "All good". `/readyz` does not change, because a new pod would not help.
+
+**How long it takes.** A permission that is removed does not end a watch that is already open. It only shows when that watch ends, which takes 5 to 10 minutes, so the notice comes after 8 to 13 minutes and the alarm after 10 to 15 (with `SMOKEALARM_ALERT_AFTER` at 2 minutes). When the API server answers again after an outage, the outage is over at once. If it answers but some watches still fail, each of those counts as working again 2 minutes after its last error, because Kubernetes' client library does not report that it recovered, so the notice and the alarm can last that much longer than the failure. If all watches are affected, the other checks stay paused for that time too. If it answers again and a watch still fails for a lasting reason, its 3 minutes start over from then.
+
+The alarm can only go out if the notification target can be reached without the cluster. Like every other problem, the alarm is resolved after `SMOKEALARM_RESOLVE_AFTER`. If smokealarm is restarted during an outage, it cannot start until the API is back, and the pod is restarted until then.
+
 ## Acknowledging a problem
 
 Only firing critical problems can be acknowledged. Warnings are not repeated anyway.
@@ -384,6 +397,7 @@ All configuration is done through environment variables starting with `SMOKEALAR
 | `SMOKEALARM_ADMIN_PASSWORD_HASH` | – (required) | bcrypt hash of the admin password. Create it with `smokealarm hash-password`. |
 | `SMOKEALARM_CHECK_INTERVAL` | `30s` | How often the checks run. |
 | `SMOKEALARM_ALERT_AFTER` | `2m` | How long a problem must last before it is reported. `0s` reports at once. |
+| `SMOKEALARM_RESOLVE_AFTER` | `5m` | How long a reported problem must be gone before it counts as resolved and that is reported. `0s` resolves it at once. |
 | `SMOKEALARM_CRITICAL_REPEAT_INTERVAL` | `0s` | How often a critical problem that is still open is reported again, for example `4h`. `0s` means never. Otherwise it must be at least `SMOKEALARM_CHECK_INTERVAL`. Critical problems that have been open for longer are reported on the next run after you turn this on. |
 | `SMOKEALARM_RETENTION` | `30d` | How long resolved problems are kept in the history. |
 | `SMOKEALARM_DB_PATH` | `smokealarm.db` | The SQLite database file. The container image uses `/data/smokealarm.db`. |
@@ -448,12 +462,13 @@ Severity is either critical (act now) or warning (have a look soon). The status 
 | `cert-expiry` | warning / critical | A certificate expires in less than 14 days (warning) or 3 days (critical), or has expired. Only if cert-manager is installed. |
 | `argocd-health` | critical | An Argo CD Application is `Degraded` or `Missing`. Only if Argo CD is installed. |
 | `argocd-sync` | warning | An Argo CD Application is `OutOfSync`. Only if Argo CD is installed. |
+| `api-connection` | critical | smokealarm has been unable to keep its copy of the cluster up to date for 3 minutes: the API server does not answer, or a watch fails (a missing permission, a deleted CRD). See [When the API cannot be read](#when-the-api-cannot-be-read). |
 
 Notes:
 
 - The cert-manager and Argo CD CRDs are detected once at startup, and only if an enabled check needs them. If a CRD is missing or the service account may not list it, the matching checks are skipped and the status page says why. After installing the CRD or granting the permission, restart smokealarm. While a permission is missing, open problems from those checks stay open, since they may still exist. If the CRD is not installed, they count as gone.
-- Disabling a check closes its problems. This applies to `SMOKEALARM_DISABLED_CHECKS` and to the chart's `rbac.*` switches, which disable the checks that need the permission. The open problems are reported as resolved in the next mail, even if the cause is still there. A check that is only skipped for a moment, for example because the kubelet doesn't answer, leaves its problems alone.
-- `pvc-usage`, `cert-expiry` and `workload-replicas` can go from warning to critical. It stays the same problem: it isn't reported as resolved, and you get a new mail saying it is now critical.
+- Disabling a check closes its problems. This applies to `SMOKEALARM_DISABLED_CHECKS` and to the chart's `rbac.*` switches, which disable the checks that need the permission. The open problems are reported as resolved after `SMOKEALARM_RESOLVE_AFTER`, even if the cause is still there. A check that is only skipped for a moment, for example because the kubelet doesn't answer, leaves its problems alone.
+- `pvc-usage`, `cert-expiry` and `workload-replicas` can go from warning to critical. It stays the same problem: it isn't reported as resolved, and you get a new mail saying it is now critical, once that has lasted `SMOKEALARM_ALERT_AFTER`.
 - A CronJob without `spec.timeZone` runs in the local time of the Kubernetes controller. On k3s the controller runs inside the host process, so that should be the host's time zone (check with `timedatectl`). smokealarm cannot see it from the API and assumes UTC. If the host is not on UTC, set `SMOKEALARM_CRONJOB_TIME_ZONE` to the same zone, or daily and weekly CronJobs are reported as missed most of the day. Short schedules like `*/5 * * * *` are not affected.
 - A schedule that never comes true, like `0 0 31 2 *` for a CronJob that only runs by hand, is never reported as missed.
 - `pvc-usage` looks at the filesystem a volume lives on, because that is what the kubelet reports. With k3s `local-path` that is the node's disk, and the requested size is not enforced, so the check only fires when the node disk is nearly full. It is more useful for volumes with their own filesystem (Longhorn, Ceph, block volumes).

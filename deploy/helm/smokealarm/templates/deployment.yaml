@@ -62,6 +62,8 @@ spec:
               value: {{ .Values.config.checkInterval | quote }}
             - name: SMOKEALARM_ALERT_AFTER
               value: {{ .Values.config.alertAfter | quote }}
+            - name: SMOKEALARM_RESOLVE_AFTER
+              value: {{ .Values.config.resolveAfter | quote }}
             - name: SMOKEALARM_CRITICAL_REPEAT_INTERVAL
               value: {{ .Values.config.criticalRepeatInterval | quote }}
             - name: SMOKEALARM_RETENTION

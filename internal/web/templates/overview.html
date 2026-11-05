@@ -1,4 +1,13 @@
 {{define "content"}}
+{{with .APIProblem}}
+<div class="hint api-problem">
+  {{template "icon-info"}}
+  <div>
+    <p>{{if .Blind}}<strong>smokealarm cannot read the Kubernetes API</strong> since <time title="{{.Since}}">{{.Age}} ago</time>. This page shows the last known state, and new problems stay unseen until the connection is back.{{else}}<strong>smokealarm cannot read {{.Resources}}</strong> from the Kubernetes API since <time title="{{.Since}}">{{.Age}} ago</time>. Problems with these may be out of date or unseen.{{end}}</p>
+    <p>Last error: {{.Error}}</p>
+  </div>
+</div>
+{{end}}
 {{if .WaitingFirstRun}}
 <section class="state">
   <span class="state-icon"><span class="spinner"></span></span>
@@ -14,7 +23,7 @@
 {{else}}
 <div class="page-head">
   <div>
-    <h1>{{len .Problems}} current {{if eq (len .Problems) 1}}problem{{else}}problems{{end}}</h1>
+    <h1>{{if and .APIProblem (not .Problems)}}No problems known{{else}}{{len .Problems}} current {{if eq (len .Problems) 1}}problem{{else}}problems{{end}}{{end}}</h1>
     <p class="counts">
       {{if .CriticalCount}}<span class="count critical">{{.CriticalCount}} critical</span>{{end}}
       {{if .WarningCount}}<span class="count warning">{{.WarningCount}} {{if eq .WarningCount 1}}warning{{else}}warnings{{end}}</span>{{end}}
@@ -35,6 +44,7 @@
       <p class="object">{{.Object}}</p>
       <p class="message">{{.Message}}</p>
       <p class="meta">{{template "icon-clock"}}<span>since <time title="{{.Since}}">{{.Age}} ago</time>{{if .AcknowledgedAt}}, acknowledged {{.AcknowledgedAt}}{{end}}</span></p>
+      {{if .GoneSince}}<p class="meta">{{template "icon-info"}}<span>Not seen since <time title="{{.GoneSince}}">{{.GoneAge}} ago</time>. It counts as resolved if it stays away.</span></p>{{end}}
       {{if .NotifiesOnly}}<p class="meta">{{template "icon-info"}}<span>Notifies only: {{.NotifiesOnly}}</span></p>{{end}}
       {{if .NotifiesNobody}}<p class="meta">{{template "icon-bell-off"}}<span>Notifies nobody: the targets it is meant for get critical problems only.</span></p>{{end}}
       {{if .DowntimeUntil}}<p class="meta">{{template "icon-bell-off"}}<span>No mails during the downtime until {{.DowntimeUntil}}.</span></p>{{end}}

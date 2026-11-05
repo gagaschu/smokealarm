@@ -44,6 +44,7 @@ type page struct {
 	AcknowledgedAny   bool // the same for removing an acknowledgement
 	WaitingFirstRun   bool
 	AllGood           bool
+	APIProblem        *apiProblemView // nil if the data is up to date
 	LastRun           string
 	LastRunAgo        string
 
@@ -72,6 +73,8 @@ type problemView struct {
 	Age            string // how long ago
 	CanAcknowledge bool   // critical and not acknowledged yet
 	AcknowledgedAt string // exact time, empty if not acknowledged
+	GoneSince      string // exact time, empty unless it is waiting for RESOLVE_AFTER
+	GoneAge        string
 	DowntimeUntil  string // end of the running downtime, empty if there is none
 	NotifiesOnly   string // "slack, mail" if not every target hears about it
 	NotifiesNobody bool   // no target hears about it (a warning for critical-only targets)
@@ -101,6 +104,7 @@ type historyView struct {
 type statusView struct {
 	LastRun      string
 	LastRunError string
+	APIProblem   *apiProblemView
 	Checks       []checkView
 	Targets      []targetView
 	LogOnly      bool // no notification target is configured
@@ -242,14 +246,38 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 
 	data.HeldBack = heldBackViews(held, now)
 
-	lastRun := s.Status().LastRun
+	status := s.Status()
+	lastRun := status.LastRun
 	data.WaitingFirstRun = lastRun.IsZero()
-	data.AllGood = !data.WaitingFirstRun && len(data.Problems) == 0 && len(data.HeldBack) == 0
+	data.APIProblem = newAPIProblemView(status.APIProblem, now)
+	data.AllGood = !data.WaitingFirstRun && len(data.Problems) == 0 && len(data.HeldBack) == 0 && data.APIProblem == nil
 	if !lastRun.IsZero() {
 		data.LastRun = lastRun.UTC().Format(timeFormat)
 		data.LastRunAgo = formatAge(now.Sub(lastRun))
 	}
 	s.render(w, http.StatusOK, "overview", data)
+}
+
+// apiProblemView says that what the pages show may be out of date.
+type apiProblemView struct {
+	Since     string
+	Age       string
+	Blind     bool   // nothing can be read
+	Resources string // what cannot be read, if it is only a part
+	Error     string
+}
+
+func newAPIProblemView(problem *checks.APIProblem, now time.Time) *apiProblemView {
+	if problem == nil {
+		return nil
+	}
+	return &apiProblemView{
+		Since:     problem.Since.UTC().Format(timeFormat),
+		Age:       formatAge(now.Sub(problem.Since)),
+		Blind:     problem.Blind,
+		Resources: strings.Join(problem.Resources, ", "),
+		Error:     problem.Error,
+	}
 }
 
 // audience returns what the pages say about who hears about a problem: nothing
@@ -298,6 +326,10 @@ func newProblemView(rec store.Record, now time.Time) problemView {
 	}
 	if rec.AcknowledgedAt != nil {
 		view.AcknowledgedAt = rec.AcknowledgedAt.UTC().Format(timeFormat)
+	}
+	if rec.GoneSince != nil {
+		view.GoneSince = rec.GoneSince.UTC().Format(timeFormat)
+		view.GoneAge = formatAge(now.Sub(*rec.GoneSince))
 	}
 	return view
 }
@@ -415,6 +447,7 @@ func (s *Server) status(w http.ResponseWriter, _ *http.Request) {
 	view := statusView{
 		LastRun:      formatOptionalTime(st.LastRun),
 		LastRunError: st.LastRunError,
+		APIProblem:   newAPIProblemView(st.APIProblem, s.Now()),
 		Targets:      targetViews(st.Targets),
 	}
 	view.LogOnly = len(st.Targets) == 1 && st.Targets[0].Name == "log"

@@ -49,7 +49,7 @@ A check is a plain function: *snapshot in, findings out*. It never talks to the 
 A finding has a stable **key** (check + object + a fixed word), so smokealarm can recognize "the same problem" from one run to the next.
 
 ```
- first seen ──► pending ──(lasts ≥ ALERT_AFTER)──► firing ──(gone)──► resolved
+ first seen ──► pending ──(lasts ≥ ALERT_AFTER)──► firing ──(gone ≥ RESOLVE_AFTER)──► resolved
                   │                                  │                   │
               (gone: dropped,                  (mail: "new problem")  (mail: "resolved")
                nobody is told)
@@ -57,13 +57,15 @@ A finding has a stable **key** (check + object + a fixed word), so smokealarm ca
 
 - A problem that appears and disappears within `ALERT_AFTER` is never reported.
 - Reporting is remembered in the database *after* a successful send, so a failed mail is retried at the next run, even after a restart. This is remembered **per notification target** (table `deliveries`), so if one target is down, only that one is retried and the others get nothing twice. See [Where notifications go](#where-notifications-go).
-- If a firing problem gets worse (warning → critical), it stays the same problem and is reported again as critical.
+- If a firing problem gets worse (warning → critical), it stays the same problem and is reported again as critical, once that has lasted `ALERT_AFTER` (`findings.escalating_since`). So a problem that flips between the two does not send a message per flip.
+- A firing problem that is no longer found waits for `RESOLVE_AFTER` (`findings.gone_since`) before it is resolved, so a crash loop, which has no finding while the container runs, is one alarm and not a pair of messages per restart. If it comes back in that time, it just goes on.
 - With `CRITICAL_REPEAT_INTERVAL` set, a critical problem that is still firing is reported again once its last report is that old. Warnings are not repeated.
 - A firing critical problem can be acknowledged in the web UI. From then on only its end is reported: no reminders, no mail if it goes from warning back to critical, and a first mail that has not gone out yet is dropped. The mark belongs to this one alarm, so a problem that returns after "resolved" is new again. If the mark is removed, the problem behaves like any other, so an overdue reminder goes out in the next run.
 - A downtime silences one key until a fixed time, whether the problem is there or not. While it runs, nothing is sent; a problem that goes away is marked as reported without a mail. At the start of each run the engine finishes the downtimes that have ended. If the problem is still firing and not acknowledged, its "reported" marker is cleared, so the normal path reports it as new. If a check's state is unknown, this waits until the check runs again.
 - A node that is down holds back the problems it causes. After the checks and the annotations, `checks.ApplyNodeCauses` sets `CausedBy` on problems of pods on a down node and of Deployments, StatefulSets and DaemonSets whose missing replicas their pods on down nodes explain (by their selector), but only while `node-not-ready` runs. The engine keeps such a problem **pending** as long as it is a consequence (`findings.caused_by`), so all the usual rules for pending problems apply: nothing is sent, and if it goes away it is dropped. When it no longer is one, the `ALERT_AFTER` clock starts again (`findings.pending_since`; `first_seen` stays the real start). Notifications list a down node first and carry the problems it holds back as `Alert.Affected`, filtered with the same routing as everything else.
 - If a check cannot get its data (for example the kubelet does not answer), it is skipped for that run and its open problems are left alone, because "no data" is not "all fine". They get no reminders either, until the check runs again.
-- If a check is switched off (configuration, or an optional CRD or permission is missing at startup), its open problems count as gone and are reported as resolved in the next run. The README says so, because switching a check off can look like a recovery.
+- The informer caches stay "synced" after their first fill, so `internal/kube/apihealth.go` watches whether they are still updated: the watch error handler of every informer, and a request to `/version` in every run (client-go retries "connection refused" without calling the handler, and when the server answers again the watch errors of the outage are forgotten). After 3 minutes it sets `Snapshot.APIProblem`, and the check `api-connection` reports it. If nothing can be read, the engine treats all other checks as skipped.
+- If a check is switched off (configuration, or an optional CRD or permission is missing at startup), its open problems count as gone and are reported as resolved after `RESOLVE_AFTER`. The README says so, because switching a check off can look like a recovery.
 
 ## Where notifications go
 

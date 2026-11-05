@@ -184,6 +184,7 @@ func TestEscalationReachesEveryTarget(t *testing.T) {
 	h.mustRun(2 * time.Minute)
 	h.findings = []checks.Finding{escalating(checks.Critical)}
 	h.mustRun(time.Minute)
+	h.mustRun(2 * time.Minute)
 
 	for _, n := range []*fakeNotifier{h.notifier, second} {
 		wantNotifications(t, n, "new:vol/reminders:/resolved:", "new:vol/reminders:/resolved:")

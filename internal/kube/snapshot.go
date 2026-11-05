@@ -78,6 +78,7 @@ func (c *Cluster) BuildSnapshot(ctx context.Context, now time.Time) *checks.Snap
 	}
 	c.addCustomResourcesToSnapshot(snap)
 	c.addVolumeUsage(ctx, snap)
+	c.addAPIProblem(ctx, snap)
 	return snap
 }
 

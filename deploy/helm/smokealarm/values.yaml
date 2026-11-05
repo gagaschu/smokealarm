@@ -38,6 +38,7 @@ existingSecret: ""
 config:
   checkInterval: 30s        # SMOKEALARM_CHECK_INTERVAL
   alertAfter: 2m            # SMOKEALARM_ALERT_AFTER: how long a problem must last before it is reported
+  resolveAfter: 5m          # SMOKEALARM_RESOLVE_AFTER: how long a reported problem must be gone before it is resolved
   # SMOKEALARM_CRITICAL_REPEAT_INTERVAL: how often a critical problem that is
   # still open is reported again, for example 4h. 0s means never.
   criticalRepeatInterval: 0s

@@ -3,8 +3,9 @@
 // clean up old data.
 //
 // A problem has a life cycle: it starts as pending, becomes firing once it has
-// lasted AlertAfter, and ends as resolved. Problems that vanish while still
-// pending are dropped silently, so short flaps never reach anybody.
+// lasted AlertAfter, and ends as resolved once it has been gone for
+// ResolveAfter. Problems that vanish while still pending are dropped silently,
+// so short flaps never reach anybody.
 package engine
 
 import (
@@ -34,6 +35,9 @@ type Engine struct {
 
 	// AlertAfter is how long a problem must last before it is reported.
 	AlertAfter time.Duration
+	// ResolveAfter is how long a firing problem must be gone before it counts as
+	// resolved. Zero resolves it in the first run without it.
+	ResolveAfter time.Duration
 	// CriticalRepeatInterval is how often a critical problem that is still
 	// open is reported again. Zero means never.
 	CriticalRepeatInterval time.Duration
@@ -115,8 +119,11 @@ type TargetStatus struct {
 type Status struct {
 	LastRun      time.Time // zero before the first run has finished
 	LastRunError string    // empty if the last run had no errors
-	Checks       []CheckStatus
-	Targets      []TargetStatus // in the order of Engine.Notifiers
+	// APIProblem says that the data of the last run may be out of date. Nil if
+	// the connection to the API is fine.
+	APIProblem *checks.APIProblem
+	Checks     []CheckStatus
+	Targets    []TargetStatus // in the order of Engine.Notifiers
 }
 
 // Status returns a copy of the current status.
@@ -159,7 +166,7 @@ func (e *Engine) splitSkipped(snap *checks.Snapshot) ([]checks.Check, map[string
 	var runnable []checks.Check
 	skipped := map[string]string{}
 	for _, c := range e.Checks {
-		if reason, found := snap.Skipped[c.Name]; found {
+		if reason, found := skipReason(snap, c.Name); found {
 			skipped[c.Name] = reason
 			continue
 		}
@@ -178,6 +185,16 @@ func (e *Engine) splitSkipped(snap *checks.Snapshot) ([]checks.Check, map[string
 	}
 	e.previousSkipped = skipped
 	return runnable, skipped
+}
+
+// skipReason says why a check cannot run in this run. Without any fresh data no
+// check has anything to say, except the one that reports exactly that.
+func skipReason(snap *checks.Snapshot, check string) (string, bool) {
+	if snap.APIProblem != nil && snap.APIProblem.Blind && check != checks.CheckAPIConnection {
+		return "the Kubernetes API cannot be read, the data is out of date", true
+	}
+	reason, found := snap.Skipped[check]
+	return reason, found
 }
 
 // skippedNames returns the names of the skipped checks, sorted.
@@ -204,12 +221,13 @@ func (e *Engine) checksWithUnknownState(runSkipped map[string]string) []string {
 }
 
 // setRunResult remembers when the last run finished, which checks were
-// skipped, and how it went.
-func (e *Engine) setRunResult(finished time.Time, skipped map[string]string, err error) {
+// skipped, how it went, and whether its data was up to date.
+func (e *Engine) setRunResult(finished time.Time, skipped map[string]string, apiProblem *checks.APIProblem, err error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.status.LastRun = finished
 	e.runSkipped = skipped
+	e.status.APIProblem = apiProblem
 	e.status.LastRunError = ""
 	if err != nil {
 		e.status.LastRunError = err.Error()
@@ -308,7 +326,7 @@ func (e *Engine) RunOnce(ctx context.Context) error {
 
 	finished := e.Now()
 	err := errors.Join(errs...)
-	e.setRunResult(finished, skipped, err)
+	e.setRunResult(finished, skipped, snap.APIProblem, err)
 	e.Logger.Info("check run finished",
 		"findings", len(findings),
 		"checks", len(runnable),
@@ -328,11 +346,20 @@ func (e *Engine) saveState(ctx context.Context, snap *checks.Snapshot, findings 
 	// checks that are disabled (or gone) are not in the skipped list and are
 	// resolved, not left "firing" forever.
 	// The same goes for a single problem this run says nothing about. Reminders
-	// go on: a problem that was firing when its node went down is not touched.
+	// go on: a problem that was firing when its node went down is not touched,
+	// except that a wait for RESOLVE_AFTER starts again.
+	var unmeasured []store.Record
 	open = slices.DeleteFunc(open, func(r store.Record) bool {
-		return checks.VolumeUsageUnknown(snap, r.Check, r.Object)
+		if !checks.VolumeUsageUnknown(snap, r.Check, r.Object) {
+			return false
+		}
+		if r.GoneSince != nil {
+			unmeasured = append(unmeasured, restartResolveWait(r, now))
+		}
+		return true
 	})
 	changes := e.reconcile(open, findings, skipped, now)
+	changes.Update = append(changes.Update, unmeasured...)
 	if err := e.Store.Apply(ctx, changes); err != nil {
 		return fmt.Errorf("save findings: %w", err)
 	}
@@ -373,7 +400,13 @@ func (e *Engine) reconcile(open []store.Record, findings []checks.Finding, skipp
 	}
 
 	for _, record := range open {
-		if seen[record.Key] || slices.Contains(skipped, record.Check) {
+		if seen[record.Key] {
+			continue
+		}
+		if slices.Contains(skipped, record.Check) {
+			if record.GoneSince != nil {
+				changes.Update = append(changes.Update, restartResolveWait(record, now))
+			}
 			continue
 		}
 		if record.State == store.StatePending {
@@ -381,12 +414,38 @@ func (e *Engine) reconcile(open []store.Record, findings []checks.Finding, skipp
 			changes.Delete = append(changes.Delete, record.ID)
 			continue
 		}
-		record.State = store.StateResolved
-		record.ResolvedAt = &now
-		e.Logger.Info("finding resolved", "key", record.Key)
-		changes.Update = append(changes.Update, record)
+		changes.Update = append(changes.Update, e.resolveOrWait(record, now))
 	}
 	return changes
+}
+
+// resolveOrWait handles a firing problem that was not found in this run. It
+// counts as resolved only once it has been gone for ResolveAfter, from the run
+// in which it was first gone: a crash loop is gone between two back-offs and
+// comes back, and that must not send a pair of messages every time.
+func (e *Engine) resolveOrWait(record store.Record, now time.Time) store.Record {
+	if record.GoneSince == nil {
+		record.GoneSince = &now
+		e.Logger.Info("finding no longer seen", "key", record.Key)
+	}
+	if now.Sub(*record.GoneSince) < e.ResolveAfter {
+		return record
+	}
+	record.State = store.StateResolved
+	record.ResolvedAt = record.GoneSince
+	record.GoneSince = nil
+	record.EscalatingSince = nil
+	e.Logger.Info("finding resolved", "key", record.Key)
+	return record
+}
+
+// restartResolveWait is for a problem that waits for ResolveAfter in a run that
+// says nothing about it. The wait counts time in which the check looked and did
+// not find it, so it starts again from this run. Right after an outage the data
+// can still be old for a moment, and that must not resolve anything.
+func restartResolveWait(record store.Record, now time.Time) store.Record {
+	record.GoneSince = &now
+	return record
 }
 
 // newRecord creates the record for a problem seen for the first time. With
@@ -409,23 +468,25 @@ func (e *Engine) newRecord(f checks.Finding, now time.Time) store.Record {
 // refresh updates a known problem with the latest details and lets it fire
 // once it has lasted long enough and no down node holds it back.
 func (e *Engine) refresh(record store.Record, f checks.Finding, now time.Time) store.Record {
-	escalated := record.Severity == checks.Warning && f.Severity == checks.Critical
+	worse := record.Severity == checks.Warning && f.Severity == checks.Critical
 	record.Severity = f.Severity
 	record.Reason = f.Reason
 	record.Message = f.Message
 	record.Targets = f.Targets // a changed annotation counts from now on
 	record.LastSeen = now
+	if record.GoneSince != nil {
+		record.GoneSince = nil
+		e.Logger.Info("finding seen again", "key", f.Key)
+		// If it was about to be reported as worse, that state has only just
+		// begun again. It is kept, not cleared: the severity is critical
+		// already, so a new escalation would not be noticed anymore.
+		if record.EscalatingSince != nil {
+			record.EscalatingSince = &now
+		}
+	}
 
-	// A problem that gets worse is still the same problem, so it is not
-	// resolved and restarted. But somebody who read "warning" must hear that
-	// it is critical now: clearing the marker lists it as new again. If it is
-	// still pending, it is simply reported with the higher severity when it
-	// fires. Getting better again is not reported; the resolution will be.
-	// An acknowledged problem stays acknowledged: somebody already knows, so
-	// the escalation is not reported.
-	if escalated && record.State == store.StateFiring && record.AcknowledgedAt == nil {
-		record.FiringNotifiedAt = nil
-		e.Logger.Info("finding escalated", "key", f.Key, "severity", f.Severity, "reason", f.Reason)
+	if record.State == store.StateFiring {
+		record = e.trackEscalation(record, worse, now)
 	}
 	if record.State == store.StatePending {
 		record = e.holdBack(record, f, now)
@@ -434,6 +495,34 @@ func (e *Engine) refresh(record store.Record, f checks.Finding, now time.Time) s
 		record.State = store.StateFiring
 		record.FiringAt = &now
 		e.Logger.Info("finding firing", "key", f.Key, "severity", f.Severity)
+	}
+	return record
+}
+
+// trackEscalation decides when a firing problem that got worse is reported. It
+// is still the same problem, so it is not resolved and restarted. But somebody
+// who read "warning" must hear that it is critical now, once that has lasted
+// AlertAfter: a problem that flips between the two reports nothing per flip.
+// Clearing the marker then lists the problem as new again. Getting better is
+// not reported; the resolution will be. An acknowledged problem stays
+// acknowledged: somebody already knows, so the escalation is not reported. (A
+// problem that is still pending is simply reported with the higher severity
+// when it fires.)
+func (e *Engine) trackEscalation(record store.Record, worse bool, now time.Time) store.Record {
+	if record.Severity != checks.Critical {
+		record.EscalatingSince = nil
+		return record
+	}
+	if worse {
+		record.EscalatingSince = &now
+	}
+	if record.EscalatingSince == nil || now.Sub(*record.EscalatingSince) < e.AlertAfter {
+		return record
+	}
+	record.EscalatingSince = nil
+	if record.AcknowledgedAt == nil {
+		record.FiringNotifiedAt = nil
+		e.Logger.Info("finding escalated", "key", record.Key, "severity", record.Severity, "reason", record.Reason)
 	}
 	return record
 }
@@ -592,6 +681,12 @@ func (e *Engine) buildReport(records, due []store.Record, silenced map[string]bo
 		switch {
 		case silenced[rec.Key] && firing:
 			// Not marked as reported: the mail goes out when the downtime ends.
+		case firing && rec.EscalatingSince != nil:
+			// It just got worse. Whoever has not heard about it yet, like a
+			// target for critical problems only, hears when that has lasted.
+		case firing && rec.GoneSince != nil:
+			// It is gone at the moment, so "new" would claim something that is
+			// not true. It is reported if it comes back.
 		case silenced[rec.Key]:
 			// It went away during the downtime, so nothing is sent, not even
 			// after it ends. The downtime also wins over an acknowledgement.
@@ -661,7 +756,9 @@ func (e *Engine) addAffected(n notify.Notification, held map[string][]store.Reco
 // is at least one repeat interval old. Problems of checks whose state is unknown are left
 // out, because a reminder would claim they still exist; they are reminded of
 // as soon as the check runs again. Problems in a downtime are left out too, and
-// so are problems no longer meant for the target (the annotation changed).
+// so are problems no longer meant for the target (the annotation changed),
+// problems that just became critical (nobody has heard about that yet), and
+// problems that are gone at the moment.
 func (e *Engine) dueReminders(ctx context.Context, target notify.Notifier, unknown []string,
 	silenced map[string]bool, now time.Time) ([]store.Record, error) {
 	if e.CriticalRepeatInterval <= 0 {
@@ -672,7 +769,7 @@ func (e *Engine) dueReminders(ctx context.Context, target notify.Notifier, unkno
 		return nil, err
 	}
 	return slices.DeleteFunc(records, func(r store.Record) bool {
-		return slices.Contains(unknown, r.Check) || silenced[r.Key] || !e.routedTo(target, r)
+		return slices.Contains(unknown, r.Check) || silenced[r.Key] || r.EscalatingSince != nil || r.GoneSince != nil || !e.routedTo(target, r)
 	}), nil
 }
 

@@ -324,6 +324,72 @@ func TestOverviewWaitingForFirstRun(t *testing.T) {
 	}
 }
 
+func TestOverviewSaysWhenAProblemIsNotSeenAnymore(t *testing.T) {
+	e := newTestEnv(t)
+	e.status.LastRun = testNow
+	rec := problem("crashing", "media", checks.Critical, store.StateFiring, testNow.Add(-time.Hour), "back-off")
+	e.insert(rec)
+	records, err := e.store.OpenRecords(context.Background())
+	if err != nil || len(records) != 1 {
+		t.Fatalf("OpenRecords = %v, %v", records, err)
+	}
+	gone := testNow.Add(-3 * time.Minute)
+	records[0].GoneSince = &gone
+	if err := e.store.Apply(context.Background(), store.Changes{Update: records}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	body := e.do(http.MethodGet, "/", nil, e.login()).Body.String()
+	for _, want := range []string{"crashing", "Not seen since", "3m ago", "2026-11-03 11:57:00 UTC"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body does not contain %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestOverviewIsNotAllGoodWithoutAPIConnection(t *testing.T) {
+	tests := []struct {
+		name    string
+		problem *checks.APIProblem
+		want    string
+	}{
+		{"nothing can be read", &checks.APIProblem{Since: testNow.Add(-10 * time.Minute), Blind: true, Error: "connection refused"},
+			"cannot read the Kubernetes API"},
+		{"a part cannot be read", &checks.APIProblem{Since: testNow.Add(-10 * time.Minute), Resources: []string{"certificates"}, Error: "forbidden"},
+			"cannot read certificates"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newTestEnv(t)
+			e.status.LastRun = testNow
+			e.status.APIProblem = tt.problem
+			cookie := e.login()
+
+			body := e.do(http.MethodGet, "/", nil, cookie).Body.String()
+			if strings.Contains(body, "All good") {
+				t.Errorf("overview says All good:\n%s", body)
+			}
+			for _, want := range []string{tt.want, "10m ago", tt.problem.Error, "No problems known"} {
+				if !strings.Contains(body, want) {
+					t.Errorf("overview does not contain %q:\n%s", want, body)
+				}
+			}
+			status := e.do(http.MethodGet, "/status", nil, cookie).Body.String()
+			if !strings.Contains(status, tt.problem.Error) {
+				t.Errorf("status page does not contain the error:\n%s", status)
+			}
+		})
+	}
+}
+
+func TestReadyzStaysGreenWithoutAPIConnection(t *testing.T) {
+	e := newTestEnv(t)
+	e.status.APIProblem = &checks.APIProblem{Blind: true}
+	if code := e.do(http.MethodGet, "/readyz", nil, nil).Code; code != http.StatusOK {
+		t.Errorf("/readyz = %d, want 200: a new pod would not help", code)
+	}
+}
+
 func TestOverviewAllGood(t *testing.T) {
 	e := newTestEnv(t)
 	e.status.LastRun = testNow.Add(-5 * time.Minute)

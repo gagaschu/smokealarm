@@ -86,6 +86,7 @@ func run() error {
 	cluster, err := kube.New(clients.Kube, clients.Dynamic, kube.Options{
 		Features:    features,
 		VolumeStats: hasCheck(activeChecks, checks.PVCUsageCheck),
+		APIProbe:    kube.APIProbe(clients.Kube),
 	}, logger)
 	if err != nil {
 		return fmt.Errorf("create cluster: %w", err)
@@ -237,6 +238,7 @@ func newEngine(cfg config.Config, logger *slog.Logger, cluster *kube.Cluster, db
 		},
 		Interval:               cfg.CheckInterval,
 		AlertAfter:             cfg.AlertAfter,
+		ResolveAfter:           cfg.ResolveAfter,
 		CriticalRepeatInterval: cfg.CriticalRepeatInterval,
 		Retention:              cfg.Retention,
 		SkippedChecks:          skipped,

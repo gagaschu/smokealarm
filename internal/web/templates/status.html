@@ -13,6 +13,12 @@
     <dd class="error">{{.Status.LastRunError}}</dd>
   </div>
   {{end}}
+  {{with .Status.APIProblem}}
+  <div>
+    <dt>Kubernetes API</dt>
+    <dd class="error">{{if .Blind}}Cannot be read{{else}}Cannot read {{.Resources}}{{end}} since {{.Since}}: {{.Error}}</dd>
+  </div>
+  {{end}}
 </dl>
 
 <h2>Notifications</h2>

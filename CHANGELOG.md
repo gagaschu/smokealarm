@@ -8,6 +8,8 @@ All notable changes to this project are documented here. The format is based on
 
 ### Added
 
+- **`api-connection`**: smokealarm says when it cannot see the cluster. After 3 minutes without an answer from the API server, or with a failing watch, a critical problem is reported (5 minutes with `SMOKEALARM_ALERT_AFTER`). If nothing can be read, the other checks count as unknown and keep their problems. The overview shows a notice instead of "All good", and the status page shows the error. Can be switched off with `SMOKEALARM_DISABLED_CHECKS`.
+- **`SMOKEALARM_RESOLVE_AFTER`** (Helm: `config.resolveAfter`, default `5m`): a reported problem must be gone that long before it counts as resolved. The overview shows "Not seen since" meanwhile.
 - `SMOKEALARM_CRONJOB_TIME_ZONE` (Helm: `config.cronjobTimeZone`) says which time zone the Kubernetes controller reads schedules in, for CronJobs without `spec.timeZone`. On k3s that should be the time zone of the host.
 - **Reminders for critical problems**: `SMOKEALARM_CRITICAL_REPEAT_INTERVAL` reports critical problems that are still open again at that interval. Off by default.
 - **Acknowledge critical problems** in the web UI: an acknowledged problem stays on the overview with a mark and sends no more reminders until it is resolved. "Resolved" is still reported. A first mail that has not gone out yet is dropped.
@@ -33,6 +35,8 @@ All notable changes to this project are documented here. The format is based on
 
 ### Changed
 
+- **"Resolved" comes later**: by default a problem has to be gone for 5 minutes, so a crash loop is one alarm instead of a pair of messages per restart. `SMOKEALARM_RESOLVE_AFTER=0s` brings the old behavior back. This applies to all checks, also to `node-not-ready` and to checks that were switched off.
+- **An escalation waits for `SMOKEALARM_ALERT_AFTER`**: a problem going from warning to critical is reported again once that has lasted, so a problem that flips between the two no longer sends a message per flip. A problem that flips more slowly than that still sends one report per change.
 - **Startup is stricter**: negative `SMOKEALARM_POD_PENDING_AFTER`, `SMOKEALARM_PVC_PENDING_AFTER` and `SMOKEALARM_CRONJOB_GRACE` are refused, and so is `SMOKEALARM_SMTP_TLS=none` with a login to another host, where every mail would have failed.
 - The README explains that all clients behind an Ingress share one login limit, and how to protect the UI.
 - **New look for the web UI**: a top bar with logo, slimmer buttons with icons and a clear main action, problem cards with severity counters above them, tables as cards, a status page with state pills, and a favicon. Still no JavaScript and no external files; light and dark mode and the phone layout are kept. The history shows the duration below the time and the severity above the reason, so the table fits on a small laptop screen.
