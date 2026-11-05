@@ -13,6 +13,7 @@ import (
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/watch"
@@ -63,7 +64,7 @@ func TestWatchCountsAsBackAfterSomeTimeWithoutError(t *testing.T) {
 
 func TestNormalEndOfAWatchIsNoError(t *testing.T) {
 	expired := apierrors.NewResourceExpired("too old")
-	gone := apierrors.NewGone("gone")
+	gone := &apierrors.StatusError{ErrStatus: metav1.Status{Reason: metav1.StatusReasonGone}}
 	for _, err := range []error{io.EOF, io.ErrUnexpectedEOF, expired, gone} {
 		h := newAPIHealth()
 		h.watchFailed("pods", err, healthStart)
