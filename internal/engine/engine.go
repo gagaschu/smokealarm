@@ -346,11 +346,20 @@ func (e *Engine) saveState(ctx context.Context, snap *checks.Snapshot, findings 
 	// checks that are disabled (or gone) are not in the skipped list and are
 	// resolved, not left "firing" forever.
 	// The same goes for a single problem this run says nothing about. Reminders
-	// go on: a problem that was firing when its node went down is not touched.
+	// go on: a problem that was firing when its node went down is not touched,
+	// except that a wait for RESOLVE_AFTER starts again.
+	var unmeasured []store.Record
 	open = slices.DeleteFunc(open, func(r store.Record) bool {
-		return checks.VolumeUsageUnknown(snap, r.Check, r.Object)
+		if !checks.VolumeUsageUnknown(snap, r.Check, r.Object) {
+			return false
+		}
+		if r.GoneSince != nil {
+			unmeasured = append(unmeasured, restartResolveWait(r, now))
+		}
+		return true
 	})
 	changes := e.reconcile(open, findings, skipped, now)
+	changes.Update = append(changes.Update, unmeasured...)
 	if err := e.Store.Apply(ctx, changes); err != nil {
 		return fmt.Errorf("save findings: %w", err)
 	}
@@ -391,7 +400,13 @@ func (e *Engine) reconcile(open []store.Record, findings []checks.Finding, skipp
 	}
 
 	for _, record := range open {
-		if seen[record.Key] || slices.Contains(skipped, record.Check) {
+		if seen[record.Key] {
+			continue
+		}
+		if slices.Contains(skipped, record.Check) {
+			if record.GoneSince != nil {
+				changes.Update = append(changes.Update, restartResolveWait(record, now))
+			}
 			continue
 		}
 		if record.State == store.StatePending {
@@ -424,6 +439,15 @@ func (e *Engine) resolveOrWait(record store.Record, now time.Time) store.Record 
 	return record
 }
 
+// restartResolveWait is for a problem that waits for ResolveAfter in a run that
+// says nothing about it. The wait counts time in which the check looked and did
+// not find it, so it starts again from this run. Right after an outage the data
+// can still be old for a moment, and that must not resolve anything.
+func restartResolveWait(record store.Record, now time.Time) store.Record {
+	record.GoneSince = &now
+	return record
+}
+
 // newRecord creates the record for a problem seen for the first time. With
 // AlertAfter 0 it fires right away, unless a down node holds it back.
 func (e *Engine) newRecord(f checks.Finding, now time.Time) store.Record {
@@ -453,6 +477,12 @@ func (e *Engine) refresh(record store.Record, f checks.Finding, now time.Time) s
 	if record.GoneSince != nil {
 		record.GoneSince = nil
 		e.Logger.Info("finding seen again", "key", f.Key)
+		// If it was about to be reported as worse, that state has only just
+		// begun again. It is kept, not cleared: the severity is critical
+		// already, so a new escalation would not be noticed anymore.
+		if record.EscalatingSince != nil {
+			record.EscalatingSince = &now
+		}
 	}
 
 	if record.State == store.StateFiring {

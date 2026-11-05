@@ -55,9 +55,10 @@ type Record struct {
 	// has not lasted ALERT_AFTER yet. Empty otherwise. While it is set, nothing
 	// new is sent about the problem.
 	EscalatingSince *time.Time
-	// GoneSince is when a firing problem was first no longer found, as long as
-	// it waits for RESOLVE_AFTER. Empty otherwise. It becomes ResolvedAt if the
-	// problem stays away, because that is when it really ended.
+	// GoneSince is when the wait for RESOLVE_AFTER of a firing problem started:
+	// the run it was first no longer found in, or the last run its state was
+	// unknown in. Empty otherwise. It becomes ResolvedAt if the problem stays
+	// away, as the earliest time known for its end.
 	GoneSince *time.Time
 }
 

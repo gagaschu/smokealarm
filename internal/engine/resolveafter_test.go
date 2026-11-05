@@ -214,3 +214,81 @@ func TestProblemBackAfterADowntimeEndedDuringTheWaitIsReported(t *testing.T) {
 	h.wantSent(2)
 	h.wantLastNew("a")
 }
+
+// The wait is about time in which the check looked and found nothing. After a
+// time without data the check has to look for the whole wait again.
+func TestUnknownStateDuringTheWaitStartsItAgain(t *testing.T) {
+	h := firingWithResolveAfter(t)
+	h.findings = nil
+	h.mustRun(30 * time.Second) // the wait starts
+
+	h.skipped = map[string]string{"fake": "no data"}
+	h.mustRun(10 * time.Minute)
+	h.skipped = nil
+	h.mustRun(30 * time.Second)
+	h.wantSent(1)
+	h.mustRun(4 * time.Minute)
+	h.wantSent(1)
+
+	h.mustRun(time.Minute)
+	h.wantLastResolved("a")
+}
+
+func TestProblemBackAfterAnUnknownStateIsStillTheSameAlarm(t *testing.T) {
+	h := firingWithResolveAfter(t)
+	h.findings = nil
+	h.mustRun(30 * time.Second)
+	h.skipped = map[string]string{"fake": "no data"}
+	h.mustRun(10 * time.Minute)
+
+	h.skipped = nil
+	h.findings = []checks.Finding{finding("a", checks.Critical)}
+	h.mustRun(30 * time.Second)
+	h.wantSent(1)
+	if got := h.record("a"); got.GoneSince != nil {
+		t.Errorf("GoneSince = %v, want none once it is back", got.GoneSince)
+	}
+}
+
+// A first message that failed stays held back while the state is unknown too.
+func TestNoFirstMessageForAProblemThatWasGoneWhenTheStateBecameUnknown(t *testing.T) {
+	h := newHarness(t)
+	h.engine.ResolveAfter = 5 * time.Minute
+	h.notifier.fail = true
+	h.findings = []checks.Finding{finding("a", checks.Critical)}
+	h.mustRun(0)
+	if err := h.run(2 * time.Minute); err == nil {
+		t.Fatal("expected the failed send to be returned")
+	}
+	h.notifier.fail = false
+	h.findings = nil
+	h.mustRun(30 * time.Second)
+	h.skipped = map[string]string{"fake": "no data"}
+	h.mustRun(10 * time.Minute)
+	h.wantSent(0)
+}
+
+// A downtime of a check whose state is unknown waits for the check. When it ends
+// after that, the problem is still waiting and resolves silently, not at once.
+func TestDowntimeThatEndedDuringAnUnknownStateStaysSilentAfterTheWait(t *testing.T) {
+	h := firingWithResolveAfter(t)
+	h.setDowntime("a", time.Minute)
+	h.findings = nil
+	h.mustRun(30 * time.Second)
+	h.skipped = map[string]string{"fake": "no data"}
+	h.mustRun(10 * time.Minute)
+	if h.downtimeRows() != 1 {
+		t.Fatalf("%d downtimes, want it to wait for the check", h.downtimeRows())
+	}
+
+	h.skipped = nil
+	h.mustRun(30 * time.Second)
+	if h.countRows("resolved") != 0 {
+		t.Error("resolved in the first run with data")
+	}
+	h.mustRun(5 * time.Minute)
+	h.wantSent(1)
+	if h.countRows("resolved") != 1 {
+		t.Errorf("%d resolved rows, want 1", h.countRows("resolved"))
+	}
+}

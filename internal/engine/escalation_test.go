@@ -117,3 +117,55 @@ func TestCriticalOnlyTargetWaitsForTheEscalationToo(t *testing.T) {
 		t.Errorf("critical-only target got %+v, want the problem once", pager.sent)
 	}
 }
+
+// The clock of an escalation is about a critical state that lasts. A problem
+// that was gone in between has only just become critical again.
+func TestEscalationWaitStartsAgainWhenTheProblemComesBack(t *testing.T) {
+	h := firingWarning(t)
+	h.engine.ResolveAfter = 5 * time.Minute
+
+	h.findings = []checks.Finding{escalating(checks.Critical)}
+	h.mustRun(0)
+	h.mustRun(30 * time.Second)
+	h.findings = nil
+	h.mustRun(30 * time.Second)
+	h.mustRun(3 * time.Minute) // well past ALERT_AFTER since it became critical
+	h.findings = []checks.Finding{escalating(checks.Critical)}
+	h.mustRun(30 * time.Second)
+	h.wantSent(1)
+
+	h.mustRun(119 * time.Second)
+	h.wantSent(1)
+	h.mustRun(time.Second)
+	h.wantSent(2)
+	h.wantLastNew(escalating(checks.Critical).Key)
+}
+
+func TestEscalationEndsWhenTheProblemComesBackAsAWarning(t *testing.T) {
+	h := firingWarning(t)
+	h.engine.ResolveAfter = 5 * time.Minute
+
+	h.findings = []checks.Finding{escalating(checks.Critical)}
+	h.mustRun(30 * time.Second)
+	h.findings = nil
+	h.mustRun(30 * time.Second)
+	h.findings = []checks.Finding{escalating(checks.Warning)}
+	h.mustRun(3 * time.Minute)
+	h.mustRun(time.Hour)
+	h.wantSent(1)
+}
+
+func TestEscalationAfterComingBackIsAtOnceWithoutAlertAfter(t *testing.T) {
+	h := newHarness(t)
+	h.engine.AlertAfter = 0
+	h.engine.ResolveAfter = 5 * time.Minute
+	h.findings = []checks.Finding{escalating(checks.Warning)}
+	h.mustRun(0)
+	h.wantSent(1)
+
+	h.findings = nil
+	h.mustRun(30 * time.Second)
+	h.findings = []checks.Finding{escalating(checks.Critical)}
+	h.mustRun(30 * time.Second)
+	h.wantSent(2)
+}

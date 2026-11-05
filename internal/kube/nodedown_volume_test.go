@@ -174,3 +174,25 @@ func TestDowntimeOfAnUnmeasuredVolumeWaitsForItsNode(t *testing.T) {
 	story.run(corev1.ConditionTrue)
 	story.want("NEW VolumeFull db", "NEW VolumeFull db")
 }
+
+// A volume that cannot be measured says nothing, as a check that cannot run. The
+// RESOLVE_AFTER wait starts again from the last run in which it could not be.
+func TestUnmeasuredVolumeStartsTheResolveAfterWaitAgain(t *testing.T) {
+	story := newVolumeStory(t)
+	story.run(corev1.ConditionTrue)
+	story.run(corev1.ConditionTrue)
+	story.want("NEW VolumeFull db")
+
+	story.engine.ResolveAfter = 5 * time.Minute
+	story.used = 10
+	story.run(corev1.ConditionTrue) // the wait starts
+	story.run(corev1.ConditionFalse)
+	story.run(corev1.ConditionFalse)
+	story.want("NEW VolumeFull db", "NEW NotReady pi-2")
+
+	story.run(corev1.ConditionTrue) // 3 minutes since it could last not be measured
+	story.want("NEW VolumeFull db", "NEW NotReady pi-2")
+
+	story.run(corev1.ConditionTrue)
+	story.want("NEW VolumeFull db", "NEW NotReady pi-2", "RESOLVED VolumeFull db")
+}
