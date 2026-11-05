@@ -103,7 +103,7 @@ Example: a target `gotify` that posts to a Gotify server.
 3. **Configuration** in `internal/config/notify.go`: read the variables (`SMOKEALARM_GOTIFY_URL`, `SMOKEALARM_GOTIFY_TOKEN`), validate them in `validateNotify` (never print a secret value), and add table cases to `notify_test.go`.
 4. **Wire it** in `newNotifiers` in `cmd/smokealarm/notifiers.go`. The engine needs no change. For routing, add a `SMOKEALARM_GOTIFY_MIN_SEVERITY` line to `minSeverityVariables` in `internal/config/routing.go`; the name `gotify` then also works in the targets annotation.
 5. **Helm chart**: plain settings in `values.yaml` and `deployment.yaml`, secrets in `smokealarm.notificationSecrets` in `_helpers.tpl` (they go into the Secret), and the new variables in `TestEverySettingBecomesAnEnvironmentVariable` and `TestNotificationSecretsAreOnlyInTheSecret` in `deploy/helm/chart_test.go`.
-6. **Document it**: a section and the variables in `README.md` (a test fails if a variable is missing), and a line in `CHANGELOG.md`.
+6. **Document it**: a section and the variables in `README.md` (a test fails if a variable is missing).
 
 ## Go for ops people
 
@@ -152,7 +152,7 @@ That is all the engine needs. The check now runs, can be disabled with `SMOKEALA
 
 **3. Test it** in `internal/checks/pods_test.go`: a table with cases for "evicted", "not evicted", and "ignored by annotation", built from hand-made `corev1.Pod` objects. Look at the existing tests in that file and copy the pattern.
 
-**4. Document it**: add a line to the checks table in `README.md` and to `CHANGELOG.md`. A test fails if a check is missing from the README, so this cannot be forgotten.
+**4. Document it**: add a line to the checks table in `README.md`. A test fails if a check is missing from the README, so this cannot be forgotten.
 
 If your check needs **data that is not in the snapshot yet** (a new kind of object), there are a few more steps:
 
