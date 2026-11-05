@@ -78,13 +78,6 @@ func (s *Server) Handler() (http.Handler, error) {
 	protected := func(handler http.HandlerFunc) http.Handler {
 		return s.Sessions.Require(handler)
 	}
-	mux.Handle("POST /logout", protected(s.logout))
-	mux.Handle("GET /{$}", protected(s.overview))
-	mux.Handle("GET /history", protected(s.history))
-	mux.Handle("GET /status", protected(s.status))
-	mux.Handle("GET /downtimes", protected(s.downtimes))
-	mux.Handle("GET /downtimes/new", protected(s.newDowntime))
-
 	// Actions change state, so they also refuse requests that a browser
 	// reports as coming from another site. SameSite=Lax alone would still let
 	// a different host of the same domain submit a form here.
@@ -92,6 +85,14 @@ func (s *Server) Handler() (http.Handler, error) {
 	action := func(handler http.HandlerFunc) http.Handler {
 		return crossOrigin.Handler(s.Sessions.Require(handler))
 	}
+	mux.Handle("POST /logout", action(s.logout))
+
+	mux.Handle("GET /{$}", protected(s.overview))
+	mux.Handle("GET /history", protected(s.history))
+	mux.Handle("GET /status", protected(s.status))
+	mux.Handle("GET /downtimes", protected(s.downtimes))
+	mux.Handle("GET /downtimes/new", protected(s.newDowntime))
+
 	mux.Handle("POST /problems/{id}/acknowledge", action(s.acknowledge))
 	mux.Handle("POST /problems/{id}/unacknowledge", action(s.unacknowledge))
 	mux.Handle("POST /downtimes", action(s.createDowntime))

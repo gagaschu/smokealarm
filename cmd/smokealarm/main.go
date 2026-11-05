@@ -253,6 +253,7 @@ func newHandler(cfg config.Config, logger *slog.Logger, cluster *kube.Cluster, d
 			TTL:          cfg.SessionTTL,
 			SecureCookie: cfg.CookieSecure,
 			Now:          time.Now,
+			Credentials:  auth.CredentialsFingerprint(cfg.AdminUser, cfg.AdminPasswordHash),
 		},
 		Limiter:  &auth.RateLimiter{Now: time.Now},
 		Status:   loop.Status,
