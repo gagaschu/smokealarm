@@ -449,6 +449,7 @@ Severity is either critical (act now) or warning (have a look soon). The status 
 | `cert-expiry` | warning / critical | A certificate expires in less than 14 days (warning) or 3 days (critical), or has expired. Only if cert-manager is installed. |
 | `argocd-health` | critical | An Argo CD Application is `Degraded` or `Missing`. Only if Argo CD is installed. |
 | `argocd-sync` | warning | An Argo CD Application is `OutOfSync`. Only if Argo CD is installed. |
+| `api-connection` | critical | smokealarm has been unable to keep its copy of the cluster up to date for 3 minutes: the API server does not answer, or a watch fails (a missing permission, a deleted CRD). See [When the API cannot be read](#when-the-api-cannot-be-read). |
 
 Notes:
 

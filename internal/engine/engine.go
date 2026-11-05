@@ -119,8 +119,11 @@ type TargetStatus struct {
 type Status struct {
 	LastRun      time.Time // zero before the first run has finished
 	LastRunError string    // empty if the last run had no errors
-	Checks       []CheckStatus
-	Targets      []TargetStatus // in the order of Engine.Notifiers
+	// APIProblem says that the data of the last run may be out of date. Nil if
+	// the connection to the API is fine.
+	APIProblem *checks.APIProblem
+	Checks     []CheckStatus
+	Targets    []TargetStatus // in the order of Engine.Notifiers
 }
 
 // Status returns a copy of the current status.
@@ -163,7 +166,7 @@ func (e *Engine) splitSkipped(snap *checks.Snapshot) ([]checks.Check, map[string
 	var runnable []checks.Check
 	skipped := map[string]string{}
 	for _, c := range e.Checks {
-		if reason, found := snap.Skipped[c.Name]; found {
+		if reason, found := skipReason(snap, c.Name); found {
 			skipped[c.Name] = reason
 			continue
 		}
@@ -182,6 +185,16 @@ func (e *Engine) splitSkipped(snap *checks.Snapshot) ([]checks.Check, map[string
 	}
 	e.previousSkipped = skipped
 	return runnable, skipped
+}
+
+// skipReason says why a check cannot run in this run. Without any fresh data no
+// check has anything to say, except the one that reports exactly that.
+func skipReason(snap *checks.Snapshot, check string) (string, bool) {
+	if snap.APIProblem != nil && snap.APIProblem.Blind && check != checks.CheckAPIConnection {
+		return "the Kubernetes API cannot be read, the data is out of date", true
+	}
+	reason, found := snap.Skipped[check]
+	return reason, found
 }
 
 // skippedNames returns the names of the skipped checks, sorted.
@@ -208,12 +221,13 @@ func (e *Engine) checksWithUnknownState(runSkipped map[string]string) []string {
 }
 
 // setRunResult remembers when the last run finished, which checks were
-// skipped, and how it went.
-func (e *Engine) setRunResult(finished time.Time, skipped map[string]string, err error) {
+// skipped, how it went, and whether its data was up to date.
+func (e *Engine) setRunResult(finished time.Time, skipped map[string]string, apiProblem *checks.APIProblem, err error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.status.LastRun = finished
 	e.runSkipped = skipped
+	e.status.APIProblem = apiProblem
 	e.status.LastRunError = ""
 	if err != nil {
 		e.status.LastRunError = err.Error()
@@ -312,7 +326,7 @@ func (e *Engine) RunOnce(ctx context.Context) error {
 
 	finished := e.Now()
 	err := errors.Join(errs...)
-	e.setRunResult(finished, skipped, err)
+	e.setRunResult(finished, skipped, snap.APIProblem, err)
 	e.Logger.Info("check run finished",
 		"findings", len(findings),
 		"checks", len(runnable),

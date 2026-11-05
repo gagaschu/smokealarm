@@ -64,7 +64,8 @@ type harness struct {
 	namespaces []*corev1.Namespace // in the snapshot, for the annotations
 	nodes      []*corev1.Node      // in the snapshot, for the node causes
 	pods       []*corev1.Pod
-	checkRuns  int // how often the fake check was executed
+	apiProblem *checks.APIProblem // in the snapshot, see apiproblem_test.go
+	checkRuns  int                // how often the fake check was executed
 	now        time.Time
 	logs       *bytes.Buffer
 }
@@ -95,7 +96,7 @@ func (h *harness) start() {
 
 	h.engine = &Engine{
 		Snapshot: func(_ context.Context, now time.Time) *checks.Snapshot {
-			return &checks.Snapshot{Now: now, Skipped: h.skipped, Namespaces: h.namespaces, Nodes: h.nodes, Pods: h.pods}
+			return &checks.Snapshot{Now: now, Skipped: h.skipped, Namespaces: h.namespaces, Nodes: h.nodes, Pods: h.pods, APIProblem: h.apiProblem}
 		},
 		Checks: []checks.Check{{
 			Name: "fake",

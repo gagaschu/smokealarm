@@ -86,6 +86,7 @@ func run() error {
 	cluster, err := kube.New(clients.Kube, clients.Dynamic, kube.Options{
 		Features:    features,
 		VolumeStats: hasCheck(activeChecks, checks.PVCUsageCheck),
+		APIProbe:    kube.APIProbe(clients.Kube),
 	}, logger)
 	if err != nil {
 		return fmt.Errorf("create cluster: %w", err)

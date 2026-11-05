@@ -48,6 +48,7 @@ const (
 	KindPVC         = "PersistentVolumeClaim"
 	KindCertificate = "Certificate"
 	KindApplication = "Application"
+	KindAPIServer   = "APIServer" // the cluster's API, not an object with annotations
 )
 
 // Label is "Pod media/jellyfin", or "Node pi-1" for cluster-scoped objects.
@@ -120,6 +121,22 @@ type Snapshot struct {
 	// could not be collected, with the reason. The engine does not run them
 	// and leaves their open problems alone: "no data" is not "all fine".
 	Skipped map[string]string
+
+	// APIProblem is set while part or all of the data above cannot be kept up
+	// to date, once that has lasted a while. Nil means everything is fine.
+	APIProblem *APIProblem
+}
+
+// APIProblem says that smokealarm is losing sight of the cluster.
+type APIProblem struct {
+	Since     time.Time // when the first of the failures started
+	Resources []string  // the resources whose watches fail, sorted; may be empty if Blind
+	// Blind says that nothing is fresh anymore: the API server does not answer,
+	// or every watch fails. The engine then treats the state of the other checks
+	// as unknown. Otherwise only the alarm tells about it (a deleted CRD, a
+	// missing permission).
+	Blind bool
+	Error string // the last error, for the reader
 }
 
 // Certificate is the part of a cert-manager Certificate the checks need. The
@@ -196,6 +213,7 @@ func All() []Check {
 		{Name: checkCertExpiry, Requires: RequiresCertManager, Run: CertExpiry},
 		{Name: checkArgoCDHealth, Requires: RequiresArgoCD, Run: ArgoCDHealth},
 		{Name: checkArgoCDSync, Requires: RequiresArgoCD, Run: ArgoCDSync},
+		{Name: CheckAPIConnection, Run: APIConnection},
 	}
 }
 
