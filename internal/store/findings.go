@@ -55,6 +55,10 @@ type Record struct {
 	// has not lasted ALERT_AFTER yet. Empty otherwise. While it is set, nothing
 	// new is sent about the problem.
 	EscalatingSince *time.Time
+	// GoneSince is when a firing problem was first no longer found, as long as
+	// it waits for RESOLVE_AFTER. Empty otherwise. It becomes ResolvedAt if the
+	// problem stays away, because that is when it really ended.
+	GoneSince *time.Time
 }
 
 // Changes is a set of modifications that is written in one transaction.
@@ -80,7 +84,7 @@ type Escalation struct {
 // marker exists per target only, see targetColumns.
 const selectColumns = `id, key, check_name, severity, kind, namespace, name, reason, message,
 	state, first_seen, last_seen, firing_at, resolved_at, firing_notified_at, resolved_notified_at, acknowledged_at, targets,
-	caused_by, pending_since, NULL, escalating_since`
+	caused_by, pending_since, NULL, escalating_since, gone_since`
 
 // OpenRecords returns all problems that are pending or firing.
 func (s *Store) OpenRecords(ctx context.Context) ([]Record, error) {
@@ -163,10 +167,10 @@ func (s *Store) Apply(ctx context.Context, changes Changes) error {
 	for _, r := range changes.Update {
 		_, err := tx.ExecContext(ctx, `UPDATE findings
 			SET severity = ?, reason = ?, message = ?, targets = ?, state = ?, last_seen = ?, firing_at = ?,
-			    resolved_at = ?, firing_notified_at = ?, caused_by = ?, pending_since = ?, escalating_since = ?
+			    resolved_at = ?, firing_notified_at = ?, caused_by = ?, pending_since = ?, escalating_since = ?, gone_since = ?
 			WHERE id = ?`,
 			r.Severity, r.Reason, r.Message, joinTargets(r.Targets), r.State, unix(r.LastSeen), nullableUnix(r.FiringAt), nullableUnix(r.ResolvedAt),
-			nullableUnix(r.FiringNotifiedAt), r.CausedBy, pendingSince(r), nullableUnix(r.EscalatingSince), r.ID)
+			nullableUnix(r.FiringNotifiedAt), r.CausedBy, pendingSince(r), nullableUnix(r.EscalatingSince), nullableUnix(r.GoneSince), r.ID)
 		if err != nil {
 			return fmt.Errorf("update finding %s: %w", r.Key, err)
 		}
@@ -281,13 +285,13 @@ func (s *Store) query(ctx context.Context, statement string, args ...any) ([]Rec
 func scanRecord(rows *sql.Rows) (Record, error) {
 	var r Record
 	var firstSeen, lastSeen int64
-	var firingAt, resolvedAt, firingNotifiedAt, resolvedNotifiedAt, acknowledgedAt, pendingSinceAt, startHeardAt, escalatingSince sql.NullInt64
+	var firingAt, resolvedAt, firingNotifiedAt, resolvedNotifiedAt, acknowledgedAt, pendingSinceAt, startHeardAt, escalatingSince, goneSince sql.NullInt64
 	var targets string
 
 	err := rows.Scan(&r.ID, &r.Key, &r.Check, &r.Severity, &r.Object.Kind, &r.Object.Namespace, &r.Object.Name,
 		&r.Reason, &r.Message, &r.State, &firstSeen, &lastSeen,
 		&firingAt, &resolvedAt, &firingNotifiedAt, &resolvedNotifiedAt, &acknowledgedAt, &targets,
-		&r.CausedBy, &pendingSinceAt, &startHeardAt, &escalatingSince)
+		&r.CausedBy, &pendingSinceAt, &startHeardAt, &escalatingSince, &goneSince)
 	if err != nil {
 		return Record{}, fmt.Errorf("scan finding: %w", err)
 	}
@@ -300,6 +304,7 @@ func scanRecord(rows *sql.Rows) (Record, error) {
 	r.ResolvedNotifiedAt = fromNullable(resolvedNotifiedAt)
 	r.AcknowledgedAt = fromNullable(acknowledgedAt)
 	r.EscalatingSince = fromNullable(escalatingSince)
+	r.GoneSince = fromNullable(goneSince)
 	r.Targets = checks.ParseTargets(targets)
 	r.PendingSince = r.FirstSeen
 	if pendingSinceAt.Valid {

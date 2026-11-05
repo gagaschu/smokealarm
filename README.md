@@ -384,6 +384,7 @@ All configuration is done through environment variables starting with `SMOKEALAR
 | `SMOKEALARM_ADMIN_PASSWORD_HASH` | – (required) | bcrypt hash of the admin password. Create it with `smokealarm hash-password`. |
 | `SMOKEALARM_CHECK_INTERVAL` | `30s` | How often the checks run. |
 | `SMOKEALARM_ALERT_AFTER` | `2m` | How long a problem must last before it is reported. `0s` reports at once. |
+| `SMOKEALARM_RESOLVE_AFTER` | `5m` | How long a reported problem must be gone before it counts as resolved and that is reported. `0s` resolves it at once. |
 | `SMOKEALARM_CRITICAL_REPEAT_INTERVAL` | `0s` | How often a critical problem that is still open is reported again, for example `4h`. `0s` means never. Otherwise it must be at least `SMOKEALARM_CHECK_INTERVAL`. Critical problems that have been open for longer are reported on the next run after you turn this on. |
 | `SMOKEALARM_RETENTION` | `30d` | How long resolved problems are kept in the history. |
 | `SMOKEALARM_DB_PATH` | `smokealarm.db` | The SQLite database file. The container image uses `/data/smokealarm.db`. |

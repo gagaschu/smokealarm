@@ -72,6 +72,8 @@ type problemView struct {
 	Age            string // how long ago
 	CanAcknowledge bool   // critical and not acknowledged yet
 	AcknowledgedAt string // exact time, empty if not acknowledged
+	GoneSince      string // exact time, empty unless it is waiting for RESOLVE_AFTER
+	GoneAge        string
 	DowntimeUntil  string // end of the running downtime, empty if there is none
 	NotifiesOnly   string // "slack, mail" if not every target hears about it
 	NotifiesNobody bool   // no target hears about it (a warning for critical-only targets)
@@ -298,6 +300,10 @@ func newProblemView(rec store.Record, now time.Time) problemView {
 	}
 	if rec.AcknowledgedAt != nil {
 		view.AcknowledgedAt = rec.AcknowledgedAt.UTC().Format(timeFormat)
+	}
+	if rec.GoneSince != nil {
+		view.GoneSince = rec.GoneSince.UTC().Format(timeFormat)
+		view.GoneAge = formatAge(now.Sub(*rec.GoneSince))
 	}
 	return view
 }

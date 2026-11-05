@@ -324,6 +324,29 @@ func TestOverviewWaitingForFirstRun(t *testing.T) {
 	}
 }
 
+func TestOverviewSaysWhenAProblemIsNotSeenAnymore(t *testing.T) {
+	e := newTestEnv(t)
+	e.status.LastRun = testNow
+	rec := problem("crashing", "media", checks.Critical, store.StateFiring, testNow.Add(-time.Hour), "back-off")
+	e.insert(rec)
+	records, err := e.store.OpenRecords(context.Background())
+	if err != nil || len(records) != 1 {
+		t.Fatalf("OpenRecords = %v, %v", records, err)
+	}
+	gone := testNow.Add(-3 * time.Minute)
+	records[0].GoneSince = &gone
+	if err := e.store.Apply(context.Background(), store.Changes{Update: records}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	body := e.do(http.MethodGet, "/", nil, e.login()).Body.String()
+	for _, want := range []string{"crashing", "Not seen since", "3m ago", "2026-11-03 11:57:00 UTC"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body does not contain %q:\n%s", want, body)
+		}
+	}
+}
+
 func TestOverviewAllGood(t *testing.T) {
 	e := newTestEnv(t)
 	e.status.LastRun = testNow.Add(-5 * time.Minute)

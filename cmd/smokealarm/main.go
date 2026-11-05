@@ -237,6 +237,7 @@ func newEngine(cfg config.Config, logger *slog.Logger, cluster *kube.Cluster, db
 		},
 		Interval:               cfg.CheckInterval,
 		AlertAfter:             cfg.AlertAfter,
+		ResolveAfter:           cfg.ResolveAfter,
 		CriticalRepeatInterval: cfg.CriticalRepeatInterval,
 		Retention:              cfg.Retention,
 		SkippedChecks:          skipped,

@@ -3,8 +3,9 @@
 // clean up old data.
 //
 // A problem has a life cycle: it starts as pending, becomes firing once it has
-// lasted AlertAfter, and ends as resolved. Problems that vanish while still
-// pending are dropped silently, so short flaps never reach anybody.
+// lasted AlertAfter, and ends as resolved once it has been gone for
+// ResolveAfter. Problems that vanish while still pending are dropped silently,
+// so short flaps never reach anybody.
 package engine
 
 import (
@@ -34,6 +35,9 @@ type Engine struct {
 
 	// AlertAfter is how long a problem must last before it is reported.
 	AlertAfter time.Duration
+	// ResolveAfter is how long a firing problem must be gone before it counts as
+	// resolved. Zero resolves it in the first run without it.
+	ResolveAfter time.Duration
 	// CriticalRepeatInterval is how often a critical problem that is still
 	// open is reported again. Zero means never.
 	CriticalRepeatInterval time.Duration
@@ -381,12 +385,29 @@ func (e *Engine) reconcile(open []store.Record, findings []checks.Finding, skipp
 			changes.Delete = append(changes.Delete, record.ID)
 			continue
 		}
-		record.State = store.StateResolved
-		record.ResolvedAt = &now
-		e.Logger.Info("finding resolved", "key", record.Key)
-		changes.Update = append(changes.Update, record)
+		changes.Update = append(changes.Update, e.resolveOrWait(record, now))
 	}
 	return changes
+}
+
+// resolveOrWait handles a firing problem that was not found in this run. It
+// counts as resolved only once it has been gone for ResolveAfter, from the run
+// in which it was first gone: a crash loop is gone between two back-offs and
+// comes back, and that must not send a pair of messages every time.
+func (e *Engine) resolveOrWait(record store.Record, now time.Time) store.Record {
+	if record.GoneSince == nil {
+		record.GoneSince = &now
+		e.Logger.Info("finding no longer seen", "key", record.Key)
+	}
+	if now.Sub(*record.GoneSince) < e.ResolveAfter {
+		return record
+	}
+	record.State = store.StateResolved
+	record.ResolvedAt = record.GoneSince
+	record.GoneSince = nil
+	record.EscalatingSince = nil
+	e.Logger.Info("finding resolved", "key", record.Key)
+	return record
 }
 
 // newRecord creates the record for a problem seen for the first time. With
@@ -415,6 +436,10 @@ func (e *Engine) refresh(record store.Record, f checks.Finding, now time.Time) s
 	record.Message = f.Message
 	record.Targets = f.Targets // a changed annotation counts from now on
 	record.LastSeen = now
+	if record.GoneSince != nil {
+		record.GoneSince = nil
+		e.Logger.Info("finding seen again", "key", f.Key)
+	}
 
 	if record.State == store.StateFiring {
 		record = e.trackEscalation(record, worse, now)
@@ -615,6 +640,9 @@ func (e *Engine) buildReport(records, due []store.Record, silenced map[string]bo
 		case firing && rec.EscalatingSince != nil:
 			// It just got worse. Whoever has not heard about it yet, like a
 			// target for critical problems only, hears when that has lasted.
+		case firing && rec.GoneSince != nil:
+			// It is gone at the moment, so "new" would claim something that is
+			// not true. It is reported if it comes back.
 		case silenced[rec.Key]:
 			// It went away during the downtime, so nothing is sent, not even
 			// after it ends. The downtime also wins over an acknowledgement.
@@ -684,8 +712,9 @@ func (e *Engine) addAffected(n notify.Notification, held map[string][]store.Reco
 // is at least one repeat interval old. Problems of checks whose state is unknown are left
 // out, because a reminder would claim they still exist; they are reminded of
 // as soon as the check runs again. Problems in a downtime are left out too, and
-// so are problems no longer meant for the target (the annotation changed), and
-// problems that just became critical: nobody has heard about that yet.
+// so are problems no longer meant for the target (the annotation changed),
+// problems that just became critical (nobody has heard about that yet), and
+// problems that are gone at the moment.
 func (e *Engine) dueReminders(ctx context.Context, target notify.Notifier, unknown []string,
 	silenced map[string]bool, now time.Time) ([]store.Record, error) {
 	if e.CriticalRepeatInterval <= 0 {
@@ -696,7 +725,7 @@ func (e *Engine) dueReminders(ctx context.Context, target notify.Notifier, unkno
 		return nil, err
 	}
 	return slices.DeleteFunc(records, func(r store.Record) bool {
-		return slices.Contains(unknown, r.Check) || silenced[r.Key] || r.EscalatingSince != nil || !e.routedTo(target, r)
+		return slices.Contains(unknown, r.Check) || silenced[r.Key] || r.EscalatingSince != nil || r.GoneSince != nil || !e.routedTo(target, r)
 	}), nil
 }
 

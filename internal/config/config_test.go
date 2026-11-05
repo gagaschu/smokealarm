@@ -37,6 +37,7 @@ func TestLoadDefaults(t *testing.T) {
 	want := Config{
 		CheckInterval:    30 * time.Second,
 		AlertAfter:       2 * time.Minute,
+		ResolveAfter:     5 * time.Minute,
 		Retention:        30 * 24 * time.Hour,
 		DBPath:           "smokealarm.db",
 		ListenAddr:       ":8080",
@@ -141,6 +142,7 @@ func TestLoadRejectsBadAlertAndRetention(t *testing.T) {
 		want string
 	}{
 		{"negative alert after", map[string]string{"SMOKEALARM_ALERT_AFTER": "-1m"}, "SMOKEALARM_ALERT_AFTER"},
+		{"negative resolve after", map[string]string{"SMOKEALARM_RESOLVE_AFTER": "-1m"}, "SMOKEALARM_RESOLVE_AFTER"},
 		{"negative repeat interval", map[string]string{"SMOKEALARM_CRITICAL_REPEAT_INTERVAL": "-1h"}, "SMOKEALARM_CRITICAL_REPEAT_INTERVAL"},
 		{"repeat interval below check interval", map[string]string{"SMOKEALARM_CRITICAL_REPEAT_INTERVAL": "10s"}, "SMOKEALARM_CRITICAL_REPEAT_INTERVAL"},
 		{"zero retention", map[string]string{"SMOKEALARM_RETENTION": "0s"}, "SMOKEALARM_RETENTION"},

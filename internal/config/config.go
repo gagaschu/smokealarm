@@ -14,6 +14,7 @@ import (
 type Config struct {
 	CheckInterval time.Duration
 	AlertAfter    time.Duration // how long a problem must persist before it fires
+	ResolveAfter  time.Duration // how long a firing problem must be gone before it is resolved
 	// CriticalRepeatInterval is how often a critical problem that is still
 	// open is reported again. Zero means never.
 	CriticalRepeatInterval time.Duration
@@ -53,6 +54,7 @@ func Load(getenv func(string) string) (Config, error) {
 	cfg := Config{
 		CheckInterval:          r.duration("SMOKEALARM_CHECK_INTERVAL", 30*time.Second),
 		AlertAfter:             r.duration("SMOKEALARM_ALERT_AFTER", 2*time.Minute),
+		ResolveAfter:           r.duration("SMOKEALARM_RESOLVE_AFTER", 5*time.Minute),
 		CriticalRepeatInterval: r.duration("SMOKEALARM_CRITICAL_REPEAT_INTERVAL", 0),
 		Retention:              r.duration("SMOKEALARM_RETENTION", 30*24*time.Hour),
 		DBPath:                 r.text("SMOKEALARM_DB_PATH", "smokealarm.db"),
@@ -81,6 +83,9 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	if cfg.AlertAfter < 0 {
 		r.fail("SMOKEALARM_ALERT_AFTER: must not be negative")
+	}
+	if cfg.ResolveAfter < 0 {
+		r.fail("SMOKEALARM_RESOLVE_AFTER: must not be negative")
 	}
 	// Shorter than a check run would mean a mail per run, which is almost
 	// certainly a typo (30s instead of 30m).

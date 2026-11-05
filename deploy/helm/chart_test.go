@@ -776,6 +776,7 @@ const everySetting = `auth:
 config:
   checkInterval: 45s
   alertAfter: 5m
+  resolveAfter: 10m
   criticalRepeatInterval: 4h
   retention: 14d
   logLevel: debug
@@ -833,6 +834,7 @@ func TestEverySettingBecomesAnEnvironmentVariable(t *testing.T) {
 		"SMOKEALARM_ADMIN_PASSWORD_HASH":      baseHash,
 		"SMOKEALARM_CHECK_INTERVAL":           "45s",
 		"SMOKEALARM_ALERT_AFTER":              "5m",
+		"SMOKEALARM_RESOLVE_AFTER":            "10m",
 		"SMOKEALARM_CRITICAL_REPEAT_INTERVAL": "4h",
 		"SMOKEALARM_RETENTION":                "14d",
 		"SMOKEALARM_LOG_LEVEL":                "debug",
