@@ -924,6 +924,7 @@ config:
   pvcPendingAfter: 8m
   cronjobGrace: 9m
   cronjobTimeZone: Europe/Berlin
+  timeZone: Europe/Zurich
 disabledChecks: [pod-restarts]
 kubelet:
   caConfigMap: kubelet-ca
@@ -996,6 +997,7 @@ func TestEverySettingBecomesAnEnvironmentVariable(t *testing.T) {
 		"SMOKEALARM_PVC_PENDING_AFTER":        "8m",
 		"SMOKEALARM_CRONJOB_GRACE":            "9m",
 		"SMOKEALARM_CRONJOB_TIME_ZONE":        "Europe/Berlin",
+		"SMOKEALARM_TIME_ZONE":                "Europe/Zurich",
 		"SMOKEALARM_DISABLED_CHECKS":          "pod-restarts",
 		"SMOKEALARM_KUBELET_CA_FILE":          "/etc/smokealarm/kubelet-ca/ca.crt",
 		"SMOKEALARM_TEMPLATE_DIR":             "/etc/smokealarm/templates",
