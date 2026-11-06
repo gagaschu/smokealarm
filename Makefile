@@ -74,6 +74,8 @@ image-local: ## Build the image for this machine and load it into Docker
 	docker buildx build --load --build-arg GO_VERSION=$(GO_VERSION) -t $(IMAGE):$(TAG) .
 
 # A made-up hash: lint and template do not check it, they only need a value.
+# The OIDC example also gets a made-up client secret, which it keeps out of the
+# file on purpose.
 CHART_HASH := --set-string auth.passwordHash='$$2a$$10$$example'
 CHART      := deploy/helm/smokealarm
 
@@ -83,6 +85,7 @@ chart: ## Lint and render the Helm chart with the defaults and with each file in
 	helm template smokealarm $(CHART) $(CHART_HASH) > /dev/null
 	@for file in deploy/helm/examples/*.yaml; do \
 	  echo "== $$file"; \
-	  helm lint $(CHART) $(CHART_HASH) -f $$file || exit 1; \
-	  helm template smokealarm $(CHART) $(CHART_HASH) -f $$file > /dev/null || exit 1; \
+	  extra=; case $$file in *oidc*) extra='--set-string oidc.clientSecret=example';; esac; \
+	  helm lint $(CHART) $(CHART_HASH) $$extra -f $$file || exit 1; \
+	  helm template smokealarm $(CHART) $(CHART_HASH) $$extra -f $$file > /dev/null || exit 1; \
 	done
