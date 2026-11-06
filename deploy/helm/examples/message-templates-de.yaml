@@ -4,7 +4,7 @@
 # get their own text. A file named after a target replaces the general one for
 # that target only, e.g. slack.chat.tmpl or ntfy.subject.tmpl.
 #
-#   helm install smokealarm ./deploy/helm/smokealarm -n smokealarm --create-namespace \
+#   helm install smokealarm oci://ghcr.io/gagaschu/charts/smokealarm -n smokealarm --create-namespace \
 #     -f deploy/helm/examples/message-templates-de.yaml \
 #     --set-string auth.passwordHash="$HASH"
 #

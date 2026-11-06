@@ -1,6 +1,6 @@
 # Send mail on state changes. Mail is switched on by setting smtp.host.
 #
-#   helm install smokealarm ./deploy/helm/smokealarm -n smokealarm --create-namespace \
+#   helm install smokealarm oci://ghcr.io/gagaschu/charts/smokealarm -n smokealarm --create-namespace \
 #     -f deploy/helm/examples/mail.yaml --set-string auth.passwordHash="$HASH"
 #
 # If the mail server needs a login, also set smtp.username and pass the password

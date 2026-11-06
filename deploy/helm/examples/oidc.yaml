@@ -5,7 +5,7 @@
 #
 # Keep the client secret out of the file and out of your shell history:
 #
-#   helm install smokealarm ./deploy/helm/smokealarm -n smokealarm \
+#   helm install smokealarm oci://ghcr.io/gagaschu/charts/smokealarm -n smokealarm \
 #     -f deploy/helm/examples/oidc.yaml \
 #     --set-string oidc.clientSecret="$CLIENT_SECRET" \
 #     --set-string auth.passwordHash="$HASH"
