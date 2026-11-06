@@ -29,6 +29,7 @@ type Config struct {
 
 	SMTP   SMTPConfig
 	Notify NotifyConfig // the other notification targets
+	OIDC   OIDCConfig   // the OIDC login, a second way in next to the admin
 	// CriticalOnly lists the kinds of targets ("mail", "ntfy", ...) that hear
 	// only about critical problems (SMOKEALARM_<TARGET>_MIN_SEVERITY).
 	CriticalOnly []string
@@ -73,6 +74,7 @@ func Load(getenv func(string) string) (Config, error) {
 		BaseURL:                r.text("SMOKEALARM_BASE_URL", ""),
 		SMTP:                   loadSMTP(&r),
 		Notify:                 loadNotify(&r),
+		OIDC:                   loadOIDC(&r),
 
 		AdminUser:         r.required("SMOKEALARM_ADMIN_USER"),
 		AdminPasswordHash: r.required("SMOKEALARM_ADMIN_PASSWORD_HASH"),
@@ -125,6 +127,7 @@ func Load(getenv func(string) string) (Config, error) {
 	validateBaseURL(&r, cfg.BaseURL)
 	validateSMTP(&r, cfg.SMTP)
 	validateNotify(&r, cfg.Notify)
+	validateOIDC(&r, cfg.OIDC, cfg.BaseURL)
 	cfg.CriticalOnly = loadCriticalOnly(&r, cfg)
 	if cfg.RestartThreshold < 0 {
 		r.fail("SMOKEALARM_RESTART_THRESHOLD: must not be negative")

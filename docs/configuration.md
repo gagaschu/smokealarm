@@ -21,6 +21,22 @@ smokealarm is configured through environment variables that start with `SMOKEALA
 | `SMOKEALARM_SESSION_TTL` | `7d` | How long a login stays valid. |
 | `SMOKEALARM_COOKIE_SECURE` | `true` | Send the login cookie only over HTTPS. Set `false` only for local development over plain HTTP. |
 
+## OIDC login
+
+An optional second way to log in next to the admin password. It is on when `SMOKEALARM_OIDC_ISSUER_URL` is set, and then needs the client ID and secret, an allowlist and `SMOKEALARM_BASE_URL`. Any other `SMOKEALARM_OIDC_*` variable without the issuer URL stops the start, so a typo cannot switch it off unnoticed.
+
+| Variable | Default | Description |
+|---|---|---|
+| `SMOKEALARM_OIDC_ISSUER_URL` | – | Issuer URL of the identity provider. Switches the OIDC login on. Must be `https` (plain `http` only for localhost). |
+| `SMOKEALARM_OIDC_CLIENT_ID` | – (required with OIDC) | Client ID of the client you created at the provider. |
+| `SMOKEALARM_OIDC_CLIENT_SECRET` | – (required with OIDC) | Client secret. A secret: the Helm chart keeps it in the Secret only. |
+| `SMOKEALARM_OIDC_NAME` | `OIDC` | Name shown in the login button, for example `MeineID` for "Login with MeineID". At most 40 characters, no control characters. |
+| `SMOKEALARM_OIDC_SCOPES` | `openid email` | Scopes to ask for, separated by spaces or commas. Must contain `openid`. Some providers need an extra scope to put the groups into the ID token. |
+| `SMOKEALARM_OIDC_GROUPS_CLAIM` | `groups` | The claim of the ID token that holds the groups of the user. |
+| `SMOKEALARM_OIDC_ALLOWED_EMAILS` | – | Comma-separated email addresses that may log in. An address counts only if the provider says it is verified. Compared without regard to case. |
+| `SMOKEALARM_OIDC_ALLOWED_GROUPS` | – | Comma-separated groups that may log in. Compared exactly as written. At least one of the two lists is required, and one match is enough. |
+| `SMOKEALARM_OIDC_CA_FILE` | – | A CA file for a provider whose certificate comes from an internal CA. Empty means the system's trusted CAs. |
+
 ## Checks
 
 | Variable | Default | Description |
