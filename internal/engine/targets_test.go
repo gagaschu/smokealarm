@@ -300,3 +300,60 @@ func TestStatusForgetsTheErrorDespiteAProblemForOtherTargets(t *testing.T) {
 	h.mustRun(time.Minute) // "a" ends unheard; "b" is not for this target
 	h.wantTargetError(false)
 }
+
+// failedReminder brings "a" to the point where it was reported, but its
+// reminder failed.
+func failedReminder(t *testing.T) *harness {
+	t.Helper()
+	h := newHarness(t)
+	h.engine.CriticalRepeatInterval = time.Hour
+	h.engine.ResolveAfter = 5 * time.Minute
+	h.findings = []checks.Finding{finding("a", checks.Critical)}
+	h.mustRun(0)
+	h.mustRun(2 * time.Minute)
+	h.notifier.fail = true
+	_ = h.run(time.Hour)
+	h.wantTargetError(true)
+	return h
+}
+
+// PR #27 review finding 1: a reminder that failed and is then held back is
+// still owed: the alarm comes again after the downtime, or its end follows.
+func TestStatusKeepsTheErrorOfAReminderHeldBackByADowntime(t *testing.T) {
+	h := failedReminder(t)
+	h.setDowntime("a", time.Hour)
+	h.mustRun(time.Minute)
+	h.wantTargetError(true)
+}
+
+func TestStatusKeepsTheErrorOfAReminderWhileTheProblemWaitsForResolveAfter(t *testing.T) {
+	h := failedReminder(t)
+	h.findings = nil
+	h.mustRun(time.Minute)
+	h.wantTargetError(true)
+}
+
+// PR #27 review finding 6: a first message that failed and then waits for an
+// escalation is still owed.
+func TestStatusKeepsTheErrorWhileAnEscalationWaits(t *testing.T) {
+	h := newHarness(t)
+	h.findings = []checks.Finding{escalating(checks.Warning)}
+	h.mustRun(0)
+	h.notifier.fail = true
+	_ = h.run(2 * time.Minute) // the warning fires, but its first message fails
+	h.findings = []checks.Finding{escalating(checks.Critical)}
+	h.mustRun(time.Minute) // critical now, waiting for ALERT_AFTER
+	h.wantTargetError(true)
+}
+
+// Once somebody acknowledged the problem, its first message is not owed anymore.
+func TestStatusForgetsTheErrorOnceTheProblemIsAcknowledged(t *testing.T) {
+	h := newHarness(t)
+	h.findings = []checks.Finding{finding("a", checks.Critical)}
+	h.mustRun(0)
+	h.notifier.fail = true
+	_ = h.run(2 * time.Minute)
+	h.acknowledge("a")
+	h.mustRun(time.Minute)
+	h.wantTargetError(false)
+}

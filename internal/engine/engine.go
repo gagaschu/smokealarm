@@ -77,6 +77,9 @@ type Engine struct {
 	// previousSkipped is what was skipped in the last run, to log only when
 	// that changes. Only RunOnce touches it.
 	previousSkipped map[string]string
+	// failedIDs are, by target, the problems whose last message failed and is
+	// still owed. Only RunOnce touches it.
+	failedIDs map[string]map[int64]bool
 	// loggedAnnotationWarnings are the annotation warnings logged so far, so
 	// each is logged once while the process runs. They name the annotation,
 	// its value and the object that carries it; maxAnnotationWarnings bounds

@@ -25,10 +25,9 @@ func (e *Engine) notify(ctx context.Context, unknown []string, now time.Time) er
 	if err != nil {
 		return fmt.Errorf("load open findings: %w", err)
 	}
-	held := HeldBack(open)
 	var errs []error
 	for _, target := range e.Notifiers {
-		if err := e.notifyTarget(ctx, target, unknown, silenced, held, now); err != nil {
+		if err := e.notifyTarget(ctx, target, unknown, silenced, open, now); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -43,7 +42,7 @@ func (e *Engine) notify(ctx context.Context, unknown []string, now time.Time) er
 // acknowledged problem only the end is reported; the store leaves out the rest.
 // A problem in a downtime sends nothing at all.
 func (e *Engine) notifyTarget(ctx context.Context, target notify.Notifier, unknown []string,
-	silenced map[string]bool, held map[string][]store.Record, now time.Time) error {
+	silenced map[string]bool, open []store.Record, now time.Time) error {
 	name := target.Name()
 	records, err := e.Store.Unnotified(ctx, name)
 	if err != nil {
@@ -55,23 +54,23 @@ func (e *Engine) notifyTarget(ctx context.Context, target notify.Notifier, unkno
 	}
 
 	r := e.buildReport(records, due, silenced, target)
-	e.addAffected(&r.notification, held, target)
+	e.addAffected(&r.notification, HeldBack(open), target)
 	n := r.notification
 	if err := e.Store.MarkResolvedNotified(ctx, name, r.silentIDs, now); err != nil {
 		return fmt.Errorf("mark silently resolved findings for %s: %w", name, err)
 	}
 	if len(n.New) == 0 && len(n.Reminders) == 0 && len(n.Resolved) == 0 {
-		if !r.postponed {
-			e.clearNotifyError(name)
-		}
+		e.settleFailed(name, open, records, r.silentIDs)
 		return nil
 	}
 
 	err = target.Send(ctx, n)
 	e.setNotifyResult(name, err, now)
 	if err != nil {
+		e.rememberFailed(name, r.firingIDs, r.resolvedIDs)
 		return fmt.Errorf("send notification via %s: %w", target.Description(), err)
 	}
+	delete(e.failedIDs, name)
 	e.Logger.Info("notification sent", "target", target.Description(),
 		"new", len(n.New), "reminders", len(n.Reminders), "resolved", len(n.Resolved))
 
@@ -93,10 +92,6 @@ type report struct {
 	firingIDs    []int64 // reported as new or as a reminder, once sending worked
 	resolvedIDs  []int64 // reported as resolved, once sending worked
 	silentIDs    []int64 // over without a mail
-	// postponed says that a message for this target is held back for now (a
-	// downtime, RESOLVE_AFTER, an escalation that waits). It is still owed,
-	// so an old sending error is not forgotten.
-	postponed bool
 }
 
 // buildReport sorts the unreported records and the due reminders for one
@@ -109,9 +104,6 @@ func (e *Engine) buildReport(records, due []store.Record, silenced map[string]bo
 	n := &r.notification
 	for _, rec := range records {
 		firing := rec.State == store.StateFiring
-		if firing && (silenced[rec.Key] || rec.EscalatingSince != nil || rec.GoneSince != nil) && e.routedTo(target, rec) {
-			r.postponed = true
-		}
 		switch {
 		case silenced[rec.Key] && firing:
 			// Not marked as reported: the mail goes out when the downtime ends.
@@ -217,4 +209,63 @@ func sortAlerts(alerts []notify.Alert) {
 		}
 		return a.Key < b.Key
 	})
+}
+
+// rememberFailed notes the problems whose message to the target just failed,
+// so its error can be cleared once none of them is owed anymore.
+func (e *Engine) rememberFailed(target string, idLists ...[]int64) {
+	if e.failedIDs == nil {
+		e.failedIDs = map[string]map[int64]bool{}
+	}
+	if e.failedIDs[target] == nil {
+		e.failedIDs[target] = map[int64]bool{}
+	}
+	for _, ids := range idLists {
+		for _, id := range ids {
+			e.failedIDs[target][id] = true
+		}
+	}
+}
+
+// settleFailed runs when the target has nothing to send in this run. It
+// forgets the failed messages that are no longer owed, and the error of the
+// target once none is left: what failed is over or acknowledged. A firing
+// problem stays owed until then, because its message is only held back (a
+// downtime, RESOLVE_AFTER, an escalation that waits, a check whose state is
+// unknown) and comes later. A resolved problem stays owed until its end is
+// reported, or it is over without a message (silent). The decision rests on
+// what failed, not on the shape of this run's report, so a new rule that
+// holds messages back needs no change here.
+func (e *Engine) settleFailed(target string, open, unnotified []store.Record, silentIDs []int64) {
+	for id := range e.failedIDs[target] {
+		if !stillOwed(id, open, unnotified, silentIDs) {
+			delete(e.failedIDs[target], id)
+		}
+	}
+	if len(e.failedIDs[target]) > 0 {
+		return
+	}
+	delete(e.failedIDs, target)
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if status, found := e.targets[target]; found {
+		status.LastError = ""
+		status.LastErrorAt = time.Time{}
+		e.targets[target] = status
+	}
+}
+
+// stillOwed says whether the target still has to hear about this problem.
+func stillOwed(id int64, open, unnotified []store.Record, silentIDs []int64) bool {
+	for _, r := range open {
+		if r.ID == id {
+			return r.State == store.StateFiring && r.AcknowledgedAt == nil
+		}
+	}
+	for _, r := range unnotified {
+		if r.ID == id {
+			return r.State == store.StateResolved && !slices.Contains(silentIDs, id)
+		}
+	}
+	return false
 }
