@@ -37,8 +37,8 @@ A check is a plain function: *snapshot in, findings out*. It never talks to the 
 | `internal/config` | Reads and checks the `SMOKEALARM_*` environment variables. A wrong value stops the start with a clear message. |
 | `internal/kube` | Talks to the Kubernetes API: clients, informers (a local, always-current copy of the objects we watch), detection of optional CRDs (installed, and may the service account read them?), kubelet volume stats, and the snapshot. |
 | `internal/checks` | **The checks**, one file per area (`pods.go`, `workloads.go`, `nodes.go`, `jobs.go`, `storage.go`, `certs.go`, `argocd.go`), the finding and snapshot types, and the ignore rules. |
-| `internal/engine` | The main loop. Runs the checks, decides what is new/firing/resolved, sends notifications, cleans up old data. |
-| `internal/store` | SQLite: findings, downtimes and login sessions. The schema lives in numbered SQL files (`migrations/`) that are applied at startup. |
+| `internal/engine` | The main loop. Runs the checks, decides what is new/firing/resolved, sends notifications, cleans up old data. One file per step: `engine.go` the run itself (`RunOnce`), `lifecycle.go` pending, firing and resolved, `notifications.go` what each target is told, `routing.go` which targets a problem is meant for, `downtimes.go` the end of a downtime, `nodedown.go` what a down node holds back, `skipped.go` the checks that cannot run, `status.go` what the status page shows. |
+| `internal/store` | SQLite: findings, what each notification target was told (`deliveries`, and the configured targets in `targets`), downtimes and login sessions. The schema lives in numbered SQL files (`migrations/`) that are applied at startup. |
 | `internal/notify` | Sends notifications. `Notifier` is an interface with one implementation per target, each in its own file: `mail.go`, `webhook.go`, `ntfy.go`, `telegram.go`, `slack.go`, `teams.go`, and `log.go` when nothing is configured. `message.go` has the texts (mail subject and body, the short chat text), `http.go` the shared HTTP request that keeps secrets out of errors. |
 | `internal/auth` | Password check, sessions, the login rate limit. The middleware only asks "is there a valid session?", so another login method (OIDC) can be added without touching it. |
 | `internal/web` | The pages (overview, history, downtimes, status, login) and the actions (acknowledge and remove that, downtimes), as HTML templates, one CSS file, small SVG icons and a favicon, all embedded in the binary. |
@@ -82,10 +82,20 @@ A finding has a stable **key** (check + object + a fixed word), so smokealarm ca
 ```
 
 - Each target has its own markers, so its own retries and its own reminder clock. One that fails does not stop the others.
-- The columns `firing_notified_at` and `resolved_notified_at` in `findings` are the summary: "reported to at least one target". The web UI and the escalation rule use them. Clearing a marker (escalation, end of a downtime) clears it for every target the problem is meant for now, so they hear about it again. A target that heard the start but is no longer meant for it (the annotation moved, or it is critical-only and the problem is a warning now) keeps its marker, so it still hears the end.
+- The columns `firing_notified_at` and `resolved_notified_at` in `findings` are the summary: "reported to at least one target". The escalation rule reads `firing_notified_at`; the web UI does not read them. Clearing a marker (escalation, end of a downtime) clears it for every target the problem is meant for now, so they hear about it again. A target that heard the start but is no longer meant for it (the annotation moved, or it is critical-only and the problem is a warning now) keeps its marker, so it still hears the end.
 - Routing: after the checks, `checks.ApplyAnnotations` sets the severity and the targets of each finding from the `smokealarm.gagaschu.github.io/severity` and `/targets` annotations of its object or namespace, so the checks themselves know nothing about it. The targets are stored with the problem (`findings.targets`). `routedTo` in the engine filters new problems and reminders per target; a problem not meant for a target gets no marker there, so the target hears it as new once that changes. The end goes to every target that heard the start, by its marker. A targets annotation that names no configured target counts as none, so a typo cannot silence an alarm. `Engine.Audience` applies the same rule for the web UI, which says "Notifies only: …" or "Notifies nobody" when not every target hears about a problem.
-- At startup, `store.SyncTargets` registers the configured targets. A new one starts from the current state (it copies the summary markers, so it gets no history), and one that is gone is forgotten.
+- At startup, `store.SyncTargets` registers the configured targets. A new one copies the summary's "resolved" markers, so it gets no history, and hears what is firing now (and not acknowledged) as new. Only at the first start after the upgrade to per-target markers are the "firing" markers copied too, because the old version has already sent those messages. A target that is gone is forgotten.
 - Secrets (tokens, webhook URLs, the ntfy topic) stay inside the notifier. `Name()` is a stable id for the database (`slack`, `telegram:-100123`), and `Description()` is the safe label for the log and the status page. Errors from `net/http` contain the request URL, so `http.go` takes it out before wrapping.
+
+### Where a rule lives
+
+Most rules are in the engine, in plain Go: `lifecycle.go` decides whether a problem is pending, firing or resolved, `notifications.go` what each target is told, `routing.go` which targets a problem is meant for, and `nodedown.go` what a down node holds back. Some are in the SQL of the store, for example:
+
+- While an acknowledged problem fires, `Unnotified` and `CriticalDueForReminder` leave it out; its end is still reported. `CriticalDueForReminder` also picks only critical problems whose last report is old enough.
+- `FinishDowntime` leaves a downtime alone that was extended in the meantime, does not clear the marker of an acknowledged problem, and makes the targets forget the start of a firing problem that is not found in that run, so its end stays silent. `DowntimeKeys` also counts a downtime that has ended but is not finished yet.
+- `SyncTargets` decides what a new target hears, and `Acknowledge` accepts only a firing critical problem.
+
+A new rule belongs in the engine, where it can be tested without a database; the store loads and saves.
 
 ## How do I add a new notification target?
 
@@ -99,7 +109,7 @@ Example: a target `gotify` that posts to a Gotify server.
 3. **Configuration** in `internal/config/notify.go`: read the variables (`SMOKEALARM_GOTIFY_URL`, `SMOKEALARM_GOTIFY_TOKEN`), validate them in `validateNotify` (never print a secret value), and add table cases to `notify_test.go`.
 4. **Wire it** in `newNotifiers` in `cmd/smokealarm/notifiers.go`. The engine needs no change. For routing, add a `SMOKEALARM_GOTIFY_MIN_SEVERITY` line to `minSeverityVariables` in `internal/config/routing.go`; the name `gotify` then also works in the targets annotation.
 5. **Helm chart**: plain settings in `values.yaml` and `deployment.yaml`, secrets in `smokealarm.notificationSecrets` in `_helpers.tpl` (they go into the Secret), and the new variables in `TestEverySettingBecomesAnEnvironmentVariable` and `TestNotificationSecretsAreOnlyInTheSecret` in `deploy/helm/chart_test.go`.
-6. **Document it**: a section and the variables in `README.md` (a test fails if a variable is missing), and a line in `CHANGELOG.md`.
+6. **Document it**: a section and the variables in `README.md` (a test fails if a variable is missing).
 
 ## Go for ops people
 
@@ -148,7 +158,7 @@ That is all the engine needs. The check now runs, can be disabled with `SMOKEALA
 
 **3. Test it** in `internal/checks/pods_test.go`: a table with cases for "evicted", "not evicted", and "ignored by annotation", built from hand-made `corev1.Pod` objects. Look at the existing tests in that file and copy the pattern.
 
-**4. Document it**: add a line to the checks table in `README.md` and to `CHANGELOG.md`. A test fails if a check is missing from the README, so this cannot be forgotten.
+**4. Document it**: add a line to the checks table in `README.md`. A test fails if a check is missing from the README, so this cannot be forgotten.
 
 If your check needs **data that is not in the snapshot yet** (a new kind of object), there are a few more steps:
 
