@@ -48,8 +48,8 @@ func newVolumeStory(t *testing.T) *volumeStory {
 	t.Helper()
 	story := &volumeStory{t: t, notifier: &subjectNotifier{}, used: 96,
 		now: time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)}
-	story.cluster = testCluster(t, func(_ context.Context, node string) ([]byte, error) {
-		if node != "pi-2" {
+	story.cluster = testCluster(t, func(_ context.Context, node *corev1.Node) ([]byte, error) {
+		if node.Name != "pi-2" {
 			return []byte(`{"pods":[]}`), nil
 		}
 		return fmt.Appendf(nil, `{"pods":[{"volume":[{"usedBytes":%d,"capacityBytes":100,"pvcRef":{"name":"db","namespace":"data"}}]}]}`, story.used), nil

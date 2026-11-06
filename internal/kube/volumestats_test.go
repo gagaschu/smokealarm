@@ -5,14 +5,13 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/gagaschu/smokealarm/internal/checks"
@@ -79,7 +78,7 @@ func readyNode(name string, ready corev1.ConditionStatus) *corev1.Node {
 
 func testCluster(t *testing.T, fetch statsFetcher) *Cluster {
 	t.Helper()
-	cluster, err := New(fake.NewClientset(), nil, Options{VolumeStats: true},
+	cluster, err := New(fake.NewClientset(), nil, Options{},
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -89,12 +88,12 @@ func testCluster(t *testing.T, fetch statsFetcher) *Cluster {
 }
 
 func forbidden() error {
-	return apierrors.NewForbidden(schema.GroupResource{Resource: "nodes"}, "pi-1", errors.New("denied"))
+	return &kubeletStatusError{Code: http.StatusForbidden, Excerpt: "Forbidden"}
 }
 
 func TestCollectVolumeUsageMergesNodes(t *testing.T) {
-	cluster := testCluster(t, func(_ context.Context, node string) ([]byte, error) {
-		if node == "pi-1" {
+	cluster := testCluster(t, func(_ context.Context, node *corev1.Node) ([]byte, error) {
+		if node.Name == "pi-1" {
 			return []byte(`{"pods":[{"volume":[{"usedBytes":50,"capacityBytes":100,"pvcRef":{"name":"shared","namespace":"a"}}]}]}`), nil
 		}
 		return []byte(`{"pods":[{"volume":[
@@ -114,13 +113,13 @@ func TestCollectVolumeUsageMergesNodes(t *testing.T) {
 }
 
 func TestCollectVolumeUsageForbidden(t *testing.T) {
-	cluster := testCluster(t, func(context.Context, string) ([]byte, error) { return nil, forbidden() })
+	cluster := testCluster(t, func(context.Context, *corev1.Node) ([]byte, error) { return nil, forbidden() })
 
 	usage, reason := cluster.collectVolumeUsage(context.Background(), []*corev1.Node{readyNode("pi-1", corev1.ConditionTrue)})
 	if usage != nil {
 		t.Errorf("usage = %v, want none when the stats cannot be read", usage)
 	}
-	for _, want := range []string{"nodes/proxy", "SMOKEALARM_DISABLED_CHECKS=pvc-usage"} {
+	for _, want := range []string{"HTTP 403", "nodes/stats", "webhook", "SMOKEALARM_DISABLED_CHECKS=pvc-usage"} {
 		if !strings.Contains(reason, want) {
 			t.Errorf("reason %q does not contain %q", reason, want)
 		}
@@ -128,8 +127,8 @@ func TestCollectVolumeUsageForbidden(t *testing.T) {
 }
 
 func TestCollectVolumeUsageOneNodeFailsSkipsEverything(t *testing.T) {
-	cluster := testCluster(t, func(_ context.Context, node string) ([]byte, error) {
-		if node == "pi-2" {
+	cluster := testCluster(t, func(_ context.Context, node *corev1.Node) ([]byte, error) {
+		if node.Name == "pi-2" {
 			return nil, errors.New("timeout")
 		}
 		return []byte(`{"pods":[]}`), nil
@@ -143,7 +142,7 @@ func TestCollectVolumeUsageOneNodeFailsSkipsEverything(t *testing.T) {
 }
 
 func TestCollectVolumeUsageInvalidAnswerSkips(t *testing.T) {
-	cluster := testCluster(t, func(context.Context, string) ([]byte, error) { return []byte("<html>"), nil })
+	cluster := testCluster(t, func(context.Context, *corev1.Node) ([]byte, error) { return []byte("<html>"), nil })
 	usage, reason := cluster.collectVolumeUsage(context.Background(), []*corev1.Node{readyNode("pi-1", corev1.ConditionTrue)})
 	if usage != nil || reason == "" {
 		t.Errorf("usage %v, reason %q; want a skip for unreadable stats", usage, reason)
@@ -152,8 +151,8 @@ func TestCollectVolumeUsageInvalidAnswerSkips(t *testing.T) {
 
 func TestCollectVolumeUsageIgnoresNotReadyNodes(t *testing.T) {
 	var asked []string
-	cluster := testCluster(t, func(_ context.Context, node string) ([]byte, error) {
-		asked = append(asked, node)
+	cluster := testCluster(t, func(_ context.Context, node *corev1.Node) ([]byte, error) {
+		asked = append(asked, node.Name)
 		return []byte(`{"pods":[]}`), nil
 	})
 
@@ -170,11 +169,11 @@ func TestCollectVolumeUsageIgnoresNotReadyNodes(t *testing.T) {
 
 func TestBuildSnapshotCollectsVolumeUsage(t *testing.T) {
 	client := fake.NewClientset(readyNode("pi-1", corev1.ConditionTrue))
-	cluster, err := New(client, nil, Options{VolumeStats: true}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	cluster, err := New(client, nil, Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	cluster.fetchStats = func(context.Context, string) ([]byte, error) { return []byte(summaryJSON), nil }
+	cluster.fetchStats = func(context.Context, *corev1.Node) ([]byte, error) { return []byte(summaryJSON), nil }
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -191,11 +190,11 @@ func TestBuildSnapshotCollectsVolumeUsage(t *testing.T) {
 
 func TestBuildSnapshotMarksCheckSkipped(t *testing.T) {
 	client := fake.NewClientset(readyNode("pi-1", corev1.ConditionTrue))
-	cluster, err := New(client, nil, Options{VolumeStats: true}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	cluster, err := New(client, nil, Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	cluster.fetchStats = func(context.Context, string) ([]byte, error) { return nil, forbidden() }
+	cluster.fetchStats = func(context.Context, *corev1.Node) ([]byte, error) { return nil, forbidden() }
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -205,20 +204,21 @@ func TestBuildSnapshotMarksCheckSkipped(t *testing.T) {
 	}
 
 	snap := cluster.BuildSnapshot(ctx, time.Now())
-	if reason := snap.Skipped[checks.PVCUsageCheck]; !strings.Contains(reason, "nodes/proxy") || snap.VolumeUsage != nil {
+	if reason := snap.Skipped[checks.PVCUsageCheck]; !strings.Contains(reason, "nodes/stats") || snap.VolumeUsage != nil {
 		t.Errorf("Skipped %v, VolumeUsage %v; want pvc-usage skipped with the RBAC hint", snap.Skipped, snap.VolumeUsage)
 	}
 }
 
+// Without a kubelet client (pvc-usage is off) no kubelet is asked: there is
+// nothing to ask with.
 func TestVolumeStatsOffMakesNoRequests(t *testing.T) {
 	client := fake.NewClientset(readyNode("pi-1", corev1.ConditionTrue))
-	cluster, err := New(client, nil, Options{VolumeStats: false}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	cluster, err := New(client, nil, Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	cluster.fetchStats = func(context.Context, string) ([]byte, error) {
-		t.Error("the kubelet was asked although volume stats are off")
-		return nil, nil
+	if cluster.fetchStats != nil {
+		t.Fatal("a stats fetcher exists although no kubelet client was given")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

@@ -4,37 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/url"
 	"slices"
-	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/client-go/kubernetes"
 
 	"github.com/gagaschu/smokealarm/internal/checks"
 )
 
-// statsTimeout limits how long one kubelet may take to answer.
-const statsTimeout = 10 * time.Second
-
-// statsFetcher reads the raw stats summary of one node.
-type statsFetcher func(ctx context.Context, node string) ([]byte, error)
-
-// kubeletStatsFetcher asks the API server to proxy the request to the
-// kubelet: GET /api/v1/nodes/<node>/proxy/stats/summary. This needs the RBAC
-// permission nodes/proxy, which is why the pvc-usage check can be disabled.
-func kubeletStatsFetcher(client kubernetes.Interface) statsFetcher {
-	return func(ctx context.Context, node string) ([]byte, error) {
-		path := "/api/v1/nodes/" + url.PathEscape(node) + "/proxy/stats/summary"
-		return client.CoreV1().RESTClient().Get().AbsPath(path).DoRaw(ctx)
-	}
-}
-
 // addVolumeUsage puts the volume usage into the snapshot. If the stats cannot
 // be read, the check is marked as skipped instead.
 func (c *Cluster) addVolumeUsage(ctx context.Context, snap *checks.Snapshot) {
-	if !c.volumeStats {
+	if c.fetchStats == nil {
 		return
 	}
 	usage, skipReason := c.collectVolumeUsage(ctx, snap.Nodes)
@@ -60,7 +40,7 @@ func (c *Cluster) collectVolumeUsage(ctx context.Context, nodes []*corev1.Node) 
 		if !nodeIsReady(node) {
 			continue
 		}
-		nodeUsage, err := c.nodeVolumeUsage(ctx, node.Name)
+		nodeUsage, err := c.nodeVolumeUsage(ctx, node)
 		if err != nil {
 			return nil, skipReasonFor(node.Name, err)
 		}
@@ -74,7 +54,7 @@ func (c *Cluster) collectVolumeUsage(ctx context.Context, nodes []*corev1.Node) 
 	return usage, ""
 }
 
-func (c *Cluster) nodeVolumeUsage(ctx context.Context, node string) (map[string]checks.VolumeUsage, error) {
+func (c *Cluster) nodeVolumeUsage(ctx context.Context, node *corev1.Node) (map[string]checks.VolumeUsage, error) {
 	ctx, cancel := context.WithTimeout(ctx, statsTimeout)
 	defer cancel()
 
@@ -83,15 +63,6 @@ func (c *Cluster) nodeVolumeUsage(ctx context.Context, node string) (map[string]
 		return nil, err
 	}
 	return parseVolumeUsage(data)
-}
-
-// skipReasonFor explains why the stats are unavailable. A permission problem
-// is the common case and gets a hint on how to fix it.
-func skipReasonFor(node string, err error) string {
-	if apierrors.IsForbidden(err) {
-		return "missing RBAC permission nodes/proxy: grant it, or disable the check with SMOKEALARM_DISABLED_CHECKS=pvc-usage"
-	}
-	return fmt.Sprintf("could not read the kubelet stats of node %s: %v", node, err)
 }
 
 // parseVolumeUsage extracts the usage of persistent volume claims from a

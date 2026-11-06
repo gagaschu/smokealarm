@@ -78,7 +78,10 @@ off. Without the permission they could not read their data.
 {{- range .Values.disabledChecks -}}
 {{- $list = append $list . -}}
 {{- end -}}
-{{- if not .Values.rbac.nodesProxy -}}
+{{- if hasKey .Values.rbac "nodesProxy" -}}
+{{- fail "rbac.nodesProxy was replaced by rbac.nodesStats: pvc-usage now asks the kubelets directly and needs only get on nodes/stats. Rename the value in your values file (or remove it to keep the default true). If your values file does not set it, the old default comes from helm upgrade --reuse-values: use --reset-then-reuse-values instead, which takes the new defaults and keeps your own values." -}}
+{{- end -}}
+{{- if not .Values.rbac.nodesStats -}}
 {{- $list = append $list "pvc-usage" -}}
 {{- end -}}
 {{- if not .Values.rbac.certManager -}}
@@ -118,4 +121,15 @@ SMOKEALARM_SLACK_WEBHOOK_URL: {{ .slack.webhookUrl | quote }}
 SMOKEALARM_TEAMS_WEBHOOK_URL: {{ .teams.webhookUrl | quote }}
 {{- end }}
 {{- end }}
+{{- end -}}
+
+{{/*
+The ConfigMap with the CA of the kubelet serving certificates, or empty.
+Written so that values without a kubelet block (an upgrade that reuses the
+values of an older release) do not stop the rendering.
+*/}}
+{{- define "smokealarm.kubeletCAConfigMap" -}}
+{{- with .Values.kubelet -}}
+{{- .caConfigMap -}}
+{{- end -}}
 {{- end -}}

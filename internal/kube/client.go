@@ -15,10 +15,12 @@ import (
 
 // Clients holds the two API clients we need: the typed one for built-in
 // resources and the dynamic one for custom resources (cert-manager, Argo CD),
-// whose Go types we do not want as dependencies.
+// whose Go types we do not want as dependencies. Config is what they were
+// built from; the kubelet client (NewKubeletClient) uses the same credentials.
 type Clients struct {
 	Kube    kubernetes.Interface
 	Dynamic dynamic.Interface
+	Config  *rest.Config
 }
 
 // NewClients connects to the cluster. Inside a pod it uses the service
@@ -42,5 +44,5 @@ func NewClients() (Clients, error) {
 	if err != nil {
 		return Clients{}, fmt.Errorf("create dynamic client: %w", err)
 	}
-	return Clients{Kube: kubeClient, Dynamic: dynamicClient}, nil
+	return Clients{Kube: kubeClient, Dynamic: dynamicClient, Config: cfg}, nil
 }
