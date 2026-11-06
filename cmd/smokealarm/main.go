@@ -83,10 +83,19 @@ func run() error {
 		return err
 	}
 
+	volumeStats := hasCheck(activeChecks, checks.PVCUsageCheck)
+	var kubeletClient *http.Client
+	if volumeStats {
+		kubeletClient, err = kube.NewKubeletClient(clients.Config, cfg.KubeletCAFile)
+		if err != nil {
+			return fmt.Errorf("create kubelet client: %w", err)
+		}
+	}
 	cluster, err := kube.New(clients.Kube, clients.Dynamic, kube.Options{
-		Features:    features,
-		VolumeStats: hasCheck(activeChecks, checks.PVCUsageCheck),
-		APIProbe:    kube.APIProbe(clients.Kube),
+		Features:      features,
+		VolumeStats:   volumeStats,
+		KubeletClient: kubeletClient,
+		APIProbe:      kube.APIProbe(clients.Kube),
 	}, logger)
 	if err != nil {
 		return fmt.Errorf("create cluster: %w", err)

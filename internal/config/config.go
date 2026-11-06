@@ -43,6 +43,9 @@ type Config struct {
 	PVCPendingAfter  time.Duration
 	CronJobGrace     time.Duration
 	CronJobTimeZone  string // how schedules without spec.timeZone are read; empty = UTC
+	// KubeletCAFile verifies the kubelets' serving certificates for pvc-usage
+	// instead of the CA of the API client. Empty = that CA.
+	KubeletCAFile string
 }
 
 // Load builds the configuration. The lookup function is injected (instead of
@@ -76,6 +79,7 @@ func Load(getenv func(string) string) (Config, error) {
 		PVCPendingAfter:   r.duration("SMOKEALARM_PVC_PENDING_AFTER", 5*time.Minute),
 		CronJobGrace:      r.duration("SMOKEALARM_CRONJOB_GRACE", 5*time.Minute),
 		CronJobTimeZone:   r.text("SMOKEALARM_CRONJOB_TIME_ZONE", ""),
+		KubeletCAFile:     r.text("SMOKEALARM_KUBELET_CA_FILE", ""),
 	}
 
 	if cfg.CheckInterval <= 0 {

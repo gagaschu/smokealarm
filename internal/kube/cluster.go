@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 	"time"
 
@@ -78,9 +79,12 @@ type namedInformer struct {
 // Options tells the cluster which optional parts to use.
 type Options struct {
 	Features Features
-	// VolumeStats collects the volume usage from the kubelets (needs the RBAC
-	// permission nodes/proxy). Leave it off if pvc-usage is disabled.
+	// VolumeStats collects the volume usage from the kubelets. Leave it off if
+	// pvc-usage is disabled.
 	VolumeStats bool
+	// KubeletClient calls the kubelets, see NewKubeletClient (needs the RBAC
+	// permission get on nodes/stats). Required if VolumeStats is on.
+	KubeletClient *http.Client
 	// APIProbe asks whether the API server answers, see APIProbe. Without it a
 	// stopped API server is not noticed, so only tests leave it out.
 	APIProbe func(context.Context) error
@@ -93,7 +97,6 @@ func New(client kubernetes.Interface, dynamicClient dynamic.Interface, options O
 	c := &Cluster{
 		logger:      logger,
 		volumeStats: options.VolumeStats,
-		fetchStats:  kubeletStatsFetcher(client),
 		syncTimeout: syncTimeout,
 		health:      newAPIHealth(),
 		probe:       options.APIProbe,
@@ -101,6 +104,12 @@ func New(client kubernetes.Interface, dynamicClient dynamic.Interface, options O
 		coreFactory: informers.NewSharedInformerFactory(client, resyncPeriod),
 		eventFactory: informers.NewSharedInformerFactoryWithOptions(client, resyncPeriod,
 			informers.WithTweakListOptions(onlyWarnings)),
+	}
+	if options.VolumeStats {
+		if options.KubeletClient == nil {
+			return nil, errors.New("volume stats need a kubelet client")
+		}
+		c.fetchStats = kubeletStatsFetcher(options.KubeletClient)
 	}
 	c.namespaces = c.coreFactory.Core().V1().Namespaces().Informer()
 	c.pods = c.coreFactory.Core().V1().Pods().Informer()

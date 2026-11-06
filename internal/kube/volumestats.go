@@ -2,15 +2,22 @@ package kube
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"net/url"
+	"io"
+	"net"
+	"net/http"
+	"os"
 	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 
 	"github.com/gagaschu/smokealarm/internal/checks"
 )
@@ -18,17 +25,128 @@ import (
 // statsTimeout limits how long one kubelet may take to answer.
 const statsTimeout = 10 * time.Second
 
-// statsFetcher reads the raw stats summary of one node.
-type statsFetcher func(ctx context.Context, node string) ([]byte, error)
+// defaultKubeletPort is used when a node does not say on which port its
+// kubelet listens. It is the kubelet's own default.
+const defaultKubeletPort = 10250
 
-// kubeletStatsFetcher asks the API server to proxy the request to the
-// kubelet: GET /api/v1/nodes/<node>/proxy/stats/summary. This needs the RBAC
-// permission nodes/proxy, which is why the pvc-usage check can be disabled.
-func kubeletStatsFetcher(client kubernetes.Interface) statsFetcher {
-	return func(ctx context.Context, node string) ([]byte, error) {
-		path := "/api/v1/nodes/" + url.PathEscape(node) + "/proxy/stats/summary"
-		return client.CoreV1().RESTClient().Get().AbsPath(path).DoRaw(ctx)
+// maxStatsSize limits how much of a kubelet answer is read. A summary of a
+// busy node is a few megabytes; anything far larger is not a stats summary.
+const maxStatsSize = 32 << 20
+
+// statsFetcher reads the raw stats summary of one node.
+type statsFetcher func(ctx context.Context, node *corev1.Node) ([]byte, error)
+
+// errNoInternalIP means the node does not publish an address we can call.
+var errNoInternalIP = errors.New("the node has no InternalIP address")
+
+// kubeletStatusError is an answer of the kubelet that is not 2xx.
+type kubeletStatusError struct {
+	Code    int
+	Excerpt string // the start of the answer, for the log and the status page
+}
+
+func (e *kubeletStatusError) Error() string {
+	if e.Excerpt == "" {
+		return fmt.Sprintf("kubelet answered HTTP %d", e.Code)
 	}
+	return fmt.Sprintf("kubelet answered HTTP %d: %s", e.Code, e.Excerpt)
+}
+
+// NewKubeletClient builds the HTTP client that calls the kubelets directly.
+// It uses the same credentials as the API client: in the cluster the
+// ServiceAccount token (client-go reads it again when it is rotated), locally
+// the kubeconfig. The kubelet checks the token itself and allows
+// /stats/summary with "get" on nodes/stats, which grants only resource
+// statistics. Going through the API server instead would need nodes/proxy,
+// which opens the whole kubelet API (exec, logs).
+//
+// The kubelet's certificate is always verified: against caFile if set,
+// otherwise against the CA of the API client (the ServiceAccount ca.crt).
+func NewKubeletClient(cfg *rest.Config, caFile string) (*http.Client, error) {
+	kubeletCfg := rest.CopyConfig(cfg)
+	// A kubeconfig that skips verification for the API server must not do so
+	// for the kubelets, and the API server's name is not the node's name.
+	kubeletCfg.Insecure = false
+	kubeletCfg.ServerName = ""
+	if caFile != "" {
+		pem, err := os.ReadFile(caFile)
+		if err != nil {
+			return nil, fmt.Errorf("read SMOKEALARM_KUBELET_CA_FILE: %w", err)
+		}
+		if !x509.NewCertPool().AppendCertsFromPEM(pem) {
+			return nil, fmt.Errorf("SMOKEALARM_KUBELET_CA_FILE: %s holds no PEM certificate", caFile)
+		}
+		kubeletCfg.CAFile = ""
+		kubeletCfg.CAData = pem
+	}
+	transport, err := rest.TransportFor(kubeletCfg)
+	if err != nil {
+		return nil, fmt.Errorf("create kubelet transport: %w", err)
+	}
+	return &http.Client{
+		Transport: transport,
+		// The token must not follow a redirect to another address.
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}, nil
+}
+
+// kubeletStatsFetcher asks the kubelet of a node for its stats summary:
+// GET https://<InternalIP>:<kubelet port>/stats/summary.
+func kubeletStatsFetcher(client *http.Client) statsFetcher {
+	return func(ctx context.Context, node *corev1.Node) ([]byte, error) {
+		statsURL, err := kubeletStatsURL(node)
+		if err != nil {
+			return nil, err
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, statsURL, nil)
+		if err != nil {
+			return nil, fmt.Errorf("build kubelet request: %w", err)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = resp.Body.Close() }()
+
+		data, err := io.ReadAll(io.LimitReader(resp.Body, maxStatsSize))
+		if err != nil {
+			return nil, fmt.Errorf("read kubelet answer: %w", err)
+		}
+		if resp.StatusCode < 200 || resp.StatusCode > 299 {
+			return nil, &kubeletStatusError{Code: resp.StatusCode, Excerpt: excerpt(data)}
+		}
+		return data, nil
+	}
+}
+
+// kubeletStatsURL builds the address of a node's stats summary from its
+// InternalIP and the kubelet port it publishes.
+func kubeletStatsURL(node *corev1.Node) (string, error) {
+	ip := ""
+	for _, address := range node.Status.Addresses {
+		if address.Type == corev1.NodeInternalIP {
+			ip = address.Address
+			break
+		}
+	}
+	if ip == "" {
+		return "", errNoInternalIP
+	}
+	port := int(node.Status.DaemonEndpoints.KubeletEndpoint.Port)
+	if port == 0 {
+		port = defaultKubeletPort
+	}
+	return "https://" + net.JoinHostPort(ip, strconv.Itoa(port)) + "/stats/summary", nil
+}
+
+// excerpt keeps the start of an answer on one line, short enough for the
+// status page.
+func excerpt(data []byte) string {
+	text := strings.Join(strings.Fields(string(data)), " ")
+	if len(text) > 200 {
+		text = text[:200] + "…"
+	}
+	return text
 }
 
 // addVolumeUsage puts the volume usage into the snapshot. If the stats cannot
@@ -60,7 +178,7 @@ func (c *Cluster) collectVolumeUsage(ctx context.Context, nodes []*corev1.Node) 
 		if !nodeIsReady(node) {
 			continue
 		}
-		nodeUsage, err := c.nodeVolumeUsage(ctx, node.Name)
+		nodeUsage, err := c.nodeVolumeUsage(ctx, node)
 		if err != nil {
 			return nil, skipReasonFor(node.Name, err)
 		}
@@ -74,7 +192,7 @@ func (c *Cluster) collectVolumeUsage(ctx context.Context, nodes []*corev1.Node) 
 	return usage, ""
 }
 
-func (c *Cluster) nodeVolumeUsage(ctx context.Context, node string) (map[string]checks.VolumeUsage, error) {
+func (c *Cluster) nodeVolumeUsage(ctx context.Context, node *corev1.Node) (map[string]checks.VolumeUsage, error) {
 	ctx, cancel := context.WithTimeout(ctx, statsTimeout)
 	defer cancel()
 
@@ -85,11 +203,25 @@ func (c *Cluster) nodeVolumeUsage(ctx context.Context, node string) (map[string]
 	return parseVolumeUsage(data)
 }
 
-// skipReasonFor explains why the stats are unavailable. A permission problem
-// is the common case and gets a hint on how to fix it.
+// skipReasonFor explains why the stats are unavailable, with a hint for each
+// of the usual causes: the permission, the certificate and the network.
 func skipReasonFor(node string, err error) string {
-	if apierrors.IsForbidden(err) {
-		return "missing RBAC permission nodes/proxy: grant it, or disable the check with SMOKEALARM_DISABLED_CHECKS=pvc-usage"
+	var status *kubeletStatusError
+	if errors.As(err, &status) && (status.Code == http.StatusUnauthorized || status.Code == http.StatusForbidden) {
+		return fmt.Sprintf("the kubelet of node %s refused the request (HTTP %d): smokealarm needs get on nodes/stats, "+
+			"and the kubelet must use webhook authentication and authorization; grant it, "+
+			"or disable the check with SMOKEALARM_DISABLED_CHECKS=pvc-usage", node, status.Code)
+	}
+	var certErr *tls.CertificateVerificationError
+	if errors.As(err, &certErr) {
+		return fmt.Sprintf("could not verify the TLS certificate of the kubelet on node %s: %v; "+
+			"if the kubelet serving certificates are signed by another CA, set SMOKEALARM_KUBELET_CA_FILE "+
+			"(Helm: kubelet.caConfigMap)", node, certErr.Err)
+	}
+	var netErr *net.OpError
+	if errors.As(err, &netErr) || errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Sprintf("could not reach the kubelet of node %s: %v; its port must be reachable "+
+			"from the smokealarm pod (NetworkPolicy, firewall)", node, err)
 	}
 	return fmt.Sprintf("could not read the kubelet stats of node %s: %v", node, err)
 }

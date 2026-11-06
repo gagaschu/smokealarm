@@ -217,6 +217,16 @@ func TestCronJobTimeZoneIsRead(t *testing.T) {
 	}
 }
 
+func TestKubeletCAFileIsRead(t *testing.T) {
+	cfg, err := Load(env(map[string]string{"SMOKEALARM_KUBELET_CA_FILE": "/etc/smokealarm/kubelet-ca/ca.crt"}))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.KubeletCAFile != "/etc/smokealarm/kubelet-ca/ca.crt" {
+		t.Errorf("KubeletCAFile = %q", cfg.KubeletCAFile)
+	}
+}
+
 // net/smtp refuses to send a password over an unencrypted connection to another
 // host, so every mail would fail at runtime.
 func TestSMTPLoginWithoutEncryption(t *testing.T) {
