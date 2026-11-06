@@ -4,20 +4,28 @@ You need a Kubernetes cluster, `kubectl` and [Helm](https://helm.sh/) 3 or 4.
 
 ## The image
 
-The image contains one static binary and is built for `linux/amd64` and `linux/arm64`. No image is published yet, so you have to build it yourself and push it to a registry your cluster can pull from:
+The image contains one static binary and is built for `linux/amd64` and `linux/arm64`. It is published as `ghcr.io/gagaschu/smokealarm`, and the chart uses it by default, with the chart's `appVersion` as the tag. The tags:
+
+| Tag | What it is |
+| --- | --- |
+| `0.1.0`, `0.1` | a release, and the newest release of that minor version |
+| `latest` | the newest release |
+| `main`, `sha-<commit>` | the newest commit on `main` and every single commit on `main`; not a release |
+
+To build the image yourself and push it to your own registry:
 
 ```sh
 make image IMAGE=ghcr.io/<you>/smokealarm TAG=0.1.0 PUSH=1
 ```
 
-The multi-arch build needs a buildx builder that supports several platforms; the comment in the [Makefile](../Makefile) explains how to set one up. `make image-local` builds for your own machine only.
+Then add `--set image.repository=ghcr.io/<you>/smokealarm` to the `helm install` commands below. The multi-arch build needs a buildx builder that supports several platforms; the comment in the [Makefile](../Makefile) explains how to set one up. `make image-local` builds for your own machine only.
 
 ## The admin password
 
 There is one local admin user. smokealarm is given the bcrypt hash of the password, not the password itself, so create the hash first:
 
 ```sh
-read -s PW; printf '%s' "$PW" | docker run -i --rm ghcr.io/<you>/smokealarm:0.1.0 hash-password
+read -s PW; printf '%s' "$PW" | docker run -i --rm ghcr.io/gagaschu/smokealarm:0.1.0 hash-password
 ```
 
 Without Docker, run `make hash-password` in a checkout. The hash contains `$` characters. Keep it in single quotes or in a variable and pass it with `--set-string`, as below.
@@ -28,7 +36,6 @@ Without Docker, run `make hash-password` in a checkout. The hash contains `$` ch
 HASH='<the hash from above>'
 helm install smokealarm ./deploy/helm/smokealarm \
   --namespace smokealarm --create-namespace \
-  --set image.repository=ghcr.io/<you>/smokealarm \
   --set-string auth.passwordHash="$HASH"
 ```
 
@@ -38,7 +45,7 @@ The chart puts the hash into a Kubernetes Secret. If you'd rather manage the Sec
 kubectl -n smokealarm create secret generic smokealarm-auth \
   --from-literal=SMOKEALARM_ADMIN_PASSWORD_HASH="$HASH"
 helm install smokealarm ./deploy/helm/smokealarm -n smokealarm \
-  --set image.repository=ghcr.io/<you>/smokealarm --set existingSecret=smokealarm-auth
+  --set existingSecret=smokealarm-auth
 ```
 
 The same Secret can also hold `SMOKEALARM_SMTP_USERNAME` and `SMOKEALARM_SMTP_PASSWORD`.

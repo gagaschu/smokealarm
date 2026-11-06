@@ -14,16 +14,12 @@ It was developed and tested with k3s on a Raspberry Pi (arm64). Nothing in it de
 
 ## Quickstart
 
-You need a Kubernetes cluster, `kubectl`, [Helm](https://helm.sh/) 3 or 4 and Docker. No image is published yet, so build one and push it to a registry your cluster can pull from:
-
-```sh
-make image IMAGE=ghcr.io/<you>/smokealarm TAG=0.1.0 PUSH=1
-```
+You need a Kubernetes cluster, `kubectl`, [Helm](https://helm.sh/) 3 or 4 and Docker. The image is published as `ghcr.io/gagaschu/smokealarm` for `linux/amd64` and `linux/arm64`, and the chart uses it by default.
 
 Create the bcrypt hash of the admin password:
 
 ```sh
-read -s PW; printf '%s' "$PW" | docker run -i --rm ghcr.io/<you>/smokealarm:0.1.0 hash-password
+read -s PW; printf '%s' "$PW" | docker run -i --rm ghcr.io/gagaschu/smokealarm:0.1.0 hash-password
 ```
 
 Install the chart. The hash contains `$` characters, so keep it in single quotes:
@@ -32,7 +28,6 @@ Install the chart. The hash contains `$` characters, so keep it in single quotes
 HASH='<the hash>'
 helm install smokealarm ./deploy/helm/smokealarm \
   --namespace smokealarm --create-namespace \
-  --set image.repository=ghcr.io/<you>/smokealarm \
   --set-string auth.passwordHash="$HASH" \
   --set config.cookieSecure=false   # only for the port-forward below
 ```
