@@ -55,11 +55,8 @@ func (e *Engine) reconcile(open []store.Record, findings []checks.Finding, unkno
 		openByKey[r.Key] = r
 	}
 
-	seen := map[string]bool{}
+	seen := map[string]bool{} // runChecks keeps every key once
 	for _, f := range findings {
-		if seen[f.Key] {
-			continue
-		}
 		seen[f.Key] = true
 
 		record, exists := openByKey[f.Key]

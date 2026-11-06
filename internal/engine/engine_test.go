@@ -793,6 +793,20 @@ func TestRunChecksSortsByKey(t *testing.T) {
 	}
 }
 
+// PR #27 review finding 5: a key that a check reports twice is kept once, the
+// first one, for every step after runChecks.
+func TestRunChecksKeepsTheFirstFindingOfAKey(t *testing.T) {
+	list := []checks.Check{{Name: "a", Run: func(*checks.Snapshot, checks.Options) []checks.Finding {
+		return []checks.Finding{{Key: "z"}, {Key: "k", Severity: checks.Critical}, {Key: "k", Severity: checks.Warning}}
+	}}}
+
+	got, _ := runChecks(&checks.Snapshot{Now: testStart}, checks.Options{}, list, nil)
+
+	if len(got) != 2 || got[0].Key != "k" || got[0].Severity != checks.Critical || got[1].Key != "z" {
+		t.Errorf("findings = %+v, want k (critical) and z", got)
+	}
+}
+
 // firingCritical returns a harness with reminders every hour and problem "a"
 // reported once, so the reminder clock starts at the current time.
 func firingCritical(t *testing.T) *harness {
