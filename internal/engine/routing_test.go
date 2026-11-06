@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -305,5 +306,53 @@ func TestAudienceIsWhatTheSendingDoes(t *testing.T) {
 				t.Errorf("Audience = %v, %v, want %q, %v", targets, all, tt.want, tt.wantAll)
 			}
 		})
+	}
+}
+
+// Issue #26 finding 2: after a downtime that ended while the problem was meant
+// for the second target only, the first target keeps its marker, and the
+// summary of the problem is empty while the second target fails. An escalation
+// must still reach the first target once the annotation is gone.
+func TestEscalationReachesATargetWhoseMarkerOutlivedTheSummary(t *testing.T) {
+	h, second := twoTargets(t)
+	h.findings = []checks.Finding{escalating(checks.Warning)}
+	h.mustRun(0)
+	h.mustRun(2 * time.Minute) // both hear the warning
+
+	h.findings = []checks.Finding{withTargets(escalating(checks.Warning), "second")}
+	h.setDowntime("vol", time.Hour)
+	h.mustRun(time.Minute)
+	second.fail = true
+	_ = h.run(time.Hour) // the downtime ends; telling the second target fails
+
+	h.findings = []checks.Finding{escalating(checks.Critical)}
+	_ = h.run(time.Minute) // critical, and for every target again
+	_ = h.run(2 * time.Minute)
+
+	wantNotifications(t, h.notifier, "new:vol/reminders:/resolved:", "new:vol/reminders:/resolved:")
+}
+
+// Issue #26 finding 4: a targets annotation in a pod template names a new pod
+// after every rollout, so the set of logged warnings must not grow forever. It
+// forgets what it has not seen for an hour, and never logs a warning that is
+// still there twice, however many there are (PR #27 review findings 2 and 7).
+func TestAnnotationWarningsAreForgottenWhenGoneButNotRepeated(t *testing.T) {
+	h := newHarness(t)
+	pass := func(at time.Time) {
+		for i := 0; i < 1500; i++ {
+			h.engine.warnOnce("annotation ignored", fmt.Sprintf("Pod media/app-%d: typo", i), at)
+		}
+		h.engine.forgetOldWarnings(at)
+	}
+	pass(testStart)
+	before := strings.Count(h.logs.String(), "annotation ignored")
+	pass(testStart.Add(30 * time.Second))
+	if got := strings.Count(h.logs.String(), "annotation ignored") - before; got != 0 {
+		t.Errorf("second pass logged %d warnings, want none", got)
+	}
+
+	h.engine.forgetOldWarnings(testStart.Add(2 * time.Hour))
+	if got := len(h.engine.loggedAnnotationWarnings); got != 0 {
+		t.Errorf("remembers %d warnings that are gone, want none", got)
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -77,11 +78,14 @@ type Engine struct {
 	// previousSkipped is what was skipped in the last run, to log only when
 	// that changes. Only RunOnce touches it.
 	previousSkipped map[string]string
-	// loggedAnnotationWarnings are the annotation warnings logged so far, so
-	// each is logged once while the process runs. They name the annotation
-	// and its value, not every problem, so the set stays small. Only RunOnce
-	// touches it.
-	loggedAnnotationWarnings map[string]bool
+	// failedIDs are, by target, the problems whose last message failed and is
+	// still owed. Only RunOnce touches it.
+	failedIDs map[string]map[int64]bool
+	// loggedAnnotationWarnings are the annotation warnings logged so far, with
+	// the time each was last seen, so each is logged once and not in every
+	// run. They name the annotation, its value and the object that carries
+	// it; forgetOldWarnings bounds the set. Only RunOnce touches it.
+	loggedAnnotationWarnings map[string]time.Time
 }
 
 // Run executes one pass immediately and then one per interval until the
@@ -114,7 +118,7 @@ func (e *Engine) RunOnce(ctx context.Context) error {
 	snap := e.Snapshot(ctx, start)
 	runnable, skipped := e.splitSkipped(snap)
 	findings, annotationProblems := runChecks(snap, e.Options, runnable, heldBackBy(snap, runnable))
-	e.warnAboutAnnotations(findings, annotationProblems)
+	e.warnAboutAnnotations(findings, annotationProblems, start)
 	for _, f := range findings {
 		e.Logger.Debug("finding",
 			"key", f.Key,
@@ -169,7 +173,8 @@ func (e *Engine) cleanup(ctx context.Context, now time.Time) error {
 
 // runChecks runs every check, applies the smokealarm annotations, marks the
 // consequences of the nodes in down and returns all findings sorted by key, so
-// the output order is stable between runs. The second result lists the
+// the output order is stable between runs. A key that a check reports twice is
+// kept once: the first one, so every later step sees the same finding. The second result lists the
 // annotation values that could not be used.
 func runChecks(snap *checks.Snapshot, opts checks.Options, list []checks.Check, down map[string]bool) ([]checks.Finding, []string) {
 	var findings []checks.Finding
@@ -178,6 +183,7 @@ func runChecks(snap *checks.Snapshot, opts checks.Options, list []checks.Check, 
 	}
 	findings, problems := checks.ApplyAnnotations(snap, findings)
 	findings = checks.ApplyNodeCauses(snap, findings, down)
-	sort.Slice(findings, func(i, j int) bool { return findings[i].Key < findings[j].Key })
+	sort.SliceStable(findings, func(i, j int) bool { return findings[i].Key < findings[j].Key })
+	findings = slices.CompactFunc(findings, func(a, b checks.Finding) bool { return a.Key == b.Key })
 	return findings, problems
 }

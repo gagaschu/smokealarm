@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/gagaschu/smokealarm/internal/checks"
 	"github.com/gagaschu/smokealarm/internal/notify"
@@ -37,20 +38,16 @@ func (e *Engine) Audience(rec store.Record) (targets []string, all bool) {
 
 // routedNamesNow returns the targets the open problem with this key is meant for
 // in this run. It runs before the findings are saved, so the severity and the
-// targets come from the current finding, if there is one.
-func (e *Engine) routedNamesNow(open []store.Record, findings []checks.Finding, key string) []string {
-	for _, r := range open {
-		if r.Key != key {
-			continue
-		}
-		for _, f := range findings {
-			if f.Key == key {
-				r.Severity, r.Targets = f.Severity, f.Targets
-			}
-		}
-		return e.routedNames(r)
+// targets come from the current finding, if there is one (found).
+func (e *Engine) routedNamesNow(open map[string]store.Record, f checks.Finding, found bool, key string) []string {
+	r, exists := open[key]
+	if !exists {
+		return nil
 	}
-	return nil
+	if found {
+		r.Severity, r.Targets = f.Severity, f.Targets
+	}
+	return e.routedNames(r)
 }
 
 // routedNames returns the names of the targets the problem is meant for.
@@ -78,10 +75,10 @@ func (e *Engine) listedTarget(listed []string, target notify.Notifier) bool {
 // severity, target names that are not configured) and targets lists that send
 // a problem to no target at all (only critical-only targets, for a warning).
 // Each sentence names the object or namespace that carries the annotation and
-// is logged once while the process runs, not in every run.
-func (e *Engine) warnAboutAnnotations(findings []checks.Finding, severityProblems []string) {
+// is logged once, not in every run (see warnOnce).
+func (e *Engine) warnAboutAnnotations(findings []checks.Finding, severityProblems []string, now time.Time) {
 	for _, problem := range severityProblems {
-		e.warnOnce("annotation ignored", problem)
+		e.warnOnce("annotation ignored", problem, now)
 	}
 	for _, f := range findings {
 		if len(f.Targets) == 0 {
@@ -90,27 +87,43 @@ func (e *Engine) warnAboutAnnotations(findings []checks.Finding, severityProblem
 		for _, name := range f.Targets {
 			if !e.configuredKind(name) {
 				e.warnOnce("annotation ignored", fmt.Sprintf("%s: %s lists %q, which is not a configured notification target",
-					f.TargetsFrom, checks.TargetsAnnotation, name))
+					f.TargetsFrom, checks.TargetsAnnotation, name), now)
 			}
 		}
 		if len(e.routedNames(store.Record{Finding: f})) == 0 {
 			e.warnOnce("problems reach no notification target", fmt.Sprintf(
 				"%s: its %s problems reach no notification target: %s %q lists only targets that get critical problems only",
-				f.TargetsFrom, f.Severity, checks.TargetsAnnotation, strings.Join(f.Targets, ",")))
+				f.TargetsFrom, f.Severity, checks.TargetsAnnotation, strings.Join(f.Targets, ",")), now)
 		}
 	}
+	e.forgetOldWarnings(now)
 }
 
-// warnOnce logs a warning the first time this process sees it.
-func (e *Engine) warnOnce(msg, problem string) {
-	if e.loggedAnnotationWarnings[problem] {
-		return
-	}
+// annotationWarningMemory is how long a warning that no longer occurs is
+// remembered. A warning names the object that carries the annotation, and for
+// a pod template that is a new pod after every rollout, so the set must forget.
+// A problem that is gone for a few runs and comes back is not logged again.
+const annotationWarningMemory = time.Hour
+
+// warnOnce logs a warning the first time this process sees it, and notes when
+// it was last seen.
+func (e *Engine) warnOnce(msg, problem string, now time.Time) {
 	if e.loggedAnnotationWarnings == nil {
-		e.loggedAnnotationWarnings = map[string]bool{}
+		e.loggedAnnotationWarnings = map[string]time.Time{}
 	}
-	e.loggedAnnotationWarnings[problem] = true
-	e.Logger.Warn(msg, "problem", problem)
+	if _, logged := e.loggedAnnotationWarnings[problem]; !logged {
+		e.Logger.Warn(msg, "problem", problem)
+	}
+	e.loggedAnnotationWarnings[problem] = now
+}
+
+// forgetOldWarnings drops the warnings not seen for annotationWarningMemory.
+func (e *Engine) forgetOldWarnings(now time.Time) {
+	for problem, seen := range e.loggedAnnotationWarnings {
+		if now.Sub(seen) >= annotationWarningMemory {
+			delete(e.loggedAnnotationWarnings, problem)
+		}
+	}
 }
 
 // configuredKind says whether a target of this kind is configured.

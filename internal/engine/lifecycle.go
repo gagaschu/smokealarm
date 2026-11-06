@@ -55,11 +55,8 @@ func (e *Engine) reconcile(open []store.Record, findings []checks.Finding, unkno
 		openByKey[r.Key] = r
 	}
 
-	seen := map[string]bool{}
+	seen := map[string]bool{} // runChecks keeps every key once
 	for _, f := range findings {
-		if seen[f.Key] {
-			continue
-		}
 		seen[f.Key] = true
 
 		record, exists := openByKey[f.Key]
@@ -67,8 +64,8 @@ func (e *Engine) reconcile(open []store.Record, findings []checks.Finding, unkno
 			changes.Insert = append(changes.Insert, e.newRecord(f, now))
 			continue
 		}
-		updated := e.refresh(record, f, now)
-		if record.FiringNotifiedAt != nil && updated.FiringNotifiedAt == nil {
+		updated, escalated := e.refresh(record, f, now)
+		if escalated {
 			changes.Escalated = append(changes.Escalated,
 				store.Escalation{ID: record.ID, Targets: e.routedNames(updated)})
 		}
@@ -142,8 +139,10 @@ func (e *Engine) newRecord(f checks.Finding, now time.Time) store.Record {
 }
 
 // refresh updates a known problem with the latest details and lets it fire
-// once it has lasted long enough and no down node holds it back.
-func (e *Engine) refresh(record store.Record, f checks.Finding, now time.Time) store.Record {
+// once it has lasted long enough and no down node holds it back. The second
+// result says that a firing problem got worse and is to be reported again
+// (see trackEscalation).
+func (e *Engine) refresh(record store.Record, f checks.Finding, now time.Time) (store.Record, bool) {
 	worse := record.Severity == checks.Warning && f.Severity == checks.Critical
 	record.Severity = f.Severity
 	record.Reason = f.Reason
@@ -161,8 +160,9 @@ func (e *Engine) refresh(record store.Record, f checks.Finding, now time.Time) s
 		}
 	}
 
+	escalated := false
 	if record.State == store.StateFiring {
-		record = e.trackEscalation(record, worse, now)
+		record, escalated = e.trackEscalation(record, worse, now)
 	}
 	if record.State == store.StatePending {
 		record = e.holdBack(record, f, now)
@@ -172,35 +172,39 @@ func (e *Engine) refresh(record store.Record, f checks.Finding, now time.Time) s
 		record.FiringAt = &now
 		e.Logger.Info("finding firing", "key", f.Key, "severity", f.Severity)
 	}
-	return record
+	return record, escalated
 }
 
 // trackEscalation decides when a firing problem that got worse is reported. It
 // is still the same problem, so it is not resolved and restarted. But somebody
 // who read "warning" must hear that it is critical now, once that has lasted
 // AlertAfter: a problem that flips between the two reports nothing per flip.
-// Clearing the marker then lists the problem as new again. Getting better is
-// not reported; the resolution will be. An acknowledged problem stays
-// acknowledged: somebody already knows, so the escalation is not reported. (A
-// problem that is still pending is simply reported with the higher severity
-// when it fires.)
-func (e *Engine) trackEscalation(record store.Record, worse bool, now time.Time) store.Record {
+// The second result says that this moment has come: the targets the problem
+// is meant for forget that they were told, and hear about it as new again.
+// It does not depend on the summary of the markers, which can be empty while
+// a single target still has its marker (after the end of a downtime, for
+// example). Getting better is not reported; the resolution will be. An
+// acknowledged problem stays acknowledged: somebody already knows, so the
+// escalation is not reported. (A problem that is still pending is simply
+// reported with the higher severity when it fires.)
+func (e *Engine) trackEscalation(record store.Record, worse bool, now time.Time) (store.Record, bool) {
 	if record.Severity != checks.Critical {
 		record.EscalatingSince = nil
-		return record
+		return record, false
 	}
 	if worse {
 		record.EscalatingSince = &now
 	}
 	if record.EscalatingSince == nil || now.Sub(*record.EscalatingSince) < e.AlertAfter {
-		return record
+		return record, false
 	}
 	record.EscalatingSince = nil
-	if record.AcknowledgedAt == nil {
-		record.FiringNotifiedAt = nil
-		e.Logger.Info("finding escalated", "key", record.Key, "severity", record.Severity, "reason", record.Reason)
+	if record.AcknowledgedAt != nil {
+		return record, false
 	}
-	return record
+	record.FiringNotifiedAt = nil
+	e.Logger.Info("finding escalated", "key", record.Key, "severity", record.Severity, "reason", record.Reason)
+	return record, true
 }
 
 // clockStart is when the ALERT_AFTER clock of a pending problem started.

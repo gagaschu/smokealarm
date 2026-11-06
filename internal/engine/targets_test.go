@@ -249,3 +249,153 @@ func TestStatusForgetsTheErrorWhenNothingIsLeftToSend(t *testing.T) {
 		t.Errorf("target = %+v, want no error", status)
 	}
 }
+
+// wantTargetError fails unless the first target shows a sending error, or none.
+func (h *harness) wantTargetError(want bool) {
+	h.t.Helper()
+	status := h.engine.Status().Targets[0]
+	if got := status.LastError != ""; got != want {
+		h.t.Fatalf("target = %+v, want an error: %v", status, want)
+	}
+}
+
+// Issue #26 finding 1: a message that is only postponed is still owed, so the
+// status must go on showing that sending to the target fails.
+func TestStatusKeepsTheErrorWhileTheMessageWaitsForResolveAfter(t *testing.T) {
+	h := newHarness(t)
+	h.engine.ResolveAfter = 5 * time.Minute
+	h.findings = []checks.Finding{finding("a", checks.Critical)}
+	h.mustRun(0)
+	h.notifier.fail = true
+	_ = h.run(2 * time.Minute) // "a" fires, but its first message fails
+	h.wantTargetError(true)
+
+	h.findings = nil
+	h.mustRun(time.Minute) // gone for a moment: nothing to send, but still owed
+	h.wantTargetError(true)
+}
+
+func TestStatusKeepsTheErrorWhileTheMessageWaitsForADowntime(t *testing.T) {
+	h := newHarness(t)
+	h.findings = []checks.Finding{finding("a", checks.Critical)}
+	h.mustRun(0)
+	h.notifier.fail = true
+	_ = h.run(2 * time.Minute)
+	h.setDowntime("a", time.Hour)
+	h.mustRun(time.Minute)
+	h.wantTargetError(true)
+}
+
+// A problem that does not go to the target at all is not owed to it.
+func TestStatusForgetsTheErrorDespiteAProblemForOtherTargets(t *testing.T) {
+	h := newHarness(t)
+	h.engine.MinSeverity = map[string]checks.Severity{"fake": checks.Critical}
+	h.findings = []checks.Finding{finding("a", checks.Critical), finding("b", checks.Warning)}
+	h.mustRun(0)
+	h.notifier.fail = true
+	_ = h.run(2 * time.Minute) // "a" fires, but its first message fails
+	h.wantTargetError(true)
+
+	h.findings = []checks.Finding{finding("b", checks.Warning)}
+	h.mustRun(time.Minute) // "a" ends unheard; "b" is not for this target
+	h.wantTargetError(false)
+}
+
+// failedReminder brings "a" to the point where it was reported, but its
+// reminder failed.
+func failedReminder(t *testing.T) *harness {
+	t.Helper()
+	h := newHarness(t)
+	h.engine.CriticalRepeatInterval = time.Hour
+	h.engine.ResolveAfter = 5 * time.Minute
+	h.findings = []checks.Finding{finding("a", checks.Critical)}
+	h.mustRun(0)
+	h.mustRun(2 * time.Minute)
+	h.notifier.fail = true
+	_ = h.run(time.Hour)
+	h.wantTargetError(true)
+	return h
+}
+
+// PR #27 review finding 1: a reminder that failed and is then held back is
+// still owed: the alarm comes again after the downtime, or its end follows.
+func TestStatusKeepsTheErrorOfAReminderHeldBackByADowntime(t *testing.T) {
+	h := failedReminder(t)
+	h.setDowntime("a", time.Hour)
+	h.mustRun(time.Minute)
+	h.wantTargetError(true)
+}
+
+func TestStatusKeepsTheErrorOfAReminderWhileTheProblemWaitsForResolveAfter(t *testing.T) {
+	h := failedReminder(t)
+	h.findings = nil
+	h.mustRun(time.Minute)
+	h.wantTargetError(true)
+}
+
+// PR #27 review finding 6: a first message that failed and then waits for an
+// escalation is still owed.
+func TestStatusKeepsTheErrorWhileAnEscalationWaits(t *testing.T) {
+	h := newHarness(t)
+	h.findings = []checks.Finding{escalating(checks.Warning)}
+	h.mustRun(0)
+	h.notifier.fail = true
+	_ = h.run(2 * time.Minute) // the warning fires, but its first message fails
+	h.findings = []checks.Finding{escalating(checks.Critical)}
+	h.mustRun(time.Minute) // critical now, waiting for ALERT_AFTER
+	h.wantTargetError(true)
+}
+
+// Once somebody acknowledged the problem, its first message is not owed anymore.
+func TestStatusForgetsTheErrorOnceTheProblemIsAcknowledged(t *testing.T) {
+	h := newHarness(t)
+	h.findings = []checks.Finding{finding("a", checks.Critical)}
+	h.mustRun(0)
+	h.notifier.fail = true
+	_ = h.run(2 * time.Minute)
+	h.acknowledge("a")
+	h.mustRun(time.Minute)
+	h.wantTargetError(false)
+}
+
+// PR #27 second review: a firing problem that is no longer meant for the
+// target, and whose start it never heard, is not owed to it.
+func TestStatusForgetsTheErrorWhenTheProblemIsNoLongerForTheTarget(t *testing.T) {
+	tests := []struct {
+		name  string
+		later checks.Finding
+	}{
+		{"now a warning for a critical-only target", finding("a", checks.Warning)},
+		{"annotation moved to another target", withTargets(finding("a", checks.Critical), "second")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h, _ := twoTargets(t)
+			h.engine.MinSeverity = map[string]checks.Severity{"fake": checks.Critical}
+			h.findings = []checks.Finding{finding("a", checks.Critical)}
+			h.mustRun(0)
+			h.notifier.fail = true
+			_ = h.run(2 * time.Minute) // its first message to "fake" fails
+			h.wantTargetError(true)
+
+			h.findings = []checks.Finding{tt.later}
+			h.mustRun(time.Minute)
+			h.wantTargetError(false)
+		})
+	}
+}
+
+// A target that heard the start is still owed the end, also when the problem
+// is no longer meant for it.
+func TestStatusKeepsTheErrorWhenTheTargetIsOwedTheEnd(t *testing.T) {
+	h, _ := twoTargets(t)
+	h.engine.CriticalRepeatInterval = time.Hour
+	h.findings = []checks.Finding{finding("a", checks.Critical)}
+	h.mustRun(0)
+	h.mustRun(2 * time.Minute) // "fake" hears the start
+	h.notifier.fail = true
+	_ = h.run(time.Hour) // its reminder fails
+	h.findings = []checks.Finding{withTargets(finding("a", checks.Critical), "second")}
+	h.mustRun(time.Minute)
+	h.wantTargetError(true)
+}

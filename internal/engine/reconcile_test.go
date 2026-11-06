@@ -101,12 +101,6 @@ func TestReconcile(t *testing.T) {
 			unknown:    []string{"fake"},
 			wantUpdate: []store.State{store.StateResolved},
 		},
-		{
-			name:       "same key twice in one run is handled once",
-			alertAfter: 2 * time.Minute,
-			findings:   []checks.Finding{f, f},
-			wantInsert: []store.State{store.StatePending},
-		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

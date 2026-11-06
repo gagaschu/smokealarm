@@ -25,10 +25,9 @@ func (e *Engine) notify(ctx context.Context, unknown []string, now time.Time) er
 	if err != nil {
 		return fmt.Errorf("load open findings: %w", err)
 	}
-	held := HeldBack(open)
 	var errs []error
 	for _, target := range e.Notifiers {
-		if err := e.notifyTarget(ctx, target, unknown, silenced, held, now); err != nil {
+		if err := e.notifyTarget(ctx, target, unknown, silenced, open, now); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -43,7 +42,7 @@ func (e *Engine) notify(ctx context.Context, unknown []string, now time.Time) er
 // acknowledged problem only the end is reported; the store leaves out the rest.
 // A problem in a downtime sends nothing at all.
 func (e *Engine) notifyTarget(ctx context.Context, target notify.Notifier, unknown []string,
-	silenced map[string]bool, held map[string][]store.Record, now time.Time) error {
+	silenced map[string]bool, open []store.Record, now time.Time) error {
 	name := target.Name()
 	records, err := e.Store.Unnotified(ctx, name)
 	if err != nil {
@@ -55,21 +54,23 @@ func (e *Engine) notifyTarget(ctx context.Context, target notify.Notifier, unkno
 	}
 
 	r := e.buildReport(records, due, silenced, target)
-	e.addAffected(r.notification, held, target)
+	e.addAffected(&r.notification, HeldBack(open), target)
 	n := r.notification
 	if err := e.Store.MarkResolvedNotified(ctx, name, r.silentIDs, now); err != nil {
 		return fmt.Errorf("mark silently resolved findings for %s: %w", name, err)
 	}
 	if len(n.New) == 0 && len(n.Reminders) == 0 && len(n.Resolved) == 0 {
-		e.clearNotifyError(name)
+		e.settleFailed(target, open, records, r.silentIDs)
 		return nil
 	}
 
 	err = target.Send(ctx, n)
 	e.setNotifyResult(name, err, now)
 	if err != nil {
+		e.rememberFailed(name, r.firingIDs, r.resolvedIDs)
 		return fmt.Errorf("send notification via %s: %w", target.Description(), err)
 	}
+	delete(e.failedIDs, name)
 	e.Logger.Info("notification sent", "target", target.Description(),
 		"new", len(n.New), "reminders", len(n.Reminders), "resolved", len(n.Resolved))
 
@@ -149,7 +150,7 @@ func (e *Engine) buildReport(records, due []store.Record, silenced map[string]bo
 // as far as the target would hear about them; the rest is not its business.
 // New problems and reminders get the list; the end of a node needs none,
 // because the problems it held back are gone or fire on their own then.
-func (e *Engine) addAffected(n notify.Notification, held map[string][]store.Record, target notify.Notifier) {
+func (e *Engine) addAffected(n *notify.Notification, held map[string][]store.Record, target notify.Notifier) {
 	for _, alerts := range [][]notify.Alert{n.New, n.Reminders} {
 		for i := range alerts {
 			if !alerts[i].IsNodeDown() {
@@ -208,4 +209,77 @@ func sortAlerts(alerts []notify.Alert) {
 		}
 		return a.Key < b.Key
 	})
+}
+
+// rememberFailed notes the problems whose message to the target just failed,
+// so its error can be cleared once none of them is owed anymore.
+func (e *Engine) rememberFailed(target string, idLists ...[]int64) {
+	if e.failedIDs == nil {
+		e.failedIDs = map[string]map[int64]bool{}
+	}
+	if e.failedIDs[target] == nil {
+		e.failedIDs[target] = map[int64]bool{}
+	}
+	for _, ids := range idLists {
+		for _, id := range ids {
+			e.failedIDs[target][id] = true
+		}
+	}
+}
+
+// settleFailed runs when the target has nothing to send in this run. It
+// forgets the failed messages that are no longer owed, and the error of the
+// target once none is left. A firing problem stays owed while its message is
+// only held back (a downtime, RESOLVE_AFTER, an escalation that waits, a check
+// whose state is unknown), as long as it is meant for the target or the target
+// heard its start (see stillOwed). A resolved problem stays owed until its end
+// is reported, or it is over without a message (silent). The decision rests on
+// what failed, not on the shape of this run's report, so a new rule that holds
+// messages back needs no change here.
+func (e *Engine) settleFailed(target notify.Notifier, open, unnotified []store.Record, silentIDs []int64) {
+	name := target.Name()
+	for id := range e.failedIDs[name] {
+		if !e.stillOwed(target, id, open, unnotified, silentIDs) {
+			delete(e.failedIDs[name], id)
+		}
+	}
+	if len(e.failedIDs[name]) > 0 {
+		return
+	}
+	delete(e.failedIDs, name)
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if status, found := e.targets[name]; found {
+		status.LastError = ""
+		status.LastErrorAt = time.Time{}
+		e.targets[name] = status
+	}
+}
+
+// stillOwed says whether the target still has to hear about this problem. A
+// firing problem is owed while it is not acknowledged and either is meant for
+// the target or its start was heard there, because then the end follows. The
+// per-target marker comes from the unreported records: a firing problem that
+// is not among them was reported to the target, so it heard the start.
+func (e *Engine) stillOwed(target notify.Notifier, id int64, open, unnotified []store.Record, silentIDs []int64) bool {
+	for _, r := range open {
+		if r.ID != id {
+			continue
+		}
+		if r.State != store.StateFiring || r.AcknowledgedAt != nil {
+			return false
+		}
+		for _, u := range unnotified {
+			if u.ID == id {
+				return u.StartHeardAt != nil || e.routedTo(target, r)
+			}
+		}
+		return true
+	}
+	for _, r := range unnotified {
+		if r.ID == id {
+			return r.State == store.StateResolved && !slices.Contains(silentIDs, id)
+		}
+	}
+	return false
 }
