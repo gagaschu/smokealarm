@@ -75,7 +75,7 @@ Jobs
 - CronJob missed a scheduled run (due according to the cron expression, lastScheduleTime older than expected + tolerance) → warning. Ignore suspended CronJobs.
 Storage
 - PVC Pending longer than threshold → warning
-- PVC usage via kubelet stats (since phase 21 directly from the kubelet, https://<node InternalIP>:<kubelet port>/stats/summary, with the ServiceAccount token and a verified certificate; no fallback through the API server proxy): > 85 % warning, > 95 % critical. Can be switched off, because it needs the RBAC permission nodes/stats.
+- PVC usage via kubelet stats (since phase 21 directly from the kubelet, https://<node InternalIP>:<kubelet port>/stats/summary, with the ServiceAccount token and a verified certificate; no fallback through the API server proxy): > 85 % warning, > 95 % critical. Can be switched off, because it needs the RBAC permission nodes/stats. It needs kubelet serving certificates that can be verified (k3s, kubeadm with serverTLSBootstrap, most managed clusters); with self-signed ones (default kubeadm) the check is skipped with that reason, decided by the maintainer in the review of phase 21.
 Certificates (only if cert-manager CRDs are present)
 - Certificate not Ready → warning
 - status.notAfter in < 14 days → warning, < 3 days → critical

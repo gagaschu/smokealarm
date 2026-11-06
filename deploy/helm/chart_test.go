@@ -453,9 +453,25 @@ func TestRBACSwitches(t *testing.T) {
 func TestOldNodesProxyValueFailsTheInstall(t *testing.T) {
 	for _, value := range []string{"true", "false"} {
 		out, err := helmTemplate(t, "smokealarm", baseValues+"rbac:\n  nodesProxy: "+value+"\n")
-		if err == nil || !strings.Contains(out, "rbac.nodesStats") {
+		if err == nil || !strings.Contains(out, "rbac.nodesStats") || !strings.Contains(out, "--reset-then-reuse-values") {
 			t.Errorf("nodesProxy: %s: err = %v, output %q; want an error that points to rbac.nodesStats", value, err, out)
 		}
+	}
+
+	// helm upgrade --reuse-values brings the values of the old release: the old
+	// default nodesProxy, but no nodesStats and no kubelet block. That must end
+	// in the hint, not in a template error.
+	reused := baseValues + "rbac:\n  nodesProxy: true\n  nodesStats: null\nkubelet: null\n"
+	out, err := helmTemplate(t, "smokealarm", reused)
+	if err == nil || !strings.Contains(out, "--reset-then-reuse-values") || strings.Contains(out, "nil pointer") {
+		t.Errorf("err = %v, output %q; want the hint for --reuse-values", err, out)
+	}
+}
+
+// Without the kubelet block (values of an older release) the chart still renders.
+func TestNoKubeletBlock(t *testing.T) {
+	if _, set := render(t, "kubelet: null\n").env()["SMOKEALARM_KUBELET_CA_FILE"]; set {
+		t.Error("SMOKEALARM_KUBELET_CA_FILE is set without a kubelet block")
 	}
 }
 
