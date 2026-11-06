@@ -24,6 +24,7 @@ Allowed, otherwise standard library only:
 - modernc.org/sqlite (pure Go, for CGO_ENABLED=0 and easy cross-compiling)
 - golang.org/x/crypto (bcrypt)
 - github.com/robfig/cron/v3 (only for parsing CronJob schedules)
+- github.com/coreos/go-oidc/v3 and golang.org/x/oauth2 (since phase 24, only for the OIDC login: discovery, code exchange and the check of the ID token; the token check is not written by hand)
 Explicitly not: controller-runtime, cobra, viper, web frameworks (gin, echo, chi), ORMs, Prometheus libraries, frontend build tooling.
 HTTP routing with net/http (Go 1.22+ patterns), HTML with html/template, mail with net/smtp and text/template, SQL with database/sql. The other notification targets (webhook, ntfy, Telegram, Slack, Teams) use net/http, encoding/json and text/template only: no notification library (shoutrrr, nikoksr/notify, ...) and no vendor SDK.
 Further dependencies only after asking.
@@ -36,7 +37,7 @@ internal/checks          One file per area (pods.go, workloads.go, nodes.go, job
 internal/engine          Main loop: run checks, compare with stored state, trigger notifications
 internal/store           SQLite access, schema migrations as embedded .sql files, retention
 internal/notify          Notifier interface, mail, webhook, ntfy, Telegram, Slack and Teams (one file each)
-internal/auth            Local login, sessions, middleware
+internal/auth            Local login, OIDC login (since phase 24), sessions, middleware
 internal/web             Handlers, templates, CSS (all via go:embed)
 deploy/helm/smokealarm   Helm chart
 No further packages without a good reason.
@@ -127,7 +128,7 @@ Ignoring:
 ## Web UI
 - Server-rendered HTML, no JavaScript framework, no build step. Auto-refresh via meta tag (30s). Plain custom CSS, light/dark via prefers-color-scheme, works well on a phone.
 - Pages:
-  - Login
+  - Login: the password form; with OIDC on (since phase 24) also a button "Login with <name>" (SMOKEALARM_OIDC_NAME, default "OIDC")
   - Overview: current problems by severity with object, reason, message, since when. Empty state "All good" with the time of the last run, only if the API connection is fine (since phase 17, a problem with it is shown on top with its start, and "All good" is not). A problem that waits for RESOLVE_AFTER stays on the page with "Not seen since". Firing critical problems have an acknowledge button (plain POST form); acknowledged problems stay on the page and are marked, with the time in UTC, and have a button to remove the acknowledgement. Every problem links to the downtime form; problems in a downtime stay on the page and are marked.
   - History: resolved findings, filterable by namespace, with a link to the downtime form and a mark for a running downtime
   - Downtimes: running downtimes, each with its end and a button to end it now
@@ -140,7 +141,17 @@ Ignoring:
 - v0.1: one local admin user; username and bcrypt hash from the environment (in the cluster from a Secret).
 - Login form, server-side sessions in SQLite with a random session ID. Cookie HttpOnly, Secure (can be switched off for local development), SameSite=Lax, configurable expiry (default 7d). Logout. Simple rate limiting for failed logins.
 - Subcommand `smokealarm hash-password` reads a password from stdin and prints the bcrypt hash (simple os.Args switch, no CLI framework).
-- Structured so that OIDC can be added later as a second login method: the middleware only checks "is there a valid session?"; how the session comes about (password, later OIDC) is separate from that. Do not implement OIDC itself.
+- The middleware only checks "is there a valid session?"; how the session comes about (password, OIDC) is separate from that. Every login method ends in `Sessions.Start`.
+- OIDC (since phase 24) is a second login method next to the password, never instead of it: the local admin stays as the way in when the identity provider is down, so SMOKEALARM_ADMIN_USER and SMOKEALARM_ADMIN_PASSWORD_HASH stay required.
+  - It is on when SMOKEALARM_OIDC_ISSUER_URL is set. One provider only. Authorization code flow with PKCE; the ID token is checked by go-oidc (signature, issuer, audience, expiry, nonce). No refresh tokens, no single logout at the provider: logout ends the smokealarm session only.
+  - Access is by allowlist, and it fails closed. SMOKEALARM_OIDC_ALLOWED_EMAILS (only an email with email_verified=true counts, compared without regard to case) and SMOKEALARM_OIDC_ALLOWED_GROUPS (values of the claim SMOKEALARM_OIDC_GROUPS_CLAIM, default groups): one match is enough. With OIDC on, at least one of the two lists is required. There are no roles: everybody who gets in may do everything the admin may.
+  - The state, nonce and PKCE verifier of a login live in a short-lived cookie (10 minutes, HttpOnly, Secure like the session cookie, SameSite=Lax), deleted at the callback. No table.
+  - The redirect URI is SMOKEALARM_BASE_URL + /login/oidc/callback, so the base URL is required while OIDC is on.
+  - The identity provider does not have to be reachable at startup: the discovery runs at the first login and is retried after an error, so the monitoring never depends on it. Wrong settings still stop the start with a clear message. A setting of OIDC without SMOKEALARM_OIDC_ISSUER_URL is an error, so a typo cannot switch OIDC off silently.
+  - A session carries a fingerprint of the login data it was started with. The OIDC fingerprint covers issuer, client ID and both allowlists, so changing the allowlist ends the OIDC sessions at the next start, as changing the password ends the password sessions. No migration.
+  - The client secret, tokens, codes and the cookie are never logged, never put into an error and never shown on the status page. The login page says only that the login failed; the reason is in the log.
+  - Settings (table in docs/configuration.md): SMOKEALARM_OIDC_ISSUER_URL (https; http only for localhost), _CLIENT_ID, _CLIENT_SECRET, _NAME (shown in the button, at most 40 characters, no control characters), _SCOPES (default "openid email"), _GROUPS_CLAIM, _ALLOWED_EMAILS, _ALLOWED_GROUPS and _CA_FILE (a CA for a provider with an internal certificate).
+  - Not included: several providers, roles or rights per user, single logout, refresh tokens, creating users.
 
 ## Configuration
 - Only environment variables with the prefix SMOKEALARM_. Everything has sensible defaults except required values (admin user, password hash, SMTP data if mail is active).
@@ -151,7 +162,7 @@ Ignoring:
 ## Security
 - RBAC: get/list/watch only, minimal list of resources. nodes/stats (get) only with an active PVC usage check, never nodes/proxy; CRD permissions only for cert-manager Certificates and Argo CD Applications, each switchable via a Helm value.
 - Container: nonroot, readOnlyRootFilesystem, all capabilities dropped, seccompProfile RuntimeDefault, allowPrivilegeEscalation false. Only the PVC is writable.
-- No passwords, hashes or session IDs in the log.
+- No passwords, hashes, session IDs, OIDC tokens or the OIDC client secret in the log.
 - Keep informer memory small: remove managedFields and unneeded fields via SetTransform.
 
 ## Packaging & open-source basics

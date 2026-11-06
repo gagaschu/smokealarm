@@ -1,7 +1,7 @@
-// Package auth handles who may use the web UI: password check, sessions and
-// the limit on failed logins. The session middleware only asks "is there a
-// valid session?", so another way to log in (OIDC, later) can be added
-// without touching it.
+// Package auth handles who may use the web UI: the password check, the OIDC
+// login, sessions and the limit on failed logins. The session middleware only
+// asks "is there a valid session?", so a way to log in can be added without
+// touching it: the password form and OIDC both end in Sessions.Start.
 package auth
 
 import (

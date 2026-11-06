@@ -294,6 +294,14 @@ func newHandler(cfg config.Config, logger *slog.Logger, cluster *kube.Cluster, d
 		Now:      time.Now,
 		Logger:   logger,
 	}
+	if cfg.OIDC.Enabled() {
+		login, err := newOIDC(cfg, logger)
+		if err != nil {
+			return nil, err
+		}
+		server.OIDC, server.OIDCName = login, cfg.OIDC.Name
+		server.Sessions.OIDCCredentials = oidcFingerprint(cfg.OIDC)
+	}
 	return server.Handler()
 }
 

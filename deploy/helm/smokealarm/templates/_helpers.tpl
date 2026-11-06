@@ -124,6 +124,17 @@ SMOKEALARM_TEAMS_WEBHOOK_URL: {{ .teams.webhookUrl | quote }}
 {{- end -}}
 
 {{/*
+The ConfigMap with the CA of the OIDC provider, or empty. Like the kubelet
+one, written so that values without an oidc block (an upgrade that reuses the
+values of an older release) do not stop the rendering.
+*/}}
+{{- define "smokealarm.oidcCAConfigMap" -}}
+{{- with .Values.oidc -}}
+{{- .caConfigMap -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 The ConfigMap with the CA of the kubelet serving certificates, or empty.
 Written so that values without a kubelet block (an upgrade that reuses the
 values of an older release) do not stop the rendering.

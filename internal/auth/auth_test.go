@@ -76,7 +76,7 @@ func newTestSessions(t *testing.T, now *time.Time, secure bool) (*Sessions, *sto
 func login(t *testing.T, s *Sessions) *http.Cookie {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	if err := s.Start(rec, httptest.NewRequest(http.MethodPost, "/login", nil), "admin"); err != nil {
+	if err := s.Start(rec, httptest.NewRequest(http.MethodPost, "/login", nil), "admin", MethodPassword); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	cookies := rec.Result().Cookies()
@@ -310,5 +310,127 @@ func TestRateLimiterForgetsOldClients(t *testing.T) {
 
 	if len(l.attempts) != 1 {
 		t.Errorf("map holds %d clients, want only the recent one", len(l.attempts))
+	}
+}
+
+// loginWith starts a session with the given method and returns its cookie.
+func loginWith(t *testing.T, s *Sessions, method Method) *http.Cookie {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	if err := s.Start(rec, httptest.NewRequest(http.MethodGet, "/login/oidc/callback", nil), "gabriel@example.org", method); err != nil {
+		t.Fatalf("Start(%s): %v", method, err)
+	}
+	return rec.Result().Cookies()[0]
+}
+
+func TestOIDCSessionIsValidWhileOIDCIsOn(t *testing.T) {
+	now := testNow
+	s, _ := newTestSessions(t, &now, true)
+	s.Credentials = CredentialsFingerprint("admin", "hash")
+	s.OIDCCredentials = OIDCFingerprint("https://id.example.org", "smokealarm", "groups", []string{"a@example.org"}, nil)
+
+	oidcCookie := loginWith(t, s, MethodOIDC)
+	passwordCookie := loginWith(t, s, MethodPassword)
+
+	user, ok, err := s.Valid(requestWith(oidcCookie))
+	if err != nil || !ok || user != "gabriel@example.org" {
+		t.Fatalf("OIDC session: Valid = %q, %v, %v; want the user, true", user, ok, err)
+	}
+	if _, ok, _ := s.Valid(requestWith(passwordCookie)); !ok {
+		t.Error("the password session must stay valid next to OIDC")
+	}
+
+	// A new allowlist ends the OIDC sessions and leaves the password ones.
+	s.OIDCCredentials = OIDCFingerprint("https://id.example.org", "smokealarm", "groups", []string{"someone-else@example.org"}, nil)
+	if _, ok, _ := s.Valid(requestWith(oidcCookie)); ok {
+		t.Error("an OIDC session must end when the allowlist changes")
+	}
+	if _, ok, _ := s.Valid(requestWith(passwordCookie)); !ok {
+		t.Error("the password session must not end because of the OIDC allowlist")
+	}
+
+	// Switching OIDC off ends its sessions too.
+	s.OIDCCredentials = ""
+	if _, ok, _ := s.Valid(requestWith(oidcCookie)); ok {
+		t.Error("an OIDC session must end when OIDC is switched off")
+	}
+}
+
+func TestPasswordChangeLeavesOIDCSessionsAlone(t *testing.T) {
+	now := testNow
+	s, _ := newTestSessions(t, &now, true)
+	s.Credentials = CredentialsFingerprint("admin", "old hash")
+	s.OIDCCredentials = OIDCFingerprint("https://id.example.org", "smokealarm", "groups", nil, []string{"ops"})
+	oidcCookie := loginWith(t, s, MethodOIDC)
+	passwordCookie := loginWith(t, s, MethodPassword)
+
+	s.Credentials = CredentialsFingerprint("admin", "new hash")
+	if _, ok, _ := s.Valid(requestWith(passwordCookie)); ok {
+		t.Error("the password session must end when the password changes")
+	}
+	if _, ok, _ := s.Valid(requestWith(oidcCookie)); !ok {
+		t.Error("the OIDC session does not depend on the password")
+	}
+}
+
+func TestSessionWithoutFingerprintNeverMatchesOIDC(t *testing.T) {
+	// Sessions from before the fingerprint existed have an empty value. An
+	// empty OIDCCredentials (OIDC off) must not accept them as OIDC sessions.
+	now := testNow
+	s, _ := newTestSessions(t, &now, true)
+	cookie := loginWith(t, s, MethodPassword) // stored with the empty password fingerprint
+	s.Credentials = CredentialsFingerprint("admin", "hash")
+	s.OIDCCredentials = ""
+	if _, ok, _ := s.Valid(requestWith(cookie)); ok {
+		t.Error("a session with an empty fingerprint must not be valid")
+	}
+}
+
+func TestStartRefusesOIDCWhenItIsNotConfigured(t *testing.T) {
+	now := testNow
+	s, _ := newTestSessions(t, &now, true)
+	rec := httptest.NewRecorder()
+	err := s.Start(rec, httptest.NewRequest(http.MethodGet, "/", nil), "x", MethodOIDC)
+	if err == nil {
+		t.Fatal("expected an error: OIDC is not configured")
+	}
+	if len(rec.Result().Cookies()) != 0 {
+		t.Error("no cookie must be set when the session could not be started")
+	}
+	if err := s.Start(rec, httptest.NewRequest(http.MethodGet, "/", nil), "x", Method("magic")); err == nil {
+		t.Error("expected an error for an unknown login method")
+	}
+}
+
+func TestOIDCFingerprint(t *testing.T) {
+	base := OIDCFingerprint("https://id.example.org", "smokealarm", "groups", []string{"a@example.org", "b@example.org"}, []string{"ops", "dev"})
+	if got := OIDCFingerprint("https://id.example.org", "smokealarm", "groups", []string{"b@example.org", "a@example.org"}, []string{"dev", "ops"}); got != base {
+		t.Error("a different order of the allowlists must not change the fingerprint")
+	}
+	tests := []struct {
+		name                          string
+		issuer, clientID, groupsClaim string
+		emails, groups                []string
+	}{
+		{"other issuer", "https://other.example.org", "smokealarm", "groups", []string{"a@example.org", "b@example.org"}, []string{"ops", "dev"}},
+		{"other client", "https://id.example.org", "other", "groups", []string{"a@example.org", "b@example.org"}, []string{"ops", "dev"}},
+		{"other groups claim", "https://id.example.org", "smokealarm", "roles", []string{"a@example.org", "b@example.org"}, []string{"ops", "dev"}},
+		{"fewer emails", "https://id.example.org", "smokealarm", "groups", []string{"a@example.org"}, []string{"ops", "dev"}},
+		{"fewer groups", "https://id.example.org", "smokealarm", "groups", []string{"a@example.org", "b@example.org"}, []string{"ops"}},
+		{"an email moved to the groups", "https://id.example.org", "smokealarm", "groups", []string{"a@example.org"}, []string{"b@example.org", "ops", "dev"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := OIDCFingerprint(tt.issuer, tt.clientID, tt.groupsClaim, tt.emails, tt.groups)
+			if got == base {
+				t.Error("fingerprint did not change")
+			}
+			if got == "" {
+				t.Error("fingerprint is empty, which means OIDC is off")
+			}
+		})
+	}
+	if base == CredentialsFingerprint("https://id.example.org", "smokealarm") {
+		t.Error("an OIDC fingerprint must never equal a password fingerprint")
 	}
 }

@@ -49,6 +49,7 @@ func TestLoadDefaults(t *testing.T) {
 		CronJobGrace:     5 * time.Minute,
 		SMTP:             SMTPConfig{Port: 587, TLS: "starttls"},
 		Notify:           NotifyConfig{NtfyServer: "https://ntfy.sh"},
+		OIDC:             OIDCConfig{Name: "OIDC", Scopes: []string{"openid", "email"}, GroupsClaim: "groups"},
 
 		AdminUser:         "admin",
 		AdminPasswordHash: testHash,

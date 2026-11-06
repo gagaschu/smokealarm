@@ -31,8 +31,29 @@ auth:
 #   SMOKEALARM_WEBHOOK_URL, SMOKEALARM_WEBHOOK_HEADER, SMOKEALARM_NTFY_TOPIC,
 #   SMOKEALARM_NTFY_TOKEN, SMOKEALARM_TELEGRAM_BOT_TOKEN,
 #   SMOKEALARM_SLACK_WEBHOOK_URL, SMOKEALARM_TEAMS_WEBHOOK_URL
+#   SMOKEALARM_OIDC_CLIENT_SECRET             (only if oidc.issuerUrl is set)
 # A target is on as soon as its key is in the Secret.
 existingSecret: ""
+
+# --- OIDC login ----------------------------------------------------------------
+# A second way to log in next to the admin password, which stays as the way in
+# when the identity provider is down (docs/oidc.md). OIDC is on as soon as
+# issuerUrl is set. Then clientId, clientSecret, one allowlist and the web UI's
+# address (config.baseUrl, or the ingress host) are required. At the provider,
+# register the redirect URI <base URL>/login/oidc/callback.
+oidc:
+  issuerUrl: ""             # SMOKEALARM_OIDC_ISSUER_URL: https, e.g. https://id.example.org/realms/home
+  clientId: ""              # SMOKEALARM_OIDC_CLIENT_ID
+  clientSecret: ""          # SMOKEALARM_OIDC_CLIENT_SECRET (Secret); with existingSecret, leave it empty and use the key there
+  name: ""                  # SMOKEALARM_OIDC_NAME: shown in the button "Login with ...", default OIDC
+  scopes: []                # SMOKEALARM_OIDC_SCOPES, default [openid, email]
+  groupsClaim: ""           # SMOKEALARM_OIDC_GROUPS_CLAIM, default groups
+  allowedEmails: []         # SMOKEALARM_OIDC_ALLOWED_EMAILS: verified emails that may log in
+  allowedGroups: []         # SMOKEALARM_OIDC_ALLOWED_GROUPS: groups that may log in (one of the two lists is required)
+  # SMOKEALARM_OIDC_CA_FILE: for a provider whose certificate comes from an
+  # internal CA. A ConfigMap in the release namespace with the CA under the key
+  # ca.crt, mounted read-only; it replaces the system's trusted CAs.
+  caConfigMap: ""
 
 # --- Behavior ------------------------------------------------------------------
 config:

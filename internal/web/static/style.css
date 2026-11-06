@@ -588,6 +588,8 @@ dd { margin: 0; overflow-wrap: anywhere; }
 .login-head p { margin: 0; color: var(--muted); font-size: 0.875rem; }
 .login .stack { justify-items: stretch; }
 .login button { min-height: 2.5rem; font-size: 0.9375rem; margin-top: 0.25rem; }
+.login-or { margin: 1rem 0; text-align: center; color: var(--muted); font-size: 0.875rem; }
+.login .button { display: flex; min-height: 2.5rem; font-size: 0.9375rem; }
 
 
 /* 11. Small screens -------------------------------------------------------- */

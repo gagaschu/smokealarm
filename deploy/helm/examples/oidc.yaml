@@ -1,0 +1,31 @@
+# Log in with an OpenID Connect identity provider (Keycloak, Authentik, ...) in
+# addition to the admin password. docs/oidc.md explains the setup at the
+# provider; the redirect URI to register there is
+#   https://smokealarm.example.org/login/oidc/callback
+#
+# Keep the client secret out of the file and out of your shell history:
+#
+#   helm install smokealarm ./deploy/helm/smokealarm -n smokealarm \
+#     -f deploy/helm/examples/oidc.yaml \
+#     --set-string oidc.clientSecret="$CLIENT_SECRET" \
+#     --set-string auth.passwordHash="$HASH"
+#
+# or put SMOKEALARM_OIDC_CLIENT_SECRET into your existingSecret.
+oidc:
+  issuerUrl: https://id.example.org/realms/home
+  clientId: smokealarm
+  name: MeineID                  # the button says "Login with MeineID"
+  # Who may log in: a verified email or a group, one match is enough.
+  allowedEmails: [gabriel@example.org]
+  allowedGroups: [smokealarm-admins]
+  # Some providers only put the groups into the ID token with an extra scope.
+  scopes: [openid, email, groups]
+  # For a provider whose certificate comes from an internal CA:
+  #   kubectl -n smokealarm create configmap oidc-ca --from-file=ca.crt=/path/to/ca.crt
+  # caConfigMap: oidc-ca
+
+ingress:
+  enabled: true
+  host: smokealarm.example.org
+  tls:
+    enabled: true
