@@ -34,7 +34,7 @@ type Notification struct {
 	Resolved  []Alert // problems that went away
 	BaseURL   string  // link to the web UI, empty if not configured
 	// Location is the time zone of the times in the message. nil means UTC.
-	// The webhook ignores it and always sends UTC.
+	// The webhook sends its time fields in UTC; only its subject uses it.
 	Location *time.Location
 }
 

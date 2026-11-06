@@ -109,14 +109,19 @@ func (s *Server) createDowntime(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := s.Now()
+	keep, err := s.downtimeEnd(r.Context(), rec.Key, now)
+	if err != nil {
+		s.serverError(w, "load downtimes", err)
+		return
+	}
 	value := r.PostFormValue("until")
-	until, problem := parseUntil(value, now, s.zone())
+	until, problem := parseUntil(value, now, s.zone(), keep)
 	if problem != "" {
 		s.renderDowntimeForm(w, r, rec, value, problem, http.StatusBadRequest)
 		return
 	}
 
-	err := s.Store.SetDowntime(r.Context(), store.Downtime{
+	err = s.Store.SetDowntime(r.Context(), store.Downtime{
 		Key:       rec.Key,
 		Check:     rec.Check,
 		Object:    rec.Object,
@@ -130,6 +135,21 @@ func (s *Server) createDowntime(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Logger.Info("downtime set", "key", rec.Key, "until", until.In(s.zone()).Format(timeFormat))
 	http.Redirect(w, r, "/downtimes", http.StatusSeeOther)
+}
+
+// downtimeEnd is the end of the running downtime of the problem with the given
+// key, or the zero time if it has none.
+func (s *Server) downtimeEnd(ctx context.Context, key string, now time.Time) (time.Time, error) {
+	active, err := s.Store.ActiveDowntimes(ctx, now)
+	if err != nil {
+		return time.Time{}, err
+	}
+	for _, d := range active {
+		if d.Key == key {
+			return d.ExpiresAt, nil
+		}
+	}
+	return time.Time{}, nil
 }
 
 // endDowntime ends a running downtime now. If the problem is still firing, the
@@ -208,10 +228,15 @@ func (s *Server) renderDowntimeForm(w http.ResponseWriter, r *http.Request, rec 
 
 // parseUntil reads the value of the form field in the given zone and checks
 // that it lies in the future. If it does not, the second result is a message
-// for the user. Go decides which instant is meant for a wall-clock time that
-// does not exist (the clocks jump forward) or exists twice (they go back);
-// either way the result is within an hour of what was typed.
-func parseUntil(value string, now time.Time, loc *time.Location) (time.Time, string) {
+// for the user.
+//
+// On the night the clocks go back, a wall-clock time exists twice. If one of
+// the two moments is keep (the end of the running downtime, which the form
+// shows unchanged), that one is taken, so saving the form as it is does not
+// move the end by an hour. Otherwise the earlier moment that is still in the
+// future is taken. A time that does not exist (the clocks jump forward) is
+// read as Go reads it, within an hour of what was typed.
+func parseUntil(value string, now time.Time, loc *time.Location, keep time.Time) (time.Time, string) {
 	until, err := time.ParseInLocation(dateTimeLocalFormat, value, loc)
 	if err != nil {
 		until, err = time.ParseInLocation(dateTimeLocalSecondsFormat, value, loc)
@@ -219,8 +244,43 @@ func parseUntil(value string, now time.Time, loc *time.Location) (time.Time, str
 	if err != nil {
 		return time.Time{}, "Please enter a date and time."
 	}
-	if !until.After(now) {
-		return time.Time{}, "The end of a downtime must be in the future."
+	moments := sameWallClock(until, loc)
+	if !keep.IsZero() {
+		for _, m := range moments {
+			if m.Truncate(time.Minute).Equal(keep.Truncate(time.Minute)) {
+				return m, ""
+			}
+		}
 	}
-	return until, ""
+	for _, m := range moments {
+		if m.After(now) {
+			return m, ""
+		}
+	}
+	return time.Time{}, "The end of a downtime must be in the future."
+}
+
+// sameWallClock returns t and, if the clocks went back around t, the other
+// moment that shows the same wall-clock time in loc, earliest first.
+func sameWallClock(t time.Time, loc *time.Location) []time.Time {
+	wall := t.In(loc).Format(dateTimeLocalSecondsFormat)
+	// The offsets half a day before and after t differ if a change of the
+	// clocks lies in between; the difference is how far the other moment is
+	// away.
+	_, before := t.Add(-12 * time.Hour).In(loc).Zone()
+	_, after := t.Add(12 * time.Hour).In(loc).Zone()
+	if before == after {
+		return []time.Time{t}
+	}
+	shift := time.Duration(before-after) * time.Second
+	for _, other := range []time.Time{t.Add(-shift), t.Add(shift)} {
+		if other.In(loc).Format(dateTimeLocalSecondsFormat) != wall {
+			continue
+		}
+		if other.Before(t) {
+			return []time.Time{other, t}
+		}
+		return []time.Time{t, other}
+	}
+	return []time.Time{t}
 }

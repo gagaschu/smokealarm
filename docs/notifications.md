@@ -196,6 +196,6 @@ About the fields:
 - `new`, `reminders` and `resolved` are always lists, possibly empty. `reminders` are critical problems that are still open (see `SMOKEALARM_CRITICAL_REPEAT_INTERVAL`).
 - `key` identifies a problem across messages. The same key in `resolved` ends what an earlier `new` started.
 - `affected` is always a list. For a `node-not-ready` problem in `new` or `reminders` it holds the problems the node holds back (`object` and `reason`, see [When a node is down](how-it-works.md#when-a-node-is-down)); otherwise it is empty.
-- Times are RFC 3339 in UTC, whatever `SMOKEALARM_TIME_ZONE` says, and `resolved_at` is `null` unless the problem is resolved. `namespace` is empty for cluster-scoped objects such as nodes. `base_url` is empty if `SMOKEALARM_BASE_URL` is not set.
+- `since` and `resolved_at` are RFC 3339 in UTC, whatever `SMOKEALARM_TIME_ZONE` says, so read times from them. `subject` and `message` are the texts the other targets get, so a time inside them, such as the expiry date of a certificate, is in `SMOKEALARM_TIME_ZONE`. `resolved_at` is `resolved_at` is `null` unless the problem is resolved. `namespace` is empty for cluster-scoped objects such as nodes. `base_url` is empty if `SMOKEALARM_BASE_URL` is not set.
 
 The webhook doesn't use the message templates; its JSON format stays fixed.

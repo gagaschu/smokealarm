@@ -156,7 +156,7 @@ Ignoring:
 ## Configuration
 - Only environment variables with the prefix SMOKEALARM_. Everything has sensible defaults except required values (admin user, password hash, SMTP data if mail is active).
 - Validate at startup; abort with a clear message on errors.
-- Time zone (since phase 25): SMOKEALARM_TIME_ZONE (IANA name, default UTC) is the zone for every time shown or entered: web UI, downtime form, mails, chat messages and the times in check messages. Only the display changes: stored times and all comparisons stay absolute (Unix seconds), and the webhook JSON stays in UTC. Message templates get their times in this zone.
+- Time zone (since phase 25): SMOKEALARM_TIME_ZONE (IANA name, default UTC; `Local` is refused) is the zone for every time shown or entered: web UI, downtime form, mails, chat messages and the times in check messages. Only the display changes: stored times and all comparisons stay absolute (Unix seconds), and the time fields of the webhook JSON (since, resolved_at) stay in UTC; its subject and message are the same texts as for the other targets, with times in the configured zone. In the downtime form, a wall-clock time that exists twice (the clocks go back) is read as the earlier moment that is still in the future, unless the other one is the end of the running downtime, which is then kept. Message templates get their times in this zone.
 - Runs in the cluster (in-cluster config) and locally against KUBECONFIG – for development on macOS (Apple Silicon) against a local k3s.
 - Complete table of all variables in docs/configuration.md.
 

@@ -48,7 +48,7 @@ An optional second way to log in next to the admin password. It is on when `SMOK
 | `SMOKEALARM_PVC_PENDING_AFTER` | `5m` | `pvc-pending` reports claims that are pending longer than this. |
 | `SMOKEALARM_CRONJOB_GRACE` | `5m` | How late a CronJob run may be before `cronjob-missed` reports it. |
 | `SMOKEALARM_CRONJOB_TIME_ZONE` | (UTC) | The time zone the Kubernetes controller reads schedules in, for CronJobs without `spec.timeZone`, for example `Europe/Berlin`. See [CronJob time zones](checks.md#notes). |
-| `SMOKEALARM_TIME_ZONE` | `UTC` | The time zone for all times the web UI, the mails and the chat messages show, and for the time in the downtime form, for example `Europe/Zurich`. Stored times and the webhook stay in UTC. See [time zone](how-it-works.md#time-zone). |
+| `SMOKEALARM_TIME_ZONE` | `UTC` | The time zone for all times the web UI, the mails and the chat messages show, and for the time in the downtime form, for example `Europe/Zurich`. Stored times and the time fields of the webhook stay in UTC. `Local` is refused. See [time zone](how-it-works.md#time-zone). |
 | `SMOKEALARM_KUBELET_CA_FILE` | (the CA of the API client) | A PEM file with the CA that signed the kubelet serving certificates, for `pvc-usage`. Only needed if that is not the CA of the service account (`ca.crt`). The chart sets it from `kubelet.caConfigMap`. See [Volume usage and the kubelet](security.md#volume-usage-and-the-kubelet). |
 
 ## Mail

@@ -358,7 +358,7 @@ func TestParseUntilReadsTheTimeInTheZone(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, problem := parseUntil(tt.value, testNow, loc)
+			got, problem := parseUntil(tt.value, testNow, loc, time.Time{})
 			if problem != "" || !got.Equal(tt.want) {
 				t.Errorf("got %v (%q), want %v", got, problem, tt.want)
 			}
@@ -368,13 +368,60 @@ func TestParseUntilReadsTheTimeInTheZone(t *testing.T) {
 
 func TestParseUntilRefusesThePastInTheZone(t *testing.T) {
 	// 12:30 in Berlin is 11:30 UTC, which is before testNow (12:00 UTC).
-	_, problem := parseUntil("2026-11-03T12:30", testNow, berlin(t))
+	_, problem := parseUntil("2026-11-03T12:30", testNow, berlin(t), time.Time{})
 	if problem == "" {
 		t.Error("a time in the past was accepted")
 	}
 	// 13:30 in Berlin is 12:30 UTC, which is after it.
-	if _, problem := parseUntil("2026-11-03T13:30", testNow, berlin(t)); problem != "" {
+	if _, problem := parseUntil("2026-11-03T13:30", testNow, berlin(t), time.Time{}); problem != "" {
 		t.Errorf("a time in the future was refused: %s", problem)
+	}
+}
+
+// On 2026-10-25 the clocks in Berlin go back from 03:00 CEST to 02:00 CET, so
+// 02:30 is both 00:30 UTC and 01:30 UTC.
+var (
+	fallBackSummer = time.Date(2026, 10, 25, 0, 30, 0, 0, time.UTC) // 02:30 CEST
+	fallBackWinter = time.Date(2026, 10, 25, 1, 30, 0, 0, time.UTC) // 02:30 CET
+)
+
+func TestParseUntilTakesTheFutureMomentOfARepeatedHour(t *testing.T) {
+	loc := berlin(t)
+	tests := []struct {
+		name string
+		now  time.Time
+		want time.Time
+	}{
+		{"both in the future: the earlier", time.Date(2026, 10, 25, 0, 0, 0, 0, time.UTC), fallBackSummer},
+		// 02:15 CET: the summer 02:30 has passed, the winter one is 15 minutes away.
+		{"only the second in the future", time.Date(2026, 10, 25, 1, 15, 0, 0, time.UTC), fallBackWinter},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, problem := parseUntil("2026-10-25T02:30", tt.now, loc, time.Time{})
+			if problem != "" || !got.Equal(tt.want) {
+				t.Errorf("got %v (%q), want %v", got, problem, tt.want)
+			}
+		})
+	}
+	// After both moments, the time is in the past.
+	if _, problem := parseUntil("2026-10-25T02:30", time.Date(2026, 10, 25, 2, 0, 0, 0, time.UTC), loc, time.Time{}); problem == "" {
+		t.Error("a time in the past was accepted")
+	}
+}
+
+func TestParseUntilKeepsTheEndOfTheRunningDowntime(t *testing.T) {
+	// The running downtime ends at the second 02:30; the form shows "02:30"
+	// and is saved unchanged. It must not become the first 02:30.
+	now := time.Date(2026, 10, 25, 0, 0, 0, 0, time.UTC)
+	got, problem := parseUntil("2026-10-25T02:30", now, berlin(t), fallBackWinter)
+	if problem != "" || !got.Equal(fallBackWinter) {
+		t.Errorf("got %v (%q), want %v", got, problem, fallBackWinter)
+	}
+	// A running downtime at another time does not matter.
+	got, problem = parseUntil("2026-10-25T02:30", now, berlin(t), fallBackWinter.Add(time.Hour))
+	if problem != "" || !got.Equal(fallBackSummer) {
+		t.Errorf("got %v (%q), want %v", got, problem, fallBackSummer)
 	}
 }
 

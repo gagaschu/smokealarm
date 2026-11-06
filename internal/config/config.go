@@ -257,6 +257,13 @@ func parseList(s string) []string {
 // changes for those who do not set it.
 func loadLocation(r *reader) *time.Location {
 	name := r.text("SMOKEALARM_TIME_ZONE", "UTC")
+	// time.LoadLocation also takes "Local", which is not an IANA name: the
+	// zone would depend on the TZ of the container, and the UI would show
+	// the word "Local" as the zone.
+	if name == "Local" {
+		r.fail("SMOKEALARM_TIME_ZONE: %q is not an IANA time zone name, for example Europe/Zurich", name)
+		return time.UTC
+	}
 	loc, err := time.LoadLocation(name)
 	if err != nil {
 		r.fail("SMOKEALARM_TIME_ZONE: %q is not a known time zone", name)

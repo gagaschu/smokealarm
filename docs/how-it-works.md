@@ -60,9 +60,9 @@ A downtime covers exactly one problem, with the same rules as an acknowledgement
 
 ## Time zone
 
-All times the web interface, the mails and the chat messages show are in one time zone, set with `SMOKEALARM_TIME_ZONE` (Helm `config.timeZone`), for example `Europe/Zurich`. The default is UTC. The zone is named in the column headers and in the downtime form, and mails and chat messages end their times with its abbreviation (`CET`, `CEST`). The time you enter in the downtime form is read in this zone. On the night the clocks change, a time that does not exist or exists twice is read as one of the two possible moments, within an hour of what you typed; check the end on the Downtimes page.
+All times the web interface, the mails and the chat messages show are in one time zone, set with `SMOKEALARM_TIME_ZONE` (Helm `config.timeZone`), for example `Europe/Zurich`. The default is UTC. The zone is named in the column headers and in the downtime form, and mails and chat messages end their times with its abbreviation (`CET`, `CEST`). The time you enter in the downtime form is read in this zone. On the night the clocks go back, a time in the repeated hour exists twice: smokealarm takes the earlier one that is still in the future, and if you save the end of a running downtime unchanged, it stays that end. On the night they jump forward, a time that does not exist is read within an hour of what you typed; check the end on the Downtimes page.
 
-Only the display changes. smokealarm stores and compares times as absolute points in time, so changing the zone never changes when a problem fires or resolves. The JSON of the webhook stays in UTC, because programs read it.
+Only the display changes. smokealarm stores and compares times as absolute points in time, so changing the zone never changes when a problem fires or resolves. The time fields of the webhook JSON (`since`, `resolved_at`) stay in UTC, because programs read them; its `subject` and `message` are the same texts as everywhere else.
 
 ## When a node is down
 

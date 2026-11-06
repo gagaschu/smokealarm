@@ -1,4 +1,4 @@
-{{- define "zeit"}}{{.Format "02.01.2006 15:04"}} UTC{{end -}}
+{{- define "zeit"}}{{.Format "02.01.2006 15:04 MST"}}{{end -}}
 {{- define "problem"}}
 {{if eq .Severity "critical"}}KRITISCH{{else}}WARNUNG{{end}}: {{.Reason}}
   Objekt:    {{.Object}}

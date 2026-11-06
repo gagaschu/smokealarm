@@ -153,6 +153,7 @@ func TestLoadRejectsBadAlertAndRetention(t *testing.T) {
 		{"negative cronjob grace", map[string]string{"SMOKEALARM_CRONJOB_GRACE": "-1m"}, "SMOKEALARM_CRONJOB_GRACE"},
 		{"unknown time zone", map[string]string{"SMOKEALARM_CRONJOB_TIME_ZONE": "Europe/Atlantis"}, "SMOKEALARM_CRONJOB_TIME_ZONE"},
 		{"unknown display time zone", map[string]string{"SMOKEALARM_TIME_ZONE": "Europe/Atlantis"}, "SMOKEALARM_TIME_ZONE"},
+		{"local display time zone", map[string]string{"SMOKEALARM_TIME_ZONE": "Local"}, "SMOKEALARM_TIME_ZONE"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

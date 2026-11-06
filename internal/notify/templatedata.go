@@ -2,6 +2,8 @@ package notify
 
 import (
 	"time"
+
+	"github.com/gagaschu/smokealarm/internal/checks"
 )
 
 // templateData is what every message template gets: the subject, the mail
@@ -61,9 +63,7 @@ func newTemplateData(n Notification, kind string) templateData {
 // templateProblems converts the alerts, with their times in the given zone
 // (nil means UTC).
 func templateProblems(alerts []Alert, loc *time.Location) []templateProblem {
-	if loc == nil {
-		loc = time.UTC
-	}
+	loc = checks.ZoneOrUTC(loc)
 	var problems []templateProblem
 	for _, a := range alerts {
 		p := templateProblem{

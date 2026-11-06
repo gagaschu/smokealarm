@@ -153,10 +153,7 @@ func (s *Server) render(w http.ResponseWriter, status int, name string, data pag
 
 // zone is the time zone for all times on the pages. UTC if none is set.
 func (s *Server) zone() *time.Location {
-	if s.Location == nil {
-		return time.UTC
-	}
-	return s.Location
+	return checks.ZoneOrUTC(s.Location)
 }
 
 func (s *Server) serverError(w http.ResponseWriter, what string, err error) {
