@@ -28,10 +28,12 @@ The container runs as non-root with a read-only root filesystem, all capabilitie
 
 There is one local admin, with the password stored as a bcrypt hash. Sessions are kept in the database, which only stores a hash of the session id. The cookie is `HttpOnly` and `SameSite=Lax`, and `Secure` unless you turn that off. Failed logins are limited to 5 per 15 minutes per client address. A session ends when the password or the admin user changes.
 
+You can add a login through an identity provider ([OIDC](oidc.md)). The admin stays as the way in when the provider is down. Everybody who gets in through OIDC has the same rights as the admin, because there are no roles. Only people on an allowlist (verified email or group) are let in, and OIDC does not start without one. The allowlist is checked when somebody logs in: removing a person at the provider does not end a session that is already open, which lasts until `SMOKEALARM_SESSION_TTL`. The details are in [Who may log in](oidc.md#who-may-log-in) and [Sessions and logging out](oidc.md#sessions-and-logging-out). The failed-login limit only applies to the password form.
+
 Behind an Ingress or another proxy, all clients have the same address and share one limit. Five wrong logins by anybody then block the login for everybody for up to 15 minutes, and somebody who keeps doing that can keep you locked out. Existing sessions keep working. So don't expose the UI to the internet without restricting access first, for example with an allowlist or authentication at the Ingress, or a VPN.
 
 Actions that change state, such as acknowledging a problem or setting a downtime, need a valid session. They refuse requests that come from another site or another host of the same domain (Go's `http.CrossOriginProtection`). Over plain HTTP your proxy has to pass on the original `Host` header, otherwise these actions fail with 403. Over HTTPS browsers send a `Sec-Fetch-Site` header and the `Host` doesn't matter.
 
-Passwords, hashes, session ids, tokens and webhook URLs are never logged.
+Passwords, hashes, session ids, tokens, the OIDC client secret and webhook URLs are never logged.
 
 `/healthz` and `/readyz` need no login, so Kubernetes can probe them.
