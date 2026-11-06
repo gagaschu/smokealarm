@@ -43,7 +43,7 @@ checks that need no configuration, and tells you when a problem starts or ends.
 ### Packaging
 
 - Container image `ghcr.io/gagaschu/smokealarm` for `linux/amd64` and `linux/arm64`: one static binary on `distroless/static:nonroot`, writes only to `/data` (SQLite).
-- Helm chart in `deploy/helm/smokealarm` with read-only RBAC, switches for the optional permissions, and examples in `deploy/helm/examples` ([docs/installation.md](docs/installation.md)).
+- Helm chart `oci://ghcr.io/gagaschu/charts/smokealarm` (source in `deploy/helm/smokealarm`) with read-only RBAC, switches for the optional permissions, and examples in `deploy/helm/examples` ([docs/installation.md](docs/installation.md)).
 
 [Unreleased]: https://github.com/gagaschu/smokealarm/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/gagaschu/smokealarm/releases/tag/v0.1.0

@@ -2,7 +2,7 @@
 # can stay Secure (the default), and the link in the mails becomes
 # https://<host> automatically.
 #
-#   helm install smokealarm ./deploy/helm/smokealarm -n smokealarm --create-namespace \
+#   helm install smokealarm oci://ghcr.io/gagaschu/charts/smokealarm -n smokealarm --create-namespace \
 #     -f deploy/helm/examples/ingress-tls.yaml --set-string auth.passwordHash="$HASH"
 ingress:
   enabled: true

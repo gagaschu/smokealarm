@@ -6,7 +6,7 @@
 # Topic, access token and bot token are secrets. Pass them on the command line,
 # so they end up in the chart's Secret and not in a file:
 #
-#   helm install smokealarm ./deploy/helm/smokealarm -n smokealarm --create-namespace \
+#   helm install smokealarm oci://ghcr.io/gagaschu/charts/smokealarm -n smokealarm --create-namespace \
 #     -f deploy/helm/examples/notify-targets.yaml \
 #     --set-string auth.passwordHash="$HASH" \
 #     --set-string notifications.ntfy.topic="$NTFY_TOPIC" \

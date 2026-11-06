@@ -33,7 +33,7 @@ config:
 ```
 
 ```sh
-helm upgrade --install smokealarm ./deploy/helm/smokealarm -n smokealarm -f my-values.yaml \
+helm upgrade --install smokealarm oci://ghcr.io/gagaschu/charts/smokealarm -n smokealarm -f my-values.yaml \
   --set-string oidc.clientSecret="$CLIENT_SECRET" --set-string auth.passwordHash="$HASH"
 ```
 

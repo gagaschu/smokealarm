@@ -14,19 +14,19 @@ It was developed and tested with k3s on a Raspberry Pi (arm64). Nothing in it de
 
 ## Quickstart
 
-You need a Kubernetes cluster, `kubectl`, [Helm](https://helm.sh/) 3 or 4 and Docker. The image is published as `ghcr.io/gagaschu/smokealarm` for `linux/amd64` and `linux/arm64`, and the chart uses it by default.
+You need a Kubernetes cluster, `kubectl`, [Helm](https://helm.sh/) 3 or 4 and Docker. The image is published as `ghcr.io/gagaschu/smokealarm` for `linux/amd64` and `linux/arm64`, the chart as `oci://ghcr.io/gagaschu/charts/smokealarm`, and the chart uses the image by default.
 
 Create the bcrypt hash of the admin password:
 
 ```sh
-read -s PW; printf '%s' "$PW" | docker run -i --rm ghcr.io/gagaschu/smokealarm:0.1.0 hash-password
+read -s PW; printf '%s' "$PW" | docker run -i --rm ghcr.io/gagaschu/smokealarm:latest hash-password
 ```
 
 Install the chart. The hash contains `$` characters, so keep it in single quotes:
 
 ```sh
 HASH='<the hash>'
-helm install smokealarm ./deploy/helm/smokealarm \
+helm install smokealarm oci://ghcr.io/gagaschu/charts/smokealarm \
   --namespace smokealarm --create-namespace \
   --set-string auth.passwordHash="$HASH" \
   --set config.cookieSecure=false   # only for the port-forward below
@@ -51,7 +51,7 @@ smtp:
 ```
 
 ```sh
-helm upgrade smokealarm ./deploy/helm/smokealarm -n smokealarm --reuse-values -f my-values.yaml
+helm upgrade smokealarm oci://ghcr.io/gagaschu/charts/smokealarm -n smokealarm --reuse-values -f my-values.yaml
 ```
 
 To try it, break something on purpose: `kubectl create deployment brokendep --image=does-not-exist/nope` is reported as critical after two minutes.

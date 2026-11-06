@@ -33,5 +33,5 @@ A release is a Git tag:
 1. In a pull request: set `version` and `appVersion` in [Chart.yaml](../deploy/helm/smokealarm/Chart.yaml) to the new version, rename `## [Unreleased]` in CHANGELOG.md to `## [x.y.z] - <date>` with a new empty `## [Unreleased]` above it, and update the compare links at the bottom.
 2. After the merge, tag that commit on `main` and push the tag: `git tag v0.1.0 && git push origin v0.1.0`.
 
-The tag `v0.1.0` pushes `:0.1.0`, `:0.1` and `:latest`. A pre-release such as `v0.2.0-rc.1` pushes only `:0.2.0-rc.1`. The workflow fails before building if the tag does not match the chart, because the chart uses `appVersion` as its default image tag.
+The tag `v0.1.0` pushes `:0.1.0`, `:0.1` and `:latest`, and after the image the chart as `oci://ghcr.io/gagaschu/charts/smokealarm` version `0.1.0`. Chart versions are only published from tags, never from `main`. A pre-release such as `v0.2.0-rc.1` pushes only `:0.2.0-rc.1`. The workflow fails before building if the tag does not match the chart, because the chart uses `appVersion` as its default image tag.
 

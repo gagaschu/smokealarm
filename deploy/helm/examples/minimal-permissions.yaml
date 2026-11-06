@@ -2,7 +2,7 @@
 # and no Argo CD access. The checks that need them (pvc-usage, cert-not-ready,
 # cert-expiry, argocd-health, argocd-sync) are switched off automatically.
 #
-#   helm install smokealarm ./deploy/helm/smokealarm -n smokealarm --create-namespace \
+#   helm install smokealarm oci://ghcr.io/gagaschu/charts/smokealarm -n smokealarm --create-namespace \
 #     -f deploy/helm/examples/minimal-permissions.yaml --set-string auth.passwordHash="$HASH"
 rbac:
   nodesStats: false
