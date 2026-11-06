@@ -103,7 +103,7 @@ func validateNotify(r *reader, c NotifyConfig) {
 	if c.TeamsWebhookURL != "" {
 		checkTargetURL(r, envTeamsURL, c.TeamsWebhookURL, false)
 		if isLegacyTeamsURL(c.TeamsWebhookURL) {
-			r.fail("%s: this is an Office 365 connector URL; Microsoft switched those off, create a Workflows webhook instead (see the README)", envTeamsURL)
+			r.fail("%s: this is an Office 365 connector URL; Microsoft switched those off, create a Workflows webhook instead (see docs/notifications.md)", envTeamsURL)
 		}
 	}
 }

@@ -15,7 +15,7 @@ const webhookVersion = 1
 
 // Webhook posts the notification as JSON to a URL of the user's choice, for
 // example a relay such as Apprise or n8n that passes it on. The format is
-// described in the README.
+// described in docs/notifications.md.
 type Webhook struct {
 	URL string // may contain a secret (many services put a token in the path)
 	// HeaderName and HeaderValue are an optional extra header, usually

@@ -1,6 +1,6 @@
 # Default values for smokealarm.
 # Every setting that maps to an environment variable names it in a comment;
-# the full description of each variable is in the README.
+# the full description of each variable is in docs/configuration.md.
 
 image:
   repository: ghcr.io/gagaschu/smokealarm
@@ -18,7 +18,7 @@ auth:
   adminUser: admin
   # SMOKEALARM_ADMIN_PASSWORD_HASH: a bcrypt hash, NOT the password itself.
   # Create one with "make hash-password" in a checkout, or with the image you
-  # built (README, step 2):
+  # built (docs/installation.md, "The admin password"):
   #   read -s PW; printf '%s' "$PW" | docker run -i --rm <your image>:<tag> hash-password
   # Pass it with --set-string (the hash contains $ characters), or use existingSecret.
   passwordHash: ""
@@ -82,8 +82,8 @@ smtp:
   password: ""
 
 # --- Other notification targets ---------------------------------------------
-# Any combination can be on, together with mail; the README explains how to set
-# up each one. Values marked (Secret) are stored in the chart's Secret, never as
+# Any combination can be on, together with mail; docs/notifications.md explains
+# how to set up each one. Values marked (Secret) are stored in the chart's Secret, never as
 # plain environment variables. With existingSecret, leave them empty here and put
 # the keys into your own Secret instead.
 notifications:
@@ -92,7 +92,7 @@ notifications:
   allowHttp: false
   # minSeverity (SMOKEALARM_<TARGET>_MIN_SEVERITY) below: "critical" sends only
   # critical problems to that target, empty or "warning" sends everything. Which
-  # problems go where can also be set per app with annotations (README, "Routing").
+  # problems go where can also be set per app with annotations (docs/routing.md).
   webhook:
     url: ""                 # SMOKEALARM_WEBHOOK_URL (Secret): JSON is posted here
     header: ""              # SMOKEALARM_WEBHOOK_HEADER (Secret), e.g. "Authorization: Bearer <token>"
@@ -117,7 +117,7 @@ notifications:
 
 # --- Message templates -------------------------------------------------------------
 # Your own wording and layout for the subject and text of mail, ntfy, Telegram,
-# Slack and Teams, as Go text/template files (README, "Message templates"; a
+# Slack and Teams, as Go text/template files (docs/message-templates.md; a
 # German example is in deploy/helm/examples/message-templates-de.yaml). File
 # name -> content. The chart puts them into a ConfigMap, mounts it and sets
 # SMOKEALARM_TEMPLATE_DIR; a change restarts the pod. smokealarm checks every
@@ -139,8 +139,8 @@ rbac:
   # volume usage directly (https://<node InternalIP>:10250/stats/summary). It
   # grants resource statistics only: no logs, no exec, no pod list. The pod must
   # reach the kubelet port of every node, and the kubelets must use webhook
-  # authentication and authorization (the default on k3s and kubeadm); see the
-  # README. The rule is left out when pvc-usage is in disabledChecks.
+  # authentication and authorization (the default on k3s and kubeadm); see
+  # docs/security.md. The rule is left out when pvc-usage is in disabledChecks.
   # (Replaces rbac.nodesProxy, which is refused now.)
   nodesStats: true
   # certificates.cert-manager.io: needed by cert-not-ready and cert-expiry.
