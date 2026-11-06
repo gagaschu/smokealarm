@@ -1,0 +1,43 @@
+{{- /*
+The plain-text mail body. Nodes that are newly down come first, with the
+problems they hold back, then the other new problems, then reminders, then
+resolved ones; each list is already sorted.
+*/ -}}
+{{- define "severity"}}{{if eq .Severity "critical"}}CRITICAL{{else}}WARNING{{end}}{{end -}}
+{{- define "time"}}{{if not .IsZero}}{{.Format "2006-01-02 15:04:05 UTC"}}{{end}}{{end -}}
+{{- define "affected"}}{{if .Affected}}  Affected, not reported on their own while the node is down:
+{{range .Affected}}    - {{.Object}}: {{.Reason}}
+{{end}}{{end}}{{end -}}
+{{.Summary}}
+{{if .NodesDown}}
+NODE DOWN
+{{range .NodesDown}}
+[{{template "severity" .}}] {{.Reason}}
+  Object:  {{.Object}}
+  Message: {{.Message}}
+  Since:   {{template "time" .Since}}
+{{template "affected" .}}{{end}}{{end}}{{if .New}}
+NEW PROBLEMS
+{{range .New}}
+[{{template "severity" .}}] {{.Reason}}
+  Object:  {{.Object}}
+  Message: {{.Message}}
+  Since:   {{template "time" .Since}}
+{{end}}{{end}}{{if .Reminders}}
+STILL CRITICAL
+{{range .Reminders}}
+[{{template "severity" .}}] {{.Reason}}
+  Object:  {{.Object}}
+  Message: {{.Message}}
+  Since:   {{template "time" .Since}}
+{{template "affected" .}}{{end}}{{end}}{{if .Resolved}}
+RESOLVED
+{{range .Resolved}}
+[RESOLVED] {{.Reason}}
+  Object:   {{.Object}}
+  Message:  {{.Message}}
+  Since:    {{template "time" .Since}}
+  Resolved: {{template "time" .ResolvedAt}}
+{{end}}{{end}}{{if .BaseURL}}
+Details: {{.BaseURL}}
+{{end -}}

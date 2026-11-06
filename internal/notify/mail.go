@@ -48,6 +48,8 @@ type Mail struct {
 	TLSConfig *tls.Config
 	// Now is injectable so the Date header is predictable in tests.
 	Now func() time.Time
+	// Templates are the user's message templates; nil means the built-in ones.
+	Templates *Templates
 }
 
 // Name identifies the target.
@@ -57,8 +59,10 @@ func (m *Mail) Name() string { return "mail" }
 func (m *Mail) Description() string { return "mail (" + m.Host + ")" }
 
 // Send delivers one mail with all changes. Errors never contain the password.
+// A *FallbackError means the mail went out with a built-in template.
 func (m *Mail) Send(ctx context.Context, n Notification) error {
-	body, err := Body(n)
+	subject, subjectFallback := m.Templates.subject("mail", n)
+	body, bodyFallback, err := m.Templates.mailBody(n)
 	if err != nil {
 		return fmt.Errorf("mail: %w", err)
 	}
@@ -66,11 +70,14 @@ func (m *Mail) Send(ctx context.Context, n Notification) error {
 	if err != nil {
 		return fmt.Errorf("mail: %w", err)
 	}
-	msg, err := m.buildMessage(from, recipients, Subject(n), body)
+	msg, err := m.buildMessage(from, recipients, subject, body)
 	if err != nil {
 		return fmt.Errorf("mail: %w", err)
 	}
-	return m.deliver(ctx, from.Address, recipients, msg)
+	if err := m.deliver(ctx, from.Address, recipients, msg); err != nil {
+		return err
+	}
+	return fallbacks(subjectFallback, bodyFallback)
 }
 
 // addresses parses the configured sender and recipients.

@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"path/filepath"
 	"slices"
@@ -21,12 +22,14 @@ import (
 var testStart = time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
 
 // fakeNotifier records what it was asked to send. When fail is set it
-// refuses, like a mail server that is down. An empty name means "fake".
+// refuses, like a mail server that is down. When fallback is set it sends,
+// but reports that a user template failed. An empty name means "fake".
 type fakeNotifier struct {
 	name     string
 	attempts int
 	sent     []notify.Notification
 	fail     bool
+	fallback bool
 	onSend   func() // runs while sending, if set
 }
 
@@ -48,6 +51,9 @@ func (f *fakeNotifier) Send(_ context.Context, n notify.Notification) error {
 		return errors.New("smtp server unreachable")
 	}
 	f.sent = append(f.sent, n)
+	if f.fallback {
+		return fmt.Errorf("test: %w", &notify.FallbackError{File: "chat.tmpl", Err: errors.New("index out of range")})
+	}
 	return nil
 }
 

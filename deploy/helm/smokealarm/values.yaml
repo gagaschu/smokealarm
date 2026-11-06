@@ -115,6 +115,20 @@ notifications:
     webhookUrl: ""          # SMOKEALARM_TEAMS_WEBHOOK_URL (Secret): a Workflows webhook
     minSeverity: ""         # SMOKEALARM_TEAMS_MIN_SEVERITY
 
+# --- Message templates -------------------------------------------------------------
+# Your own wording and layout for the subject and text of mail, ntfy, Telegram,
+# Slack and Teams, as Go text/template files (README, "Message templates"; a
+# German example is in deploy/helm/examples/message-templates-de.yaml). File
+# name -> content. The chart puts them into a ConfigMap, mounts it and sets
+# SMOKEALARM_TEMPLATE_DIR; a change restarts the pod. smokealarm checks every
+# file at startup. Empty means the built-in messages.
+#   templates:
+#     subject.tmpl: "[pi-cluster] {{.Summary}}"
+#     slack.chat.tmpl: |
+#       {{range .New}}- {{.Object}}: {{.Reason}}
+#       {{end}}
+templates: {}
+
 # --- Permissions ---------------------------------------------------------------
 # smokealarm only reads (get, list, watch). The switches below control the
 # optional permissions; if one is off, the checks that need it are disabled

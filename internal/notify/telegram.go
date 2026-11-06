@@ -25,6 +25,9 @@ type Telegram struct {
 	Token  string
 	ChatID string // a number (-1001234...) or a public channel (@name)
 	Client *http.Client
+	// Templates are the user's message templates; nil means the built-in ones.
+	// All chats share them.
+	Templates *Templates
 }
 
 // Name identifies the target, one per chat.
@@ -34,10 +37,12 @@ func (t *Telegram) Name() string { return "telegram:" + t.ChatID }
 func (t *Telegram) Description() string { return "telegram (chat " + t.ChatID + ")" }
 
 // Send posts the subject and the short text. It is plain text without
-// parse_mode, so names with "_" or "<" need no escaping.
+// parse_mode, so names with "_" or "<" need no escaping. A *FallbackError
+// means the message went out with a built-in template.
 func (t *Telegram) Send(ctx context.Context, n Notification) error {
-	subject := Subject(n)
-	text := subject + "\n\n" + ChatBody(n, telegramLimit-len(subject)-2)
+	subject, subjectFallback := t.Templates.subject("telegram", n)
+	chat, chatFallback := t.Templates.chatBody("telegram", n, telegramLimit-len(subject)-2)
+	text := subject + "\n\n" + chat
 	body, err := json.Marshal(map[string]any{
 		"chat_id":              t.ChatID,
 		"text":                 text,
@@ -46,11 +51,15 @@ func (t *Telegram) Send(ctx context.Context, n Notification) error {
 	if err != nil {
 		return fmt.Errorf("telegram: encode message: %w", err)
 	}
-	return post(ctx, t.Client, request{
+	err = post(ctx, t.Client, request{
 		target:      "telegram",
 		url:         strings.TrimRight(t.APIURL, "/") + "/bot" + t.Token + "/sendMessage",
 		contentType: "application/json",
 		body:        body,
 		secrets:     []string{t.Token},
 	})
+	if err != nil {
+		return err
+	}
+	return fallbacks(subjectFallback, chatFallback)
 }

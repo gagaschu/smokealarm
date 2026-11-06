@@ -16,19 +16,23 @@ import (
 
 // newNotifiers creates one notifier per configured target. Without any, state
 // changes only show up in the log. Telegram gets one notifier per chat, so a
-// chat that fails is retried on its own. All HTTP targets share the client.
-func newNotifiers(cfg config.Config, logger *slog.Logger, client *http.Client, now func() time.Time) []notify.Notifier {
+// chat that fails is retried on its own. All HTTP targets share the client,
+// and all targets with message templates share the user's templates (nil for
+// the built-in ones).
+func newNotifiers(cfg config.Config, logger *slog.Logger, client *http.Client, now func() time.Time,
+	templates *notify.Templates) []notify.Notifier {
 	var list []notify.Notifier
 	if smtp := cfg.SMTP; smtp.Enabled() {
 		list = append(list, &notify.Mail{
-			Host:     smtp.Host,
-			Port:     smtp.Port,
-			TLS:      smtp.TLS,
-			Username: smtp.Username,
-			Password: smtp.Password,
-			From:     smtp.From,
-			To:       smtp.To,
-			Now:      now,
+			Host:      smtp.Host,
+			Port:      smtp.Port,
+			TLS:       smtp.TLS,
+			Username:  smtp.Username,
+			Password:  smtp.Password,
+			From:      smtp.From,
+			To:        smtp.To,
+			Now:       now,
+			Templates: templates,
 		})
 	}
 	n := cfg.Notify
@@ -36,23 +40,48 @@ func newNotifiers(cfg config.Config, logger *slog.Logger, client *http.Client, n
 		list = append(list, &notify.Webhook{URL: n.WebhookURL, HeaderName: n.WebhookHeaderName, HeaderValue: n.WebhookHeaderValue, Client: client})
 	}
 	if n.NtfyTopic != "" {
-		list = append(list, &notify.Ntfy{Server: n.NtfyServer, Topic: n.NtfyTopic, Token: n.NtfyToken, Client: client})
+		list = append(list, &notify.Ntfy{Server: n.NtfyServer, Topic: n.NtfyTopic, Token: n.NtfyToken, Client: client, Templates: templates})
 	}
 	if n.TelegramBotToken != "" {
 		for _, chat := range n.TelegramChatIDs {
-			list = append(list, &notify.Telegram{APIURL: notify.TelegramAPI, Token: n.TelegramBotToken, ChatID: chat, Client: client})
+			list = append(list, &notify.Telegram{APIURL: notify.TelegramAPI, Token: n.TelegramBotToken, ChatID: chat, Client: client, Templates: templates})
 		}
 	}
 	if n.SlackWebhookURL != "" {
-		list = append(list, &notify.Slack{WebhookURL: n.SlackWebhookURL, Client: client})
+		list = append(list, &notify.Slack{WebhookURL: n.SlackWebhookURL, Client: client, Templates: templates})
 	}
 	if n.TeamsWebhookURL != "" {
-		list = append(list, &notify.Teams{WebhookURL: n.TeamsWebhookURL, Client: client})
+		list = append(list, &notify.Teams{WebhookURL: n.TeamsWebhookURL, Client: client, Templates: templates})
 	}
 	if len(list) == 0 {
 		list = append(list, &notify.Log{Logger: logger})
 	}
 	return list
+}
+
+// templateFiles says, by Notifier.Name, which user templates each target uses,
+// for the status page. Without user templates there is nothing to show; the
+// webhook and the log have no templates and are left out.
+func templateFiles(notifiers []notify.Notifier, templates *notify.Templates) map[string]string {
+	if templates == nil {
+		return nil
+	}
+	files := map[string]string{}
+	for _, n := range notifiers {
+		if described := templates.Describe(notify.Kind(n.Name())); described != "" {
+			files[n.Name()] = described
+		}
+	}
+	return files
+}
+
+// unusedTemplates lists the template files no configured target reads.
+func unusedTemplates(notifiers []notify.Notifier, templates *notify.Templates) []string {
+	var kinds []string
+	for _, n := range notifiers {
+		kinds = append(kinds, notify.Kind(n.Name()))
+	}
+	return templates.UnusedFiles(kinds)
 }
 
 // minSeverities gives every notifier of a kind in criticalOnly (from

@@ -65,6 +65,17 @@ func (e *Engine) notifyTarget(ctx context.Context, target notify.Notifier, unkno
 	}
 
 	err = target.Send(ctx, n)
+	var fallback *notify.FallbackError
+	switch {
+	case errors.As(err, &fallback):
+		// The message went out, only not with the user's template. Sending
+		// it again would not help and would repeat it everywhere.
+		e.Logger.Warn("message sent with the built-in template", "target", target.Description(), "error", err)
+		e.setTemplateResult(name, err, now)
+		err = nil
+	case err == nil:
+		e.setTemplateResult(name, nil, now)
+	}
 	e.setNotifyResult(name, err, now)
 	if err != nil {
 		e.rememberFailed(name, r.firingIDs, r.resolvedIDs)

@@ -1,0 +1,6 @@
+Knoten pi-3 ausgefallen seit 03.11. 10:00 UTC, 2 betroffen
+KRITISCH Pod media/jellyfin: CrashLoopBackOff (seit 03.11. 10:00 UTC)
+Warnung Deployment media/sonarr: ReplicasUnavailable (seit 03.11. 10:30 UTC)
+Weiterhin kritisch: Node pi-2: NotReady (seit 03.11. 10:00 UTC)
+Behoben: Deployment media/sonarr: ReplicasUnavailable
+https://smokealarm.example.com

@@ -17,6 +17,8 @@ const (
 type Slack struct {
 	WebhookURL string // a secret: anybody with it can post to the channel
 	Client     *http.Client
+	// Templates are the user's message templates; nil means the built-in ones.
+	Templates *Templates
 }
 
 // Name identifies the target.
@@ -26,9 +28,11 @@ func (s *Slack) Name() string { return "slack" }
 func (s *Slack) Description() string { return "slack" }
 
 // Send posts the subject as a header and the short text below it. "text" is
-// what Slack shows in notifications on the phone.
+// what Slack shows in notifications on the phone. A *FallbackError means the
+// message went out with a built-in template.
 func (s *Slack) Send(ctx context.Context, n Notification) error {
-	subject := Subject(n)
+	subject, subjectFallback := s.Templates.subject("slack", n)
+	text, textFallback := s.Templates.chatBody("slack", n, slackSectionLimit)
 	body, err := json.Marshal(map[string]any{
 		"text": subject,
 		"blocks": []any{
@@ -38,17 +42,21 @@ func (s *Slack) Send(ctx context.Context, n Notification) error {
 			},
 			map[string]any{
 				"type": "section",
-				"text": map[string]any{"type": "plain_text", "text": ChatBody(n, slackSectionLimit)},
+				"text": map[string]any{"type": "plain_text", "text": text},
 			},
 		},
 	})
 	if err != nil {
 		return fmt.Errorf("slack: encode message: %w", err)
 	}
-	return post(ctx, s.Client, request{
+	err = post(ctx, s.Client, request{
 		target:      "slack",
 		url:         s.WebhookURL,
 		contentType: "application/json",
 		body:        body,
 	})
+	if err != nil {
+		return err
+	}
+	return fallbacks(subjectFallback, textFallback)
 }

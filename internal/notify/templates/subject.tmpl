@@ -1,0 +1,21 @@
+{{- /*
+The subject of a notification: the mail subject, the ntfy title, the first
+line on Telegram, the header on Slack and Teams. It is put on one line after
+rendering, so the line breaks here only make it easier to read.
+
+A node that is newly down comes first; otherwise one change is named and
+several are counted (.Summary).
+*/ -}}
+{{- define "severity"}}{{if eq .Severity "critical"}}CRITICAL{{else}}WARNING{{end}}{{end -}}
+{{- define "path"}}{{if .Namespace}}{{.Namespace}}/{{end}}{{.Name}}{{end -}}
+[smokealarm] {{if .NodesDown -}}
+  {{.Summary}}
+{{- else if and (eq (len .New) 1) (not .Reminders) (not .Resolved) -}}
+  {{with index .New 0}}{{template "severity" .}}: {{.Reason}} {{template "path" .}}{{end}}
+{{- else if and (not .New) (eq (len .Reminders) 1) (not .Resolved) -}}
+  {{with index .Reminders 0}}STILL CRITICAL: {{.Reason}} {{template "path" .}}{{end}}
+{{- else if and (not .New) (not .Reminders) (eq (len .Resolved) 1) -}}
+  {{with index .Resolved 0}}RESOLVED: {{.Reason}} {{template "path" .}}{{end}}
+{{- else -}}
+  {{.Summary}}
+{{- end}}

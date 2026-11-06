@@ -1,0 +1,65 @@
+# Messages in German, with the cluster name in every subject, through your own
+# message templates (README, "Message templates"). The subject is used by every
+# target; the mail and the chat targets (ntfy, Telegram, Slack, Teams) each
+# get their own text. A file named after a target replaces the general one for
+# that target only, e.g. slack.chat.tmpl or ntfy.subject.tmpl.
+#
+#   helm install smokealarm ./deploy/helm/smokealarm -n smokealarm --create-namespace \
+#     -f deploy/helm/examples/message-templates-de.yaml \
+#     --set-string auth.passwordHash="$HASH"
+#
+# smokealarm checks every file at startup and stops with the file and the line
+# if one is broken. The built-in templates in internal/notify/templates are a
+# good starting point for your own.
+templates:
+  subject.tmpl: |
+    {{- /* Betreff für alle Ziele. Wird danach auf eine Zeile gebracht. */ -}}
+    [pi-cluster] {{if .NodesDown -}}
+      KNOTEN AUSGEFALLEN: {{range $i, $node := .NodesDown}}{{if $i}}, {{end}}{{$node.Name}}{{end}}
+    {{- else if and (eq (len .New) 1) (not .Reminders) (not .Resolved) -}}
+      {{with index .New 0}}{{if eq .Severity "critical"}}KRITISCH{{else}}WARNUNG{{end}}: {{.Reason}} {{.Object}}{{end}}
+    {{- else -}}
+      {{len .New}} neu, {{len .Reminders}} weiterhin kritisch, {{len .Resolved}} behoben
+    {{- end}}
+  mail.tmpl: |
+    {{- define "zeit"}}{{.Format "02.01.2006 15:04"}} UTC{{end -}}
+    {{- define "problem"}}
+    {{if eq .Severity "critical"}}KRITISCH{{else}}WARNUNG{{end}}: {{.Reason}}
+      Objekt:    {{.Object}}
+      Meldung:   {{.Message}}
+      Seit:      {{template "zeit" .Since}}
+    {{range .Affected}}  Betroffen: {{.Object}} ({{.Reason}})
+    {{end}}{{end -}}
+    Cluster: pi-cluster
+    {{if .NodesDown}}
+    AUSGEFALLENE KNOTEN
+    {{range .NodesDown}}{{template "problem" .}}{{end}}{{end}}
+    {{- if .New}}
+    NEUE PROBLEME
+    {{range .New}}{{template "problem" .}}{{end}}{{end}}
+    {{- if .Reminders}}
+    WEITERHIN KRITISCH
+    {{range .Reminders}}{{template "problem" .}}{{end}}{{end}}
+    {{- if .Resolved}}
+    BEHOBEN
+    {{range .Resolved}}
+    {{.Reason}}: {{.Object}}
+      Seit:      {{template "zeit" .Since}}
+      Behoben:   {{template "zeit" .ResolvedAt}}
+    {{end}}{{end}}
+    {{- with .BaseURL}}
+    Details: {{.}}
+    {{end -}}
+  chat.tmpl: |
+    {{- define "zeit"}}{{.Format "02.01. 15:04"}} UTC{{end -}}
+    {{- range .NodesDown}}Knoten {{.Name}} ausgefallen seit {{template "zeit" .Since}}{{with .Affected}}, {{len .}} betroffen{{end}}
+    {{end -}}
+    {{- range .New}}{{if eq .Severity "critical"}}KRITISCH{{else}}Warnung{{end}} {{.Object}}: {{.Reason}} (seit {{template "zeit" .Since}})
+    {{end -}}
+    {{- range .Reminders}}Weiterhin kritisch: {{.Object}}: {{.Reason}} (seit {{template "zeit" .Since}})
+    {{end -}}
+    {{- range .Resolved}}Behoben: {{.Object}}: {{.Reason}}
+    {{end -}}
+    {{- if .Omitted}}… und {{.Omitted}} weitere
+    {{end -}}
+    {{with .BaseURL}}{{.}}{{end}}

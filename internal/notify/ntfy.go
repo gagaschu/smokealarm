@@ -21,6 +21,8 @@ type Ntfy struct {
 	Topic  string
 	Token  string // optional access token (Authorization: Bearer)
 	Client *http.Client
+	// Templates are the user's message templates; nil means the built-in ones.
+	Templates *Templates
 }
 
 // Name identifies the target.
@@ -29,11 +31,14 @@ func (t *Ntfy) Name() string { return "ntfy" }
 // Description shows neither the server nor the topic.
 func (t *Ntfy) Description() string { return "ntfy" }
 
-// Send publishes the short text, with the subject as its title.
+// Send publishes the short text, with the subject as its title. A
+// *FallbackError means the message went out with a built-in template.
 func (t *Ntfy) Send(ctx context.Context, n Notification) error {
+	subject, subjectFallback := t.Templates.subject("ntfy", n)
+	text, textFallback := t.Templates.chatBody("ntfy", n, ntfyLimit)
 	priority, tags := ntfyPriority(n)
 	headers := map[string]string{
-		"Title":    Subject(n),
+		"Title":    subject,
 		"Priority": priority,
 		"Tags":     tags,
 	}
@@ -43,14 +48,18 @@ func (t *Ntfy) Send(ctx context.Context, n Notification) error {
 	if t.Token != "" {
 		headers["Authorization"] = "Bearer " + t.Token
 	}
-	return post(ctx, t.Client, request{
+	err := post(ctx, t.Client, request{
 		target:      "ntfy",
 		url:         strings.TrimRight(t.Server, "/") + "/" + t.Topic,
 		contentType: "text/plain; charset=utf-8",
-		body:        []byte(ChatBody(n, ntfyLimit)),
+		body:        []byte(text),
 		headers:     headers,
 		secrets:     []string{t.Topic, t.Token},
 	})
+	if err != nil {
+		return err
+	}
+	return fallbacks(subjectFallback, textFallback)
 }
 
 // ntfyPriority decides how loudly the phone announces the message, and the

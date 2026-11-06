@@ -1,0 +1,28 @@
+{{- /*
+The short text for the chat targets (ntfy, Telegram, Slack, Teams): one line
+per problem, grouped like the mail, and the link to the web UI. The subject is
+not part of it, because most targets show it separately. Spaces and blank
+lines at the start and the end are removed after rendering.
+
+If the text is too long for the service, it is rendered again with fewer
+problems, and .Omitted says how many were left out.
+*/ -}}
+{{- define "severity"}}{{if eq .Severity "critical"}}CRITICAL{{else}}WARNING{{end}}{{end -}}
+{{- define "time"}}{{if not .IsZero}}{{.Format "2006-01-02 15:04 UTC"}}{{end}}{{end -}}
+{{- define "affected"}}{{if .Affected}}, {{len .Affected}} affected{{end}}{{end -}}
+{{- if .NodesDown}}Node down:
+{{range .NodesDown}}- {{.Object}} (since {{template "time" .Since}}){{template "affected" .}}
+{{end}}{{end -}}
+{{- if .New}}New:
+{{range .New}}- {{template "severity" .}} {{.Object}}: {{.Reason}} (since {{template "time" .Since}})
+{{end}}{{end -}}
+{{- if .Reminders}}Still critical:
+{{range .Reminders}}- {{.Object}}: {{.Reason}} (since {{template "time" .Since}}){{template "affected" .}}
+{{end}}{{end -}}
+{{- if .Resolved}}Resolved:
+{{range .Resolved}}- {{.Object}}: {{.Reason}} (since {{template "time" .Since}}, resolved {{template "time" .ResolvedAt}})
+{{end}}{{end -}}
+{{- if .Omitted}}… and {{.Omitted}} more, see {{if .BaseURL}}{{.BaseURL}}{{else}}the web UI{{end}}
+{{- else if .BaseURL}}
+{{.BaseURL}}
+{{- end}}

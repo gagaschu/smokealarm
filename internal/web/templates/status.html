@@ -31,10 +31,10 @@
   <tbody>
     {{range .Status.Targets}}
     <tr>
-      <td class="nowrap mono" data-label="Target">{{.Description}}<span class="below">{{if .CriticalOnly}}critical problems only{{else}}all problems{{end}}</span></td>
-      <td class="nowrap" data-label="State">{{if .LastError}}<span class="pill alert">sending failed</span>{{else}}<span class="pill ok">ok</span>{{end}}</td>
+      <td class="nowrap mono" data-label="Target">{{.Description}}<span class="below">{{if .CriticalOnly}}critical problems only{{else}}all problems{{end}}</span>{{if .Templates}}<span class="below">templates: {{.Templates}}</span>{{end}}</td>
+      <td class="nowrap" data-label="State">{{if .LastError}}<span class="pill alert">sending failed</span>{{else if .TemplateError}}<span class="pill alert">built-in template used</span>{{else}}<span class="pill ok">ok</span>{{end}}</td>
       <td class="nowrap time" data-label="Last sent">{{if .LastSentAt}}{{.LastSentAt}}{{else}}<span class="footnote">nothing since the start</span>{{end}}</td>
-      <td class="wrap" data-label="Last error">{{if .LastError}}<span class="error">{{.LastError}}</span> <span class="footnote">({{.LastErrorAt}})</span>{{end}}</td>
+      <td class="wrap" data-label="Last error">{{if .LastError}}<span class="error">{{.LastError}}</span> <span class="footnote">({{.LastErrorAt}})</span>{{end}}{{if .TemplateError}}<span class="below"><span class="error">{{.TemplateError}}</span> <span class="footnote">({{.TemplateErrorAt}})</span></span>{{end}}</td>
     </tr>
     {{end}}
   </tbody>

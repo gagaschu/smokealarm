@@ -24,6 +24,14 @@ type TargetStatus struct {
 	LastSentAt   time.Time
 	LastError    string    // empty if the last send worked
 	LastErrorAt  time.Time // zero if there is no error
+	// Templates names the user's message templates the target uses, e.g.
+	// "subject.tmpl, slack.chat.tmpl" or "built-in"; empty for targets
+	// without templates.
+	Templates string
+	// TemplateError says that the last message went out with the built-in
+	// template, because a user template failed. Empty if it did not.
+	TemplateError   string
+	TemplateErrorAt time.Time // zero if there is no template error
 }
 
 // Status is what the engine reports about itself, for the status page.
@@ -48,6 +56,7 @@ func (e *Engine) Status() Status {
 		target.Name = n.Name()
 		target.Description = n.Description()
 		target.CriticalOnly = e.MinSeverity[n.Name()] == checks.Critical
+		target.Templates = e.TemplateFiles[n.Name()]
 		s.Targets = append(s.Targets, target)
 	}
 	return s
@@ -82,6 +91,27 @@ func (e *Engine) setRunResult(finished time.Time, skipped map[string]string, api
 	if err != nil {
 		e.status.LastRunError = err.Error()
 	}
+}
+
+// setTemplateResult remembers whether the last message to a target went out
+// with the built-in template because a user template failed (err is a
+// notify.FallbackError) or with the user's templates (err is nil). Unlike a
+// send error it says nothing about delivery: the message went out either way.
+func (e *Engine) setTemplateResult(target string, err error, now time.Time) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.targets == nil {
+		e.targets = map[string]TargetStatus{}
+	}
+	status := e.targets[target]
+	if err == nil {
+		status.TemplateError = ""
+		status.TemplateErrorAt = time.Time{}
+	} else {
+		status.TemplateError = err.Error()
+		status.TemplateErrorAt = now
+	}
+	e.targets[target] = status
 }
 
 // setNotifyResult remembers whether the last send to a target worked. The

@@ -609,6 +609,36 @@ func TestStatusPage(t *testing.T) {
 	}
 }
 
+func TestStatusPageShowsTheTemplates(t *testing.T) {
+	e := newTestEnv(t)
+	e.status = engine.Status{Targets: []engine.TargetStatus{
+		{Name: "mail", Description: "mail (smtp.example.com)", Templates: "built-in", LastSentAt: testNow},
+		{
+			Name: "slack", Description: "slack", Templates: "subject.tmpl, slack.chat.tmpl", LastSentAt: testNow,
+			TemplateError:   "template slack.chat.tmpl failed, sent with the built-in one: index out of range",
+			TemplateErrorAt: testNow.Add(-time.Minute),
+		},
+		{Name: "webhook", Description: "webhook", LastSentAt: testNow},
+	}}
+
+	body := e.do(http.MethodGet, "/status", nil, e.login()).Body.String()
+	for _, want := range []string{
+		"templates: built-in", "templates: subject.tmpl, slack.chat.tmpl",
+		"built-in template used", "template slack.chat.tmpl failed, sent with the built-in one: index out of range",
+		"2026-11-03 11:59:00 UTC",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("status page does not contain %q:\n%s", want, body)
+		}
+	}
+	if strings.Count(body, "templates: ") != 2 {
+		t.Errorf("want templates for mail and slack only, not for the webhook:\n%s", body)
+	}
+	if strings.Contains(body, "sending failed") {
+		t.Error("a template error is not a failed send")
+	}
+}
+
 func TestStatusPageWithoutMailAndErrors(t *testing.T) {
 	e := newTestEnv(t)
 	e.status = engine.Status{Targets: []engine.TargetStatus{{Name: "log", Description: "log only"}}}

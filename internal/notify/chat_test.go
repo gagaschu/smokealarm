@@ -92,9 +92,13 @@ func TestCutText(t *testing.T) {
 		{"exactly ten", 11, "exactly ten"},
 		{"a bit too long", 10, "a bit t…"},
 		{"müßig und lang", 7, "mü…"}, // never splits ß, which takes two bytes
+		{"no room for the dots", 2, "no"},
+		{"müßig", 2, "m"},
+		{"nothing", 0, ""},
+		{"less than nothing", -5, ""},
 	}
 	for _, tt := range tests {
-		if got := cutText(tt.in, tt.limit); got != tt.want || len(got) > tt.limit {
+		if got := cutText(tt.in, tt.limit); got != tt.want || len(got) > max(tt.limit, 0) {
 			t.Errorf("cutText(%q, %d) = %q, want %q", tt.in, tt.limit, got, tt.want)
 		}
 	}

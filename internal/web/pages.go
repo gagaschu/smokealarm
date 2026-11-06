@@ -118,6 +118,11 @@ type targetView struct {
 	LastSentAt   string // empty if nothing was sent since the start
 	LastError    string
 	LastErrorAt  string
+	Templates    string // the user's templates, "built-in", or empty for targets without templates
+	// TemplateError says that the last message went out with the built-in
+	// template, because a user template failed.
+	TemplateError   string
+	TemplateErrorAt string
 }
 
 type checkView struct {
@@ -463,11 +468,14 @@ func targetViews(targets []engine.TargetStatus) []targetView {
 	var views []targetView
 	for _, t := range targets {
 		views = append(views, targetView{
-			Description:  t.Description,
-			CriticalOnly: t.CriticalOnly,
-			LastSentAt:   formatOptionalTime(t.LastSentAt),
-			LastError:    t.LastError,
-			LastErrorAt:  formatOptionalTime(t.LastErrorAt),
+			Description:     t.Description,
+			CriticalOnly:    t.CriticalOnly,
+			LastSentAt:      formatOptionalTime(t.LastSentAt),
+			LastError:       t.LastError,
+			LastErrorAt:     formatOptionalTime(t.LastErrorAt),
+			Templates:       t.Templates,
+			TemplateError:   t.TemplateError,
+			TemplateErrorAt: formatOptionalTime(t.TemplateErrorAt),
 		})
 	}
 	return views

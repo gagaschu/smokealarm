@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,6 +29,7 @@ import (
 
 	"github.com/gagaschu/smokealarm/internal/checks"
 	"github.com/gagaschu/smokealarm/internal/config"
+	"github.com/gagaschu/smokealarm/internal/notify"
 )
 
 // baseValues is the minimum a user must provide: the password hash.
@@ -513,6 +515,71 @@ func TestKubeletCAFromAConfigMap(t *testing.T) {
 	}
 }
 
+func TestNoMessageTemplatesByDefault(t *testing.T) {
+	for _, values := range []string{"", "templates: null\n"} { // null: values of an older release
+		r := render(t, values)
+		if r.has("ConfigMap") {
+			t.Errorf("values %q: rendered a ConfigMap without templates", values)
+		}
+		if _, set := r.env()["SMOKEALARM_TEMPLATE_DIR"]; set {
+			t.Errorf("values %q: SMOKEALARM_TEMPLATE_DIR is set without templates", values)
+		}
+		pod := r.deployment().Spec.Template
+		if _, set := pod.Annotations["checksum/templates"]; set {
+			t.Errorf("values %q: checksum/templates is set without templates", values)
+		}
+		for _, v := range pod.Spec.Volumes {
+			if v.Name == "templates" {
+				t.Errorf("values %q: the templates volume is there without templates", values)
+			}
+		}
+	}
+}
+
+func TestMessageTemplatesFromValues(t *testing.T) {
+	values := "templates:\n  subject.tmpl: \"[pi] {{.Summary}}\"\n  chat.tmpl: |\n    {{range .New}}- {{.Object}}\n    {{end}}\n"
+	r := render(t, values)
+	var configMap corev1.ConfigMap
+	r.as("ConfigMap", &configMap)
+	if configMap.Name != "smokealarm-templates" {
+		t.Errorf("ConfigMap name = %q", configMap.Name)
+	}
+	if configMap.Data["subject.tmpl"] != "[pi] {{.Summary}}" || configMap.Data["chat.tmpl"] != "{{range .New}}- {{.Object}}\n{{end}}\n" {
+		t.Errorf("ConfigMap data = %q", configMap.Data)
+	}
+	if got := r.env()["SMOKEALARM_TEMPLATE_DIR"]; got != "/etc/smokealarm/templates" {
+		t.Errorf("SMOKEALARM_TEMPLATE_DIR = %q", got)
+	}
+
+	pod := r.deployment().Spec.Template
+	mounted := false
+	for _, m := range pod.Spec.Containers[0].VolumeMounts {
+		if m.Name == "templates" {
+			mounted = m.MountPath == "/etc/smokealarm/templates" && m.ReadOnly
+		}
+	}
+	if !mounted {
+		t.Errorf("volume mounts = %+v, want templates read-only at /etc/smokealarm/templates", pod.Spec.Containers[0].VolumeMounts)
+	}
+	found := false
+	for _, v := range pod.Spec.Volumes {
+		if v.Name == "templates" && v.ConfigMap != nil {
+			found = v.ConfigMap.Name == "smokealarm-templates"
+		}
+	}
+	if !found {
+		t.Errorf("volumes = %+v, want the ConfigMap smokealarm-templates", pod.Spec.Volumes)
+	}
+
+	// A changed template restarts the pod, also with an existing Secret.
+	checksum := pod.Annotations["checksum/templates"]
+	changed := render(t, "templates:\n  subject.tmpl: \"[pi-2] {{.Summary}}\"\n").deployment().Spec.Template.Annotations["checksum/templates"]
+	withSecret := render(t, values+"existingSecret: my-secret\n").deployment().Spec.Template.Annotations["checksum/templates"]
+	if checksum == "" || checksum == changed || withSecret != checksum {
+		t.Errorf("checksum/templates = %q, after a change %q, with existingSecret %q", checksum, changed, withSecret)
+	}
+}
+
 // rbacSwitches maps each optional permission switch of the chart to the checks
 // that need that permission.
 func rbacSwitches() []struct {
@@ -887,6 +954,8 @@ notifications:
   teams:
     webhookUrl: https://example.logic.azure.com/workflows/teams-secret
     minSeverity: critical
+templates:
+  chat.tmpl: "{{len .New}} new"
 `
 
 // config.Load ignores variables it does not know, so a typo in a template would
@@ -916,6 +985,7 @@ func TestEverySettingBecomesAnEnvironmentVariable(t *testing.T) {
 		"SMOKEALARM_CRONJOB_TIME_ZONE":        "Europe/Berlin",
 		"SMOKEALARM_DISABLED_CHECKS":          "pod-restarts",
 		"SMOKEALARM_KUBELET_CA_FILE":          "/etc/smokealarm/kubelet-ca/ca.crt",
+		"SMOKEALARM_TEMPLATE_DIR":             "/etc/smokealarm/templates",
 		"SMOKEALARM_SMTP_HOST":                "mail.example.com",
 		"SMOKEALARM_SMTP_PORT":                "465",
 		"SMOKEALARM_SMTP_TLS":                 "tls",
@@ -1024,7 +1094,32 @@ func TestExamplesRender(t *testing.T) {
 			if _, err := checks.Select(cfg.DisabledChecks); err != nil {
 				t.Errorf("%s disables a check that does not exist: %v", file, err)
 			}
+			checkExampleTemplates(t, r)
 		})
+	}
+}
+
+// checkExampleTemplates loads the message templates an example brings, as
+// smokealarm does at startup, so a broken example template fails here.
+func checkExampleTemplates(t *testing.T, r *release) {
+	t.Helper()
+	if !r.has("ConfigMap") {
+		return
+	}
+	var configMap corev1.ConfigMap
+	r.as("ConfigMap", &configMap)
+	dir := t.TempDir()
+	for name, content := range configMap.Data {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	templates, err := notify.LoadTemplates(dir, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatalf("smokealarm rejects the example's templates: %v", err)
+	}
+	if templates == nil {
+		t.Error("the example's ConfigMap holds no template")
 	}
 }
 

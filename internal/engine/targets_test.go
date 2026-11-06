@@ -93,6 +93,42 @@ func TestStatusShowsTheErrorOfEachTarget(t *testing.T) {
 	}
 }
 
+// A message sent with the built-in template because a user template failed
+// went out: it is not sent again, and the status says what happened.
+func TestTemplateFallbackCountsAsDelivered(t *testing.T) {
+	h, second := twoTargets(t)
+	h.engine.TemplateFiles = map[string]string{"second": "chat.tmpl"}
+	h.findings = []checks.Finding{finding("a", checks.Critical)}
+	h.mustRun(0)
+	second.fallback = true
+	h.mustRun(2 * time.Minute)
+	failedAt := h.now
+	h.mustRun(30 * time.Second)
+	wantNotifications(t, h.notifier, "new:a/reminders:/resolved:")
+	wantNotifications(t, second, "new:a/reminders:/resolved:")
+
+	status := h.engine.Status().Targets
+	if status[0].Templates != "" || status[0].TemplateError != "" {
+		t.Errorf("first target = %+v, want no templates and no template error", status[0])
+	}
+	got := status[1]
+	if got.Templates != "chat.tmpl" || got.LastError != "" || !got.LastSentAt.Equal(failedAt) {
+		t.Errorf("second target = %+v, want sent with templates chat.tmpl", got)
+	}
+	if !strings.Contains(got.TemplateError, "chat.tmpl") || !got.TemplateErrorAt.Equal(failedAt) {
+		t.Errorf("second target = %+v, want the template error", got)
+	}
+
+	// The next message with the user's template clears it.
+	second.fallback = false
+	h.findings = nil
+	h.mustRun(time.Minute)
+	wantNotifications(t, second, "new:a/reminders:/resolved:", "new:/reminders:/resolved:a")
+	if got := h.engine.Status().Targets[1]; got.TemplateError != "" || !got.TemplateErrorAt.IsZero() {
+		t.Errorf("second target = %+v, want the template error cleared", got)
+	}
+}
+
 func TestEveryTargetHasItsOwnReminderClock(t *testing.T) {
 	h, second := twoTargets(t)
 	h.engine.CriticalRepeatInterval = time.Hour

@@ -1,0 +1,13 @@
+{{- if .Values.templates }}
+# The message templates from the values (README, "Message templates"). They
+# are mounted at /etc/smokealarm/templates; smokealarm checks them at startup
+# and stops with the file and the line if one is broken.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "smokealarm.fullname" . }}-templates
+  labels:
+    {{- include "smokealarm.labels" . | nindent 4 }}
+data:
+  {{- toYaml .Values.templates | nindent 2 }}
+{{- end }}

@@ -158,7 +158,7 @@ Every target that is set up gets every notification, unless you [route](#routing
 
 Each target remembers on its own what it has been told. If one is down (say Telegram for an hour), only that one is tried again on the next runs, also after a restart, and the others get nothing twice. It also has its own reminder clock, which runs from its own last message. A target you add later doesn't get the history, but at its first run it hears about every problem that is firing and not acknowledged, like a target that has just learned of them. A target you remove is forgotten; if you add it back, it counts as new again. The very first start after upgrading from a version without targets takes over what the old version already reported, so nothing is sent twice; a target you add in that same step only hears what comes next.
 
-The chat targets (ntfy, Telegram, Slack, Teams) get a short message: the mail subject as the headline, then one line per problem with object, reason and since when, and the link to the web UI (`SMOKEALARM_BASE_URL`). If there are more problems than fit into one message, the last line says `… and 12 more, see <link>`. The limits are 4096 bytes for ntfy and Telegram, 3000 characters for Slack and about 26 KB for the whole Teams card. A message looks like this:
+The chat targets (ntfy, Telegram, Slack, Teams) get a short message (you can change it, see [Message templates](#message-templates)): the mail subject as the headline, then one line per problem with object, reason and since when, and the link to the web UI (`SMOKEALARM_BASE_URL`). If there are more problems than fit into one message, the last line says `… and 12 more, see <link>`. The limits are 4096 bytes for ntfy and Telegram, 3000 characters for Slack and about 26 KB for the whole Teams card. A message looks like this:
 
 ```
 [smokealarm] 2 new problems, 1 resolved
@@ -215,6 +215,61 @@ A target hears about a problem if the problem's severity is high enough for it *
 - The severity annotation goes through all the usual rules: `critical` brings reminders and the acknowledge button, `warning` means a `pvc-usage` or `cert-expiry` problem stays a warning however bad it gets.
 - Like the ignore annotation, a problem reads the annotations of its own object: a pod problem those of the pod, a `workload-replicas` problem those of the Deployment (its `metadata`, not the pod template). For a CronJob, those of its job template count too. The namespace is the easy way to cover all of them.
 - Acknowledgements and downtimes work as before. The overview and the history say who is notified when it is not every target ("Notifies only: slack" or "Notifies nobody"), and the status page shows which targets get critical problems only.
+
+### Message templates
+
+You can change the wording and layout of the messages with your own templates: write them in German, name the cluster in every subject, or make the phone message shorter. They are Go [text/template](https://pkg.go.dev/text/template) files in the directory `SMOKEALARM_TEMPLATE_DIR` (chart: `templates`, file name → content; see [values.yaml](deploy/helm/smokealarm/values.yaml) and the German example [message-templates-de.yaml](deploy/helm/examples/message-templates-de.yaml)). They cover the subject and the text of mail, ntfy, Telegram, Slack and Teams; the [webhook](#webhook) keeps its JSON format.
+
+| File | Used for |
+|---|---|
+| `subject.tmpl` | The subject of every target: the mail subject, the ntfy title, the first line on Telegram, the header on Slack and Teams |
+| `mail.tmpl` | The mail body |
+| `chat.tmpl` | The text of ntfy, Telegram, Slack and Teams |
+| `<target>.subject.tmpl` | The subject of one target: `mail`, `ntfy`, `telegram`, `slack` or `teams` |
+| `<target>.chat.tmpl` | The text of one chat target: `ntfy`, `telegram`, `slack` or `teams` |
+
+A target uses its own file first, then the general one, then the built-in template, so you only write what you want to change. `telegram` covers all chats. The built-in templates in [internal/notify/templates](internal/notify/templates) are a good starting point. A short chat text in German:
+
+```
+{{range .NodesDown}}Knoten {{.Name}} ausgefallen, {{len .Affected}} betroffen
+{{end}}{{range .New}}{{if eq .Severity "critical"}}KRITISCH{{else}}Warnung{{end}} {{.Object}}: {{.Reason}} (seit {{.Since.Format "02.01. 15:04"}} UTC)
+{{end}}{{range .Resolved}}Behoben: {{.Object}}: {{.Reason}}
+{{end}}{{if .Omitted}}… und {{.Omitted}} weitere
+{{end}}{{.BaseURL}}
+```
+
+Every template gets the same fields:
+
+| Field | Content |
+|---|---|
+| `.Target` | `mail`, `ntfy`, `telegram`, `slack` or `teams`, so one `chat.tmpl` can differ a little per target |
+| `.Summary` | The built-in summary, e.g. `3 new problems, 1 resolved` or `NODE DOWN: pi-2 (+ 1 resolved)` |
+| `.NodesDown` | Nodes that are newly down, each with `.Affected`: the problems it holds back |
+| `.New` | The other new problems, critical first |
+| `.Reminders` | Critical problems that are still open (see `SMOKEALARM_CRITICAL_REPEAT_INTERVAL`) |
+| `.Resolved` | Problems that went away |
+| `.BaseURL` | `SMOKEALARM_BASE_URL`, empty if not set |
+| `.Omitted` | How many problems were left out of a chat text that was too long; always 0 for subjects and mails |
+
+Each problem in these lists has:
+
+| Field | Content |
+|---|---|
+| `.Severity` | `critical` or `warning` |
+| `.Check`, `.Reason` | e.g. `pod-crashloop`, `CrashLoopBackOff` |
+| `.Kind`, `.Namespace`, `.Name` | e.g. `Pod`, `media`, `jellyfin`; the namespace is empty for nodes |
+| `.Object` | The object as one label: `Pod media/jellyfin` |
+| `.Message` | The message, always on one line |
+| `.Since`, `.ResolvedAt` | When it was first seen and when it was resolved (zero unless resolved), in UTC. Format them with a Go layout: `{{.Since.Format "02.01.2006 15:04"}}` |
+| `.Affected` | For a node that is down: the problems it holds back, each with `.Object` and `.Reason` |
+
+Only the functions that come with text/template are available: `if`, `range`, `with`, `eq`, `ne`, `len`, `index`, `printf`, `and`, `or`, `not` and a few more. The subject is put on one line after rendering, so line breaks in `subject.tmpl` only make it easier to read and can never add a mail header. It is cut at 200 bytes, so it fits into a mail header line and leaves room for the text on Telegram. Spaces and blank lines at the start and end of a chat text are removed. Times are always UTC.
+
+**Long messages.** If a chat text is longer than the service allows (the limits above), smokealarm renders it again with fewer problems, the last ones first, and sets `.Omitted` to how many it left out, so your template can say `… und 3 weitere`. If not even one problem fits, the text with the fewest problems is cut off with `…`. Mails are not shortened; subjects are cut at 200 bytes (the Slack header at 150 characters).
+
+**Mistakes.** At startup smokealarm renders every file with made-up notifications for every target it is for. A syntax error, an unknown field (`{{.Sinse}}`), a file name that is not in the table (`slak.chat.tmpl`) or a template that renders nothing stops the start with the file and the line. A file for a target that is not configured, and a file whose name does not end in `.tmpl` (`chat.tpl`), are only logged as a warning. If a template still fails with a real notification (say `{{index .New 5}}` when there are fewer problems) or renders nothing, that message goes out with the built-in template instead, so the alarm still arrives. The log and the status page say so ("built-in template used", with the error); the status page also lists the templates each target uses.
+
+Templates are read at startup only: restart smokealarm after a change. The chart does that itself, with a checksum annotation on the pod.
 
 ### ntfy
 
@@ -438,6 +493,7 @@ All configuration is done through environment variables starting with `SMOKEALAR
 | `SMOKEALARM_TELEGRAM_MIN_SEVERITY` | `warning` | The same for Telegram, all chats. |
 | `SMOKEALARM_SLACK_MIN_SEVERITY` | `warning` | The same for Slack. |
 | `SMOKEALARM_TEAMS_MIN_SEVERITY` | `warning` | The same for Teams. |
+| `SMOKEALARM_TEMPLATE_DIR` | – | A directory with your own message templates for the subject and text of mail, ntfy, Telegram, Slack and Teams. Empty means the built-in messages. The chart sets it from `templates`. See [Message templates](#message-templates). |
 
 For local runs, smokealarm also reads the standard `KUBECONFIG` variable. In a pod it uses the service account.
 
