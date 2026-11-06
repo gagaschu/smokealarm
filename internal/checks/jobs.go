@@ -2,7 +2,6 @@ package checks
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/robfig/cron/v3"
 	batchv1 "k8s.io/api/batch/v1"
@@ -101,14 +100,14 @@ func CronJobMissed(snap *Snapshot, opts Options) []Finding {
 
 		since, lastRun := cj.CreationTimestamp.Time, "never"
 		if last := cj.Status.LastScheduleTime; last != nil {
-			since, lastRun = last.Time, last.Format(time.RFC3339)
+			since, lastRun = last.Time, opts.formatTime(last.Time)
 		}
 		expected := schedule.Next(since)
 		if expected.IsZero() {
 			continue
 		}
 		if snap.Now.After(expected.Add(opts.CronJobGrace)) {
-			msg := fmt.Sprintf("expected run at %s, last run: %s", expected.UTC().Format(time.RFC3339), lastRun)
+			msg := fmt.Sprintf("expected run at %s, last run: %s", opts.formatTime(expected), lastRun)
 			findings = append(findings, newFinding(checkCronJobMissed, Warning, ref, "MissedSchedule", msg))
 		}
 	}

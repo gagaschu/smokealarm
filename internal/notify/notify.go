@@ -33,6 +33,9 @@ type Notification struct {
 	Reminders []Alert // critical problems reported before that are still open
 	Resolved  []Alert // problems that went away
 	BaseURL   string  // link to the web UI, empty if not configured
+	// Location is the time zone of the times in the message. nil means UTC.
+	// The webhook ignores it and always sends UTC.
+	Location *time.Location
 }
 
 // Alert is a finding plus the times a reader wants to see.

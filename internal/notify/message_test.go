@@ -248,3 +248,32 @@ func TestSubjectWithoutChanges(t *testing.T) {
 		t.Errorf("Subject = %q", got)
 	}
 }
+
+func TestBodyUsesTheConfiguredZone(t *testing.T) {
+	zurich, err := time.LoadLocation("Europe/Zurich")
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := Notification{New: []Alert{crashLoop()}, Location: zurich}
+
+	body, err := Body(n)
+	if err != nil {
+		t.Fatalf("Body: %v", err)
+	}
+	// 10:00 UTC on 2026-11-03 is 11:00 in Zurich (CET).
+	if !strings.Contains(body, "2026-11-03 11:00:00 CET") || strings.Contains(body, "UTC") {
+		t.Errorf("body does not show Zurich time:\n%s", body)
+	}
+
+	chat := ChatBody(n, 4000)
+	if !strings.Contains(chat, "2026-11-03 11:00 CET") {
+		t.Errorf("chat text does not show Zurich time:\n%s", chat)
+	}
+
+	// Without a zone nothing changes: UTC.
+	n.Location = nil
+	body, err = Body(n)
+	if err != nil || !strings.Contains(body, "2026-11-03 10:00:00 UTC") {
+		t.Errorf("body without zone: %v\n%s", err, body)
+	}
+}

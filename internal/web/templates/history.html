@@ -16,12 +16,12 @@
 <div class="table-wrap">
 <table>
   <thead>
-    <tr><th>Resolved (UTC)</th><th>Problem</th><th>Object</th><th>Message</th><th>Downtime</th></tr>
+    <tr><th>Resolved ({{.Zone}})</th><th>Problem</th><th>Object</th><th>Message</th><th>Downtime</th></tr>
   </thead>
   <tbody>
     {{range .History}}
     <tr>
-      <td class="nowrap time" data-label="Resolved (UTC)">{{.ResolvedAt}}<span class="below">lasted {{.Lasted}}</span></td>
+      <td class="nowrap time" data-label="Resolved ({{$.Zone}})">{{.ResolvedAt}}<span class="below">lasted {{.Lasted}}</span></td>
       <td class="nowrap" data-label="Problem"><span class="badge {{.Severity}}">{{.Severity}}</span><span class="below strong">{{.Reason}}</span>{{if .NotifiesOnly}}<span class="below">only {{.NotifiesOnly}}</span>{{end}}{{if .NotifiesNobody}}<span class="below">nobody notified</span>{{end}}</td>
       <td class="wrap mono" data-label="Object">{{.Object}}</td>
       <td class="message-cell" data-label="Message">{{.Message}}</td>

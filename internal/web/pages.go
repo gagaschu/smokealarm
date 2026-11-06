@@ -19,10 +19,10 @@ import (
 const (
 	historyLimit = 200
 	formBodyMax  = 4 << 10 // our forms are tiny; refuse anything bigger
-	timeFormat   = "2006-01-02 15:04:05 UTC"
+	timeFormat   = "2006-01-02 15:04:05 MST"
 
 	// historyTimeFormat is shorter than timeFormat to save space in the
-	// table; the column header says the times are UTC.
+	// table; the column header says which time zone the times are in.
 	historyTimeFormat = "2006-01-02 15:04"
 )
 
@@ -32,6 +32,9 @@ type page struct {
 	Active  string // which navigation entry is highlighted
 	ShowNav bool
 	Refresh bool // reload the page every 30 seconds
+	// Zone is the name of the time zone of all times on the page, for the
+	// column headers and the downtime form. render fills it in.
+	Zone string
 
 	// login and downtime form
 	Error string
@@ -138,6 +141,7 @@ type checkView struct {
 // render writes a page. Pages show cluster state, so browsers must not cache
 // them.
 func (s *Server) render(w http.ResponseWriter, status int, name string, data page) {
+	data.Zone = s.zone().String()
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
@@ -145,6 +149,14 @@ func (s *Server) render(w http.ResponseWriter, status int, name string, data pag
 		// The status line is already sent; all we can do is log it.
 		s.Logger.Error("render page", "page", name, "error", err)
 	}
+}
+
+// zone is the time zone for all times on the pages. UTC if none is set.
+func (s *Server) zone() *time.Location {
+	if s.Location == nil {
+		return time.UTC
+	}
+	return s.Location
 }
 
 func (s *Server) serverError(w http.ResponseWriter, what string, err error) {
@@ -239,7 +251,7 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 	}
 	data := page{Title: "Overview", Active: "overview", ShowNav: true, Refresh: true}
 	for _, rec := range firing {
-		view := newProblemView(rec, now)
+		view := newProblemView(rec, now, s.zone())
 		view.NotifiesOnly, view.NotifiesNobody = s.audience(rec)
 		view.DowntimeUntil = downtimeEnds[rec.Key]
 		if rec.IsNodeDown() {
@@ -255,15 +267,15 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 		data.AcknowledgedAny = data.AcknowledgedAny || view.AcknowledgedAt != ""
 	}
 
-	data.HeldBack = heldBackViews(held, now)
+	data.HeldBack = heldBackViews(held, now, s.zone())
 
 	status := s.Status()
 	lastRun := status.LastRun
 	data.WaitingFirstRun = lastRun.IsZero()
-	data.APIProblem = newAPIProblemView(status.APIProblem, now)
+	data.APIProblem = newAPIProblemView(status.APIProblem, now, s.zone())
 	data.AllGood = !data.WaitingFirstRun && len(data.Problems) == 0 && len(data.HeldBack) == 0 && data.APIProblem == nil
 	if !lastRun.IsZero() {
-		data.LastRun = lastRun.UTC().Format(timeFormat)
+		data.LastRun = lastRun.In(s.zone()).Format(timeFormat)
 		data.LastRunAgo = formatAge(now.Sub(lastRun))
 	}
 	s.render(w, http.StatusOK, "overview", data)
@@ -278,12 +290,12 @@ type apiProblemView struct {
 	Error     string
 }
 
-func newAPIProblemView(problem *checks.APIProblem, now time.Time) *apiProblemView {
+func newAPIProblemView(problem *checks.APIProblem, now time.Time, loc *time.Location) *apiProblemView {
 	if problem == nil {
 		return nil
 	}
 	return &apiProblemView{
-		Since:     problem.Since.UTC().Format(timeFormat),
+		Since:     problem.Since.In(loc).Format(timeFormat),
 		Age:       formatAge(now.Sub(problem.Since)),
 		Blind:     problem.Blind,
 		Resources: strings.Join(problem.Resources, ", "),
@@ -309,13 +321,13 @@ func (s *Server) audience(rec store.Record) (only string, nobody bool) {
 
 // heldBackViews sorts the held-back problems by node name, and within a node
 // like the problems.
-func heldBackViews(held map[string][]store.Record, now time.Time) []heldBackView {
+func heldBackViews(held map[string][]store.Record, now time.Time, loc *time.Location) []heldBackView {
 	var views []heldBackView
 	for node, records := range held {
 		sortProblems(records)
 		view := heldBackView{Node: node}
 		for _, rec := range records {
-			view.Problems = append(view.Problems, newProblemView(rec, now))
+			view.Problems = append(view.Problems, newProblemView(rec, now, loc))
 		}
 		views = append(views, view)
 	}
@@ -324,22 +336,22 @@ func heldBackViews(held map[string][]store.Record, now time.Time) []heldBackView
 }
 
 // newProblemView prepares one firing problem for the overview.
-func newProblemView(rec store.Record, now time.Time) problemView {
+func newProblemView(rec store.Record, now time.Time, loc *time.Location) problemView {
 	view := problemView{
 		ID:             rec.ID,
 		Severity:       string(rec.Severity),
 		Object:         rec.Object.Label(),
 		Reason:         rec.Reason,
 		Message:        rec.Message,
-		Since:          rec.FirstSeen.UTC().Format(timeFormat),
+		Since:          rec.FirstSeen.In(loc).Format(timeFormat),
 		Age:            formatAge(now.Sub(rec.FirstSeen)),
 		CanAcknowledge: rec.Severity == checks.Critical && rec.AcknowledgedAt == nil,
 	}
 	if rec.AcknowledgedAt != nil {
-		view.AcknowledgedAt = rec.AcknowledgedAt.UTC().Format(timeFormat)
+		view.AcknowledgedAt = rec.AcknowledgedAt.In(loc).Format(timeFormat)
 	}
 	if rec.GoneSince != nil {
-		view.GoneSince = rec.GoneSince.UTC().Format(timeFormat)
+		view.GoneSince = rec.GoneSince.In(loc).Format(timeFormat)
 		view.GoneAge = formatAge(now.Sub(*rec.GoneSince))
 	}
 	return view
@@ -443,7 +455,7 @@ func (s *Server) history(w http.ResponseWriter, r *http.Request) {
 		}
 		view.NotifiesOnly, view.NotifiesNobody = s.audience(rec)
 		if rec.ResolvedAt != nil {
-			view.ResolvedAt = rec.ResolvedAt.UTC().Format(historyTimeFormat)
+			view.ResolvedAt = rec.ResolvedAt.In(s.zone()).Format(historyTimeFormat)
 			view.Lasted = formatAge(rec.ResolvedAt.Sub(rec.FirstSeen))
 		}
 		data.History = append(data.History, view)
@@ -456,10 +468,10 @@ func (s *Server) status(w http.ResponseWriter, _ *http.Request) {
 	st := s.Status()
 
 	view := statusView{
-		LastRun:      formatOptionalTime(st.LastRun),
+		LastRun:      formatOptionalTime(st.LastRun, s.zone()),
 		LastRunError: st.LastRunError,
-		APIProblem:   newAPIProblemView(st.APIProblem, s.Now()),
-		Targets:      targetViews(st.Targets),
+		APIProblem:   newAPIProblemView(st.APIProblem, s.Now(), s.zone()),
+		Targets:      targetViews(st.Targets, s.zone()),
 	}
 	view.LogOnly = len(st.Targets) == 1 && st.Targets[0].Name == "log"
 	for _, c := range st.Checks {
@@ -470,29 +482,29 @@ func (s *Server) status(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-func targetViews(targets []engine.TargetStatus) []targetView {
+func targetViews(targets []engine.TargetStatus, loc *time.Location) []targetView {
 	var views []targetView
 	for _, t := range targets {
 		views = append(views, targetView{
 			Description:     t.Description,
 			CriticalOnly:    t.CriticalOnly,
-			LastSentAt:      formatOptionalTime(t.LastSentAt),
+			LastSentAt:      formatOptionalTime(t.LastSentAt, loc),
 			LastError:       t.LastError,
-			LastErrorAt:     formatOptionalTime(t.LastErrorAt),
+			LastErrorAt:     formatOptionalTime(t.LastErrorAt, loc),
 			Templates:       t.Templates,
 			TemplateError:   t.TemplateError,
-			TemplateErrorAt: formatOptionalTime(t.TemplateErrorAt),
+			TemplateErrorAt: formatOptionalTime(t.TemplateErrorAt, loc),
 		})
 	}
 	return views
 }
 
-// formatOptionalTime is the time in UTC, or empty for the zero time.
-func formatOptionalTime(t time.Time) string {
+// formatOptionalTime is the time in the given zone, or empty for the zero time.
+func formatOptionalTime(t time.Time, loc *time.Location) string {
 	if t.IsZero() {
 		return ""
 	}
-	return t.UTC().Format(timeFormat)
+	return t.In(loc).Format(timeFormat)
 }
 
 // formatAge writes a duration in the two most useful units: "3d 4h",

@@ -10,7 +10,7 @@ import (
 )
 
 // Time layouts of an <input type="datetime-local">. The browser sends no time
-// zone, so the form says "UTC" and the value is read as UTC.
+// zone, so the form names the configured zone and the value is read in it.
 const (
 	dateTimeLocalFormat        = "2006-01-02T15:04"
 	dateTimeLocalSecondsFormat = "2006-01-02T15:04:05"
@@ -34,7 +34,7 @@ type downtimeFormView struct {
 	Reason    string
 	Until     string // value of the input field
 	Min       string // the current minute: earlier values are in the past
-	Now       string // current time, so the reader can compare it with UTC
+	Now       string // current time, so the reader can compare it with the zone
 	Existing  string // end of the downtime that would be replaced, if any
 }
 
@@ -47,7 +47,7 @@ func (s *Server) downtimeEnds(ctx context.Context, now time.Time) (map[string]st
 	}
 	ends := map[string]string{}
 	for _, d := range active {
-		ends[d.Key] = d.ExpiresAt.UTC().Format(timeFormat)
+		ends[d.Key] = d.ExpiresAt.In(s.zone()).Format(timeFormat)
 	}
 	return ends, nil
 }
@@ -76,7 +76,7 @@ func (s *Server) downtimes(w http.ResponseWriter, r *http.Request) {
 			ID:        d.ID,
 			Object:    d.Object.Label(),
 			Reason:    d.Reason,
-			Until:     d.ExpiresAt.UTC().Format(timeFormat),
+			Until:     d.ExpiresAt.In(s.zone()).Format(timeFormat),
 			Remaining: formatAge(d.ExpiresAt.Sub(now)),
 			Firing:    firing[d.Key],
 		})
@@ -110,7 +110,7 @@ func (s *Server) createDowntime(w http.ResponseWriter, r *http.Request) {
 
 	now := s.Now()
 	value := r.PostFormValue("until")
-	until, problem := parseUntil(value, now)
+	until, problem := parseUntil(value, now, s.zone())
 	if problem != "" {
 		s.renderDowntimeForm(w, r, rec, value, problem, http.StatusBadRequest)
 		return
@@ -128,7 +128,7 @@ func (s *Server) createDowntime(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, "set downtime", err)
 		return
 	}
-	s.Logger.Info("downtime set", "key", rec.Key, "until", until.Format(timeFormat))
+	s.Logger.Info("downtime set", "key", rec.Key, "until", until.In(s.zone()).Format(timeFormat))
 	http.Redirect(w, r, "/downtimes", http.StatusSeeOther)
 }
 
@@ -174,7 +174,7 @@ func (s *Server) loadFinding(w http.ResponseWriter, r *http.Request, value strin
 // renderDowntimeForm shows the form. An empty until means nothing was entered
 // yet: it then suggests the end of the running downtime, or a new one.
 func (s *Server) renderDowntimeForm(w http.ResponseWriter, r *http.Request, rec store.Record, until, errorText string, status int) {
-	now := s.Now().UTC()
+	now := s.Now().In(s.zone())
 	active, err := s.Store.ActiveDowntimes(r.Context(), now)
 	if err != nil {
 		s.serverError(w, "load downtimes", err)
@@ -196,9 +196,9 @@ func (s *Server) renderDowntimeForm(w http.ResponseWriter, r *http.Request, rec 
 		if d.Key != rec.Key {
 			continue
 		}
-		form.Existing = d.ExpiresAt.UTC().Format(timeFormat)
+		form.Existing = d.ExpiresAt.In(s.zone()).Format(timeFormat)
 		if until == "" {
-			form.Until = d.ExpiresAt.UTC().Format(dateTimeLocalFormat)
+			form.Until = d.ExpiresAt.In(s.zone()).Format(dateTimeLocalFormat)
 		}
 	}
 	s.render(w, status, "downtime_form", page{
@@ -206,12 +206,15 @@ func (s *Server) renderDowntimeForm(w http.ResponseWriter, r *http.Request, rec 
 	})
 }
 
-// parseUntil reads the value of the form field as UTC and checks that it lies
-// in the future. If it does not, the second result is a message for the user.
-func parseUntil(value string, now time.Time) (time.Time, string) {
-	until, err := time.Parse(dateTimeLocalFormat, value)
+// parseUntil reads the value of the form field in the given zone and checks
+// that it lies in the future. If it does not, the second result is a message
+// for the user. Go decides which instant is meant for a wall-clock time that
+// does not exist (the clocks jump forward) or exists twice (they go back);
+// either way the result is within an hour of what was typed.
+func parseUntil(value string, now time.Time, loc *time.Location) (time.Time, string) {
+	until, err := time.ParseInLocation(dateTimeLocalFormat, value, loc)
 	if err != nil {
-		until, err = time.Parse(dateTimeLocalSecondsFormat, value)
+		until, err = time.ParseInLocation(dateTimeLocalSecondsFormat, value, loc)
 	}
 	if err != nil {
 		return time.Time{}, "Please enter a date and time."

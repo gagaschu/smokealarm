@@ -61,7 +61,7 @@ func NodePressure(snap *Snapshot, opts Options) []Finding {
 			if cond == nil || cond.Status != corev1.ConditionTrue {
 				continue
 			}
-			msg := fmt.Sprintf("node reports %s since %s", pressure, cond.LastTransitionTime.Format(time.RFC3339))
+			msg := fmt.Sprintf("node reports %s since %s", pressure, opts.formatTime(cond.LastTransitionTime.Time))
 			if cond.Message != "" {
 				msg += ": " + cond.Message
 			}

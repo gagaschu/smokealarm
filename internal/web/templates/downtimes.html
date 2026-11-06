@@ -6,12 +6,12 @@
 <div class="table-wrap">
 <table>
   <thead>
-    <tr><th>Until (UTC)</th><th>Remaining</th><th>Object</th><th>Reason</th><th>Problem now</th><th></th></tr>
+    <tr><th>Until ({{.Zone}})</th><th>Remaining</th><th>Object</th><th>Reason</th><th>Problem now</th><th></th></tr>
   </thead>
   <tbody>
     {{range .Downtimes}}
     <tr>
-      <td class="nowrap time" data-label="Until (UTC)">{{.Until}}</td>
+      <td class="nowrap time" data-label="Until ({{$.Zone}})">{{.Until}}</td>
       <td class="nowrap time" data-label="Remaining">{{.Remaining}}</td>
       <td class="wrap mono" data-label="Object">{{.Object}}</td>
       <td class="nowrap strong" data-label="Reason">{{.Reason}}</td>

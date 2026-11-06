@@ -334,3 +334,80 @@ func TestDowntimeFormBodyIsLimited(t *testing.T) {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
 }
+
+// berlin is a zone with daylight saving time, to test the downtime form.
+func berlin(t *testing.T) *time.Location {
+	t.Helper()
+	loc, err := time.LoadLocation("Europe/Berlin")
+	if err != nil {
+		t.Fatalf("LoadLocation: %v", err)
+	}
+	return loc
+}
+
+func TestParseUntilReadsTheTimeInTheZone(t *testing.T) {
+	loc := berlin(t)
+	tests := []struct {
+		name  string
+		value string
+		want  time.Time
+	}{
+		{"winter time, UTC+1", "2026-11-05T18:00", time.Date(2026, 11, 5, 17, 0, 0, 0, time.UTC)},
+		{"summer time, UTC+2", "2027-07-01T12:00", time.Date(2027, 7, 1, 10, 0, 0, 0, time.UTC)},
+		{"with seconds", "2026-11-05T18:00:30", time.Date(2026, 11, 5, 17, 0, 30, 0, time.UTC)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, problem := parseUntil(tt.value, testNow, loc)
+			if problem != "" || !got.Equal(tt.want) {
+				t.Errorf("got %v (%q), want %v", got, problem, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseUntilRefusesThePastInTheZone(t *testing.T) {
+	// 12:30 in Berlin is 11:30 UTC, which is before testNow (12:00 UTC).
+	_, problem := parseUntil("2026-11-03T12:30", testNow, berlin(t))
+	if problem == "" {
+		t.Error("a time in the past was accepted")
+	}
+	// 13:30 in Berlin is 12:30 UTC, which is after it.
+	if _, problem := parseUntil("2026-11-03T13:30", testNow, berlin(t)); problem != "" {
+		t.Errorf("a time in the future was refused: %s", problem)
+	}
+}
+
+func TestPagesShowTheConfiguredZone(t *testing.T) {
+	e := newTestEnv(t)
+	e.server.Location = berlin(t)
+	cookie := e.login()
+	id := e.firingID("a", checks.Warning)
+
+	rec := e.do(http.MethodGet, "/downtimes/new?finding="+strconv.FormatInt(id, 10), nil, cookie)
+	body := rec.Body.String()
+	for _, want := range []string{
+		`Until (Europe/Berlin)`,
+		`value="2026-11-03T14:00"`, // now + 1 h: 13:00 UTC is 14:00 in Berlin
+		`2026-11-03 13:00:00 CET`,  // the current time in the zone
+		`which may differ from your local time`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("form does not contain %q:\n%s", want, body)
+		}
+	}
+
+	// The same downtime is entered and shown in Berlin time.
+	rec = e.do(http.MethodPost, "/downtimes", downtimeForm(id, "2026-11-03T16:00"), cookie)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303", rec.Code)
+	}
+	active := e.activeDowntimes()
+	if len(active) != 1 || !active[0].ExpiresAt.Equal(time.Date(2026, 11, 3, 15, 0, 0, 0, time.UTC)) {
+		t.Fatalf("downtime = %+v, want one ending 15:00 UTC", active)
+	}
+	body = e.do(http.MethodGet, "/downtimes", nil, cookie).Body.String()
+	if !strings.Contains(body, "2026-11-03 16:00:00 CET") {
+		t.Errorf("downtimes page does not show the end in Berlin time:\n%s", body)
+	}
+}

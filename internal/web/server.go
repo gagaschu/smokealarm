@@ -50,6 +50,9 @@ type Server struct {
 
 	Now    func() time.Time
 	Logger *slog.Logger
+	// Location is the time zone of all times on the pages and in the downtime
+	// form. nil means UTC.
+	Location *time.Location
 
 	pages map[string]*template.Template // page name -> layout + page
 }

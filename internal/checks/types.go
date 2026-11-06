@@ -173,6 +173,17 @@ type Options struct {
 	// means UTC. See parseSchedule.
 	CronJobTimeZone   string
 	IgnoredNamespaces []string
+	// Location is the time zone of the times written into messages. nil
+	// means UTC. It only changes the text, never a key.
+	Location *time.Location
+}
+
+// formatTime writes a time for a message as RFC 3339 in the configured zone.
+func (o Options) formatTime(t time.Time) string {
+	if o.Location == nil {
+		return t.UTC().Format(time.RFC3339)
+	}
+	return t.In(o.Location).Format(time.RFC3339)
 }
 
 // Check couples a stable name with the function that runs it. The name is
