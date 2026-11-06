@@ -145,18 +145,6 @@ func (e *Engine) buildReport(records, due []store.Record, silenced map[string]bo
 	return r
 }
 
-// HeldBack groups the problems that wait for a down node by the node's name.
-// The web server uses it too.
-func HeldBack(open []store.Record) map[string][]store.Record {
-	held := map[string][]store.Record{}
-	for _, r := range open {
-		if r.State == store.StatePending && r.CausedBy != "" {
-			held[r.CausedBy] = append(held[r.CausedBy], r)
-		}
-	}
-	return held
-}
-
 // addAffected lists under every node that is down the problems it holds back,
 // as far as the target would hear about them; the rest is not its business.
 // New problems and reminders get the list; the end of a node needs none,

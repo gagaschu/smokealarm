@@ -89,7 +89,7 @@ func TestReconcile(t *testing.T) {
 			wantUpdate: []store.State{store.StateResolved},
 		},
 		{
-			name:       "problem of a skipped check is left alone",
+			name:       "problem of a check with unknown state is left alone",
 			alertAfter: 2 * time.Minute,
 			open:       []store.Record{openRecord(1, "k", "fake", store.StateFiring, now.Add(-time.Hour))},
 			unknown:    []string{"fake"},

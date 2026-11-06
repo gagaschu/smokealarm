@@ -43,9 +43,10 @@ func (e *Engine) saveState(ctx context.Context, snap *checks.Snapshot, findings 
 
 // reconcile decides what changes: it compares the stored open problems with
 // the current findings. It does no I/O, which keeps the rules easy to test.
-// Problems of the checks whose state is unknown are left alone, because "no
-// findings" would just mean "unknown". Findings caused by a down node are held
-// back (see holdBack).
+// Problems of the checks whose state is unknown keep their state, because "no
+// findings" would just mean "unknown"; only the RESOLVE_AFTER wait starts over
+// (see restartResolveWait). Findings caused by a down node are held back (see
+// holdBack).
 func (e *Engine) reconcile(open []store.Record, findings []checks.Finding, unknown []string, now time.Time) store.Changes {
 	var changes store.Changes
 
@@ -198,27 +199,6 @@ func (e *Engine) trackEscalation(record store.Record, worse bool, now time.Time)
 	if record.AcknowledgedAt == nil {
 		record.FiringNotifiedAt = nil
 		e.Logger.Info("finding escalated", "key", record.Key, "severity", record.Severity, "reason", record.Reason)
-	}
-	return record
-}
-
-// holdBack decides whether a pending problem waits for a down node: as long as
-// the finding says it is caused by one (see checks.ApplyNodeCauses). When that
-// ends, because the node is back or because the problem can no longer be
-// explained by it, the ALERT_AFTER clock starts again: the pods need a moment
-// to become ready, and a problem that lasts beyond that is a problem of its
-// own. Firing problems are never held back: what was reported stays reported.
-func (e *Engine) holdBack(record store.Record, f checks.Finding, now time.Time) store.Record {
-	switch {
-	case f.CausedBy != "":
-		if record.CausedBy == "" {
-			e.Logger.Info("finding held back, its node is down", "key", f.Key, "node", f.CausedBy)
-		}
-		record.CausedBy = f.CausedBy
-	case record.CausedBy != "":
-		e.Logger.Info("finding no longer held back by its node", "key", f.Key, "node", record.CausedBy)
-		record.CausedBy = ""
-		record.PendingSince = now
 	}
 	return record
 }

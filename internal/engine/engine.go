@@ -181,16 +181,3 @@ func runChecks(snap *checks.Snapshot, opts checks.Options, list []checks.Check, 
 	sort.Slice(findings, func(i, j int) bool { return findings[i].Key < findings[j].Key })
 	return findings, problems
 }
-
-// heldBackBy returns the down nodes whose consequences are held back in this
-// run. That is only the case while node-not-ready runs: switched off, or unable
-// to run, it would leave a failed node without any alarm, and its consequences
-// are reported as usual instead.
-func heldBackBy(snap *checks.Snapshot, runnable []checks.Check) map[string]bool {
-	for _, c := range runnable {
-		if c.Name == checks.CheckNodeNotReady {
-			return checks.DownNodes(snap)
-		}
-	}
-	return nil
-}
