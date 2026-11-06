@@ -333,13 +333,26 @@ func TestEscalationReachesATargetWhoseMarkerOutlivedTheSummary(t *testing.T) {
 }
 
 // Issue #26 finding 4: a targets annotation in a pod template names a new pod
-// after every rollout, so the set of logged warnings must not grow forever.
-func TestAnnotationWarningsStayBounded(t *testing.T) {
+// after every rollout, so the set of logged warnings must not grow forever. It
+// forgets what it has not seen for an hour, and never logs a warning that is
+// still there twice, however many there are (PR #27 review findings 2 and 7).
+func TestAnnotationWarningsAreForgottenWhenGoneButNotRepeated(t *testing.T) {
 	h := newHarness(t)
-	for i := 0; i < 3*maxAnnotationWarnings; i++ {
-		h.engine.warnOnce("annotation ignored", fmt.Sprintf("Pod media/app-%d: typo", i))
+	pass := func(at time.Time) {
+		for i := 0; i < 1500; i++ {
+			h.engine.warnOnce("annotation ignored", fmt.Sprintf("Pod media/app-%d: typo", i), at)
+		}
+		h.engine.forgetOldWarnings(at)
 	}
-	if got := len(h.engine.loggedAnnotationWarnings); got > maxAnnotationWarnings {
-		t.Errorf("remembers %d warnings, want at most %d", got, maxAnnotationWarnings)
+	pass(testStart)
+	before := strings.Count(h.logs.String(), "annotation ignored")
+	pass(testStart.Add(30 * time.Second))
+	if got := strings.Count(h.logs.String(), "annotation ignored") - before; got != 0 {
+		t.Errorf("second pass logged %d warnings, want none", got)
+	}
+
+	h.engine.forgetOldWarnings(testStart.Add(2 * time.Hour))
+	if got := len(h.engine.loggedAnnotationWarnings); got != 0 {
+		t.Errorf("remembers %d warnings that are gone, want none", got)
 	}
 }

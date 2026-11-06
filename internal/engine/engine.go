@@ -80,11 +80,11 @@ type Engine struct {
 	// failedIDs are, by target, the problems whose last message failed and is
 	// still owed. Only RunOnce touches it.
 	failedIDs map[string]map[int64]bool
-	// loggedAnnotationWarnings are the annotation warnings logged so far, so
-	// each is logged once while the process runs. They name the annotation,
-	// its value and the object that carries it; maxAnnotationWarnings bounds
-	// the set. Only RunOnce touches it.
-	loggedAnnotationWarnings map[string]bool
+	// loggedAnnotationWarnings are the annotation warnings logged so far, with
+	// the time each was last seen, so each is logged once and not in every
+	// run. They name the annotation, its value and the object that carries
+	// it; forgetOldWarnings bounds the set. Only RunOnce touches it.
+	loggedAnnotationWarnings map[string]time.Time
 }
 
 // Run executes one pass immediately and then one per interval until the
@@ -117,7 +117,7 @@ func (e *Engine) RunOnce(ctx context.Context) error {
 	snap := e.Snapshot(ctx, start)
 	runnable, skipped := e.splitSkipped(snap)
 	findings, annotationProblems := runChecks(snap, e.Options, runnable, heldBackBy(snap, runnable))
-	e.warnAboutAnnotations(findings, annotationProblems)
+	e.warnAboutAnnotations(findings, annotationProblems, start)
 	for _, f := range findings {
 		e.Logger.Debug("finding",
 			"key", f.Key,

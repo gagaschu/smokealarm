@@ -86,8 +86,8 @@ func (e *Engine) setRunResult(finished time.Time, skipped map[string]string, api
 
 // setNotifyResult remembers whether the last send to a target worked. The
 // error is cleared by the next success or when none of the failed messages is
-// owed anymore (see settleFailed), so the status shows the current situation and not an old
-// incident.
+// owed anymore (see settleFailed), so the status shows the current situation
+// and not an old incident.
 func (e *Engine) setNotifyResult(target string, err error, now time.Time) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
