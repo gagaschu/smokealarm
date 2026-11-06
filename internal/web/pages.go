@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gagaschu/smokealarm/internal/auth"
 	"github.com/gagaschu/smokealarm/internal/checks"
 	"github.com/gagaschu/smokealarm/internal/engine"
 	"github.com/gagaschu/smokealarm/internal/store"
@@ -189,7 +190,7 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.Limiter.Succeeded(client)
-	if err := s.Sessions.Start(w, r, s.Login.Username); err != nil {
+	if err := s.Sessions.Start(w, r, s.Login.Username, auth.MethodPassword); err != nil {
 		s.serverError(w, "start session", err)
 		return
 	}
