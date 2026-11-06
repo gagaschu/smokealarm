@@ -482,3 +482,36 @@ func TestResolvedIsReportedAfterAFailedMailAtTheEndOfADowntime(t *testing.T) {
 	h.wantSent(2)
 	h.wantLastResolved(f.Key)
 }
+
+// Issue #26 finding 3: a downtime that cannot be finished must not hold back
+// the expired downtimes after it.
+func TestFailingDowntimeDoesNotBlockTheOthers(t *testing.T) {
+	h := newHarness(t)
+	h.findings = []checks.Finding{finding("a", checks.Critical), finding("b", checks.Critical)}
+	h.mustRun(0)
+	h.mustRun(2 * time.Minute)
+	h.setDowntime("a", time.Hour)
+	h.setDowntime("b", time.Hour)
+	h.execSQL(`CREATE TRIGGER fail_a BEFORE DELETE ON downtimes WHEN old.key = 'a'
+		BEGIN SELECT RAISE(ABORT, 'disk full'); END`)
+
+	if err := h.run(2 * time.Hour); err == nil {
+		t.Fatal("RunOnce = nil, want the error of downtime a")
+	}
+	h.wantSent(2)
+	h.wantLastNew("b")
+}
+
+// Issue #26 finding 5: with two findings of one key, the end of a downtime
+// routes by the first one, which is the one that is stored.
+func TestDowntimeEndRoutesByTheFirstFindingOfAKey(t *testing.T) {
+	h, second := twoTargets(t)
+	h.engine.MinSeverity = map[string]checks.Severity{"second": checks.Critical}
+	h.findings = []checks.Finding{finding("a", checks.Critical), finding("a", checks.Warning)}
+	h.mustRun(0)
+	h.mustRun(2 * time.Minute)
+	h.setDowntime("a", time.Hour)
+	h.mustRun(2 * time.Hour)
+
+	wantNotifications(t, second, "new:a/reminders:/resolved:", "new:a/reminders:/resolved:")
+}

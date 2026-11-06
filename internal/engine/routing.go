@@ -37,20 +37,16 @@ func (e *Engine) Audience(rec store.Record) (targets []string, all bool) {
 
 // routedNamesNow returns the targets the open problem with this key is meant for
 // in this run. It runs before the findings are saved, so the severity and the
-// targets come from the current finding, if there is one.
-func (e *Engine) routedNamesNow(open []store.Record, findings []checks.Finding, key string) []string {
-	for _, r := range open {
-		if r.Key != key {
-			continue
-		}
-		for _, f := range findings {
-			if f.Key == key {
-				r.Severity, r.Targets = f.Severity, f.Targets
-			}
-		}
-		return e.routedNames(r)
+// targets come from the current finding, if there is one (found).
+func (e *Engine) routedNamesNow(open map[string]store.Record, f checks.Finding, found bool, key string) []string {
+	r, exists := open[key]
+	if !exists {
+		return nil
 	}
-	return nil
+	if found {
+		r.Severity, r.Targets = f.Severity, f.Targets
+	}
+	return e.routedNames(r)
 }
 
 // routedNames returns the names of the targets the problem is meant for.

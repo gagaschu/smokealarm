@@ -1333,3 +1333,17 @@ func TestMessageSentDuringShutdownIsNotSentAgain(t *testing.T) {
 	h.mustRun(30 * time.Second)
 	h.wantSent(1)
 }
+
+// execSQL runs a statement directly on the database file, for faults that the
+// store cannot produce on its own.
+func (h *harness) execSQL(statement string) {
+	h.t.Helper()
+	db, err := sql.Open("sqlite", h.path)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	if _, err := db.Exec(statement); err != nil {
+		h.t.Fatalf("exec %q: %v", statement, err)
+	}
+}

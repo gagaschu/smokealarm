@@ -169,7 +169,8 @@ func (e *Engine) cleanup(ctx context.Context, now time.Time) error {
 
 // runChecks runs every check, applies the smokealarm annotations, marks the
 // consequences of the nodes in down and returns all findings sorted by key, so
-// the output order is stable between runs. The second result lists the
+// the output order is stable between runs. The sort keeps the order of findings
+// with the same key, so "the first one" (see reconcile) is well defined. The second result lists the
 // annotation values that could not be used.
 func runChecks(snap *checks.Snapshot, opts checks.Options, list []checks.Check, down map[string]bool) ([]checks.Finding, []string) {
 	var findings []checks.Finding
@@ -178,6 +179,6 @@ func runChecks(snap *checks.Snapshot, opts checks.Options, list []checks.Check, 
 	}
 	findings, problems := checks.ApplyAnnotations(snap, findings)
 	findings = checks.ApplyNodeCauses(snap, findings, down)
-	sort.Slice(findings, func(i, j int) bool { return findings[i].Key < findings[j].Key })
+	sort.SliceStable(findings, func(i, j int) bool { return findings[i].Key < findings[j].Key })
 	return findings, problems
 }
