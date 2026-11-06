@@ -55,7 +55,7 @@ func (e *Engine) notifyTarget(ctx context.Context, target notify.Notifier, unkno
 	}
 
 	r := e.buildReport(records, due, silenced, target)
-	e.addAffected(r.notification, held, target)
+	e.addAffected(&r.notification, held, target)
 	n := r.notification
 	if err := e.Store.MarkResolvedNotified(ctx, name, r.silentIDs, now); err != nil {
 		return fmt.Errorf("mark silently resolved findings for %s: %w", name, err)
@@ -158,7 +158,7 @@ func (e *Engine) buildReport(records, due []store.Record, silenced map[string]bo
 // as far as the target would hear about them; the rest is not its business.
 // New problems and reminders get the list; the end of a node needs none,
 // because the problems it held back are gone or fire on their own then.
-func (e *Engine) addAffected(n notify.Notification, held map[string][]store.Record, target notify.Notifier) {
+func (e *Engine) addAffected(n *notify.Notification, held map[string][]store.Record, target notify.Notifier) {
 	for _, alerts := range [][]notify.Alert{n.New, n.Reminders} {
 		for i := range alerts {
 			if !alerts[i].IsNodeDown() {

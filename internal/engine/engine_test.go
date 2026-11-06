@@ -1347,3 +1347,10 @@ func (h *harness) execSQL(statement string) {
 		h.t.Fatalf("exec %q: %v", statement, err)
 	}
 }
+
+func TestSkippedNamesAreSorted(t *testing.T) {
+	got := skippedNames(map[string]string{"pvc-usage": "x", "argocd": "y", "certs": "z"})
+	if want := []string{"argocd", "certs", "pvc-usage"}; !slices.Equal(got, want) {
+		t.Errorf("skippedNames = %v, want %v", got, want)
+	}
+}

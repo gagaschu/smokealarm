@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -329,4 +330,16 @@ func TestEscalationReachesATargetWhoseMarkerOutlivedTheSummary(t *testing.T) {
 	_ = h.run(2 * time.Minute)
 
 	wantNotifications(t, h.notifier, "new:vol/reminders:/resolved:", "new:vol/reminders:/resolved:")
+}
+
+// Issue #26 finding 4: a targets annotation in a pod template names a new pod
+// after every rollout, so the set of logged warnings must not grow forever.
+func TestAnnotationWarningsStayBounded(t *testing.T) {
+	h := newHarness(t)
+	for i := 0; i < 3*maxAnnotationWarnings; i++ {
+		h.engine.warnOnce("annotation ignored", fmt.Sprintf("Pod media/app-%d: typo", i))
+	}
+	if got := len(h.engine.loggedAnnotationWarnings); got > maxAnnotationWarnings {
+		t.Errorf("remembers %d warnings, want at most %d", got, maxAnnotationWarnings)
+	}
 }

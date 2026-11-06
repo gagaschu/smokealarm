@@ -78,9 +78,9 @@ type Engine struct {
 	// that changes. Only RunOnce touches it.
 	previousSkipped map[string]string
 	// loggedAnnotationWarnings are the annotation warnings logged so far, so
-	// each is logged once while the process runs. They name the annotation
-	// and its value, not every problem, so the set stays small. Only RunOnce
-	// touches it.
+	// each is logged once while the process runs. They name the annotation,
+	// its value and the object that carries it; maxAnnotationWarnings bounds
+	// the set. Only RunOnce touches it.
 	loggedAnnotationWarnings map[string]bool
 }
 

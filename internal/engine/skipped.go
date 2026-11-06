@@ -1,7 +1,8 @@
 package engine
 
 import (
-	"sort"
+	"maps"
+	"slices"
 
 	"github.com/gagaschu/smokealarm/internal/checks"
 )
@@ -56,12 +57,7 @@ func skipReason(snap *checks.Snapshot, check string) (string, bool) {
 
 // skippedNames returns the names of the skipped checks, sorted.
 func skippedNames(skipped map[string]string) []string {
-	names := make([]string, 0, len(skipped))
-	for name := range skipped {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
+	return slices.Sorted(maps.Keys(skipped))
 }
 
 // checksWithUnknownState names the checks that say nothing about their problems

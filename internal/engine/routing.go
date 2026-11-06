@@ -97,12 +97,18 @@ func (e *Engine) warnAboutAnnotations(findings []checks.Finding, severityProblem
 	}
 }
 
+// maxAnnotationWarnings bounds the warnings warnOnce remembers. A warning names
+// the object that carries the annotation, and for a pod template that is a new
+// pod after every rollout. When the limit is reached the set starts over, so a
+// warning can be logged once more, but the memory does not grow forever.
+const maxAnnotationWarnings = 1000
+
 // warnOnce logs a warning the first time this process sees it.
 func (e *Engine) warnOnce(msg, problem string) {
 	if e.loggedAnnotationWarnings[problem] {
 		return
 	}
-	if e.loggedAnnotationWarnings == nil {
+	if e.loggedAnnotationWarnings == nil || len(e.loggedAnnotationWarnings) >= maxAnnotationWarnings {
 		e.loggedAnnotationWarnings = map[string]bool{}
 	}
 	e.loggedAnnotationWarnings[problem] = true
