@@ -107,7 +107,7 @@ Ignoring:
   - If the problem is still active when the downtime ends, it is reported again as new in the next run, and the reminder interval runs from that mail. An acknowledged problem stays silent and only reports its end.
   - If the problem went away during the downtime, nothing is sent, not even after it ends. A problem that goes away in the run in which the downtime ends counts as gone during the downtime, unless it is acknowledged.
   - Ending a downtime early works like reaching its end at that moment. Ended downtimes are removed. A downtime of a check whose state is unknown waits until the check runs again, and stays silent until then.
-  - A new reason or a new object name is a new key and is not covered. The UI and the README say so.
+  - A new reason or a new object name is a new key and is not covered. The UI and the docs say so.
 - The subject summarizes: specific for one change, e.g. "[smokealarm] CRITICAL: CrashLoopBackOff media/jellyfin" or, for a reminder, "[smokealarm] STILL CRITICAL: CrashLoopBackOff media/jellyfin"; for several, e.g. "[smokealarm] 3 new problems, 1 still critical, 1 resolved". A node that is newly down comes first instead (since phase 15): "[smokealarm] NODE DOWN: pi-2", with the other changes counted after it, e.g. "[smokealarm] NODE DOWN: pi-2 (+ 1 new problem, 1 resolved)"; at most three nodes are named, the rest counted ("pi-1, pi-2, pi-3, and 2 more").
 - Body as plain text: new problems sorted by severity, then reminders, then resolved ones; each with object, reason, message, since when; link to the web UI (SMOKEALARM_BASE_URL).
 - Chat targets (ntfy, Telegram, Slack, Teams) get a short version: the subject as the headline, then one line per problem (object, reason, since when) and the link to the web UI, cut to the length limit of the service with "… and N more". The webhook gets all fields as JSON.
@@ -146,7 +146,7 @@ Ignoring:
 - Only environment variables with the prefix SMOKEALARM_. Everything has sensible defaults except required values (admin user, password hash, SMTP data if mail is active).
 - Validate at startup; abort with a clear message on errors.
 - Runs in the cluster (in-cluster config) and locally against KUBECONFIG – for development on macOS (Apple Silicon) against a local k3s.
-- Complete table of all variables in the README.
+- Complete table of all variables in docs/configuration.md.
 
 ## Security
 - RBAC: get/list/watch only, minimal list of resources. nodes/stats (get) only with an active PVC usage check, never nodes/proxy; CRD permissions only for cert-manager Certificates and Argo CD Applications, each switchable via a Helm value.
@@ -159,7 +159,7 @@ Ignoring:
 - Makefile with build, test, lint, run (local), image.
 - Helm chart: Deployment (1 replica, strategy Recreate because of SQLite on an RWO PVC), PVC, Service, optional Ingress, ServiceAccount, RBAC with switches for optional checks, Secret or existingSecret for password hash and SMTP credentials, liveness/readiness probes, resources (guideline requests 64Mi/10m, limit 128Mi), securityContext as above.
 - LICENSE (Apache-2.0)
-- README: motto, what/why, clear scope (no Prometheus replacement, no root-cause analysis, no traces – deliberately few, reliable checks), installation via Helm, configuration table, list of all checks with severity, local development.
+- README: motto, a note at the top that the project was built with AI, what/why, clear scope (no Prometheus replacement, no root-cause analysis, no traces – deliberately few, reliable checks), a quickstart with Helm and links to the docs. Since phase 23 the details are articles in docs/: installation, how it works, checks (all checks with severity), notifications, routing, message templates, configuration table, security, troubleshooting, local development. Plain, factual writing.
 - ARCHITECTURE.md: one page for readers without Go experience – data flow, packages and their purpose, step by step "How do I add a new check".
 - CHANGELOG.md, .gitignore.
 - For the Git workflow see CLAUDE.md.

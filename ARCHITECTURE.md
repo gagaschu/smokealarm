@@ -65,7 +65,7 @@ A finding has a stable **key** (check + object + a fixed word), so smokealarm ca
 - A node that is down holds back the problems it causes. After the checks and the annotations, `checks.ApplyNodeCauses` sets `CausedBy` on problems of pods on a down node and of Deployments, StatefulSets and DaemonSets whose missing replicas their pods on down nodes explain (by their selector), but only while `node-not-ready` runs. The engine keeps such a problem **pending** as long as it is a consequence (`findings.caused_by`), so all the usual rules for pending problems apply: nothing is sent, and if it goes away it is dropped. When it no longer is one, the `ALERT_AFTER` clock starts again (`findings.pending_since`; `first_seen` stays the real start). Notifications list a down node first and carry the problems it holds back as `Alert.Affected`, filtered with the same routing as everything else.
 - If a check cannot get its data (for example the kubelet does not answer), it is skipped for that run and its open problems are left alone, because "no data" is not "all fine". They get no reminders either, until the check runs again.
 - The informer caches stay "synced" after their first fill, so `internal/kube/apihealth.go` watches whether they are still updated: the watch error handler of every informer, and a request to `/version` in every run (client-go retries "connection refused" without calling the handler, and when the server answers again the watch errors of the outage are forgotten). After 3 minutes it sets `Snapshot.APIProblem`, and the check `api-connection` reports it. If nothing can be read, the engine treats all other checks as skipped.
-- If a check is switched off (configuration, or an optional CRD or permission is missing at startup), its open problems count as gone and are reported as resolved after `RESOLVE_AFTER`. The README says so, because switching a check off can look like a recovery.
+- If a check is switched off (configuration, or an optional CRD or permission is missing at startup), its open problems count as gone and are reported as resolved after `RESOLVE_AFTER`. The docs say so ([checks](docs/checks.md#notes)), because switching a check off can look like a recovery.
 
 ## Where notifications go
 
@@ -118,7 +118,7 @@ Example: a target `gotify` that posts to a Gotify server.
 3. **Configuration** in `internal/config/notify.go`: read the variables (`SMOKEALARM_GOTIFY_URL`, `SMOKEALARM_GOTIFY_TOKEN`), validate them in `validateNotify` (never print a secret value), and add table cases to `notify_test.go`.
 4. **Wire it** in `newNotifiers` in `cmd/smokealarm/notifiers.go`. The engine needs no change. For routing, add a `SMOKEALARM_GOTIFY_MIN_SEVERITY` line to `minSeverityVariables` in `internal/config/routing.go`; the name `gotify` then also works in the targets annotation.
 5. **Helm chart**: plain settings in `values.yaml` and `deployment.yaml`, secrets in `smokealarm.notificationSecrets` in `_helpers.tpl` (they go into the Secret), and the new variables in `TestEverySettingBecomesAnEnvironmentVariable` and `TestNotificationSecretsAreOnlyInTheSecret` in `deploy/helm/chart_test.go`.
-6. **Document it**: a section and the variables in `README.md` (a test fails if a variable is missing).
+6. **Document it**: a section in `docs/notifications.md` and the variables in `docs/configuration.md` (a test fails if a variable is missing).
 
 ## Go for ops people
 
@@ -167,7 +167,7 @@ That is all the engine needs. The check now runs, can be disabled with `SMOKEALA
 
 **3. Test it** in `internal/checks/pods_test.go`: a table with cases for "evicted", "not evicted", and "ignored by annotation", built from hand-made `corev1.Pod` objects. Look at the existing tests in that file and copy the pattern.
 
-**4. Document it**: add a line to the checks table in `README.md`. A test fails if a check is missing from the README, so this cannot be forgotten.
+**4. Document it**: add a line to the checks table in `docs/checks.md`. A test fails if a check is missing there, so this cannot be forgotten.
 
 If your check needs **data that is not in the snapshot yet** (a new kind of object), there are a few more steps:
 
