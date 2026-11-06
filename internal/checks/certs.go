@@ -48,7 +48,7 @@ func CertExpiry(snap *Snapshot, opts Options) []Finding {
 		}
 		remaining := cert.NotAfter.Sub(snap.Now)
 		ref := certRef(cert)
-		when := cert.NotAfter.UTC().Format(time.RFC3339)
+		when := opts.formatTime(*cert.NotAfter)
 
 		switch {
 		case remaining <= 0:

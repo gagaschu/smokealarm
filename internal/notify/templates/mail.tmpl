@@ -4,7 +4,7 @@ problems they hold back, then the other new problems, then reminders, then
 resolved ones; each list is already sorted.
 */ -}}
 {{- define "severity"}}{{if eq .Severity "critical"}}CRITICAL{{else}}WARNING{{end}}{{end -}}
-{{- define "time"}}{{if not .IsZero}}{{.Format "2006-01-02 15:04:05 UTC"}}{{end}}{{end -}}
+{{- define "time"}}{{if not .IsZero}}{{.Format "2006-01-02 15:04:05 MST"}}{{end}}{{end -}}
 {{- define "affected"}}{{if .Affected}}  Affected, not reported on their own while the node is down:
 {{range .Affected}}    - {{.Object}}: {{.Reason}}
 {{end}}{{end}}{{end -}}

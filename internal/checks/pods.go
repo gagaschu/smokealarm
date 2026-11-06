@@ -89,7 +89,7 @@ func PodOOMKilled(snap *Snapshot, opts Options) []Finding {
 			if t == nil || t.Reason != reasonOOMKilled || snap.Now.Sub(t.FinishedAt.Time) > oomWindow {
 				continue
 			}
-			msg := fmt.Sprintf("container %s was OOMKilled at %s", cs.Name, t.FinishedAt.Format(time.RFC3339))
+			msg := fmt.Sprintf("container %s was OOMKilled at %s", cs.Name, opts.formatTime(t.FinishedAt.Time))
 			findings = append(findings, newFinding(checkPodOOMKilled, Warning, podRef(pod), reasonOOMKilled, msg))
 			break
 		}

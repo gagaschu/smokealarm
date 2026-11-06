@@ -253,6 +253,7 @@ func newEngine(cfg config.Config, logger *slog.Logger, cluster *kube.Cluster, db
 			CronJobGrace:      cfg.CronJobGrace,
 			CronJobTimeZone:   cfg.CronJobTimeZone,
 			IgnoredNamespaces: cfg.IgnoreNamespaces,
+			Location:          cfg.Location,
 		},
 		Interval:               cfg.CheckInterval,
 		AlertAfter:             cfg.AlertAfter,
@@ -264,6 +265,7 @@ func newEngine(cfg config.Config, logger *slog.Logger, cluster *kube.Cluster, db
 		Notifiers:              notifiers,
 		MinSeverity:            minSeverity,
 		BaseURL:                cfg.BaseURL,
+		Location:               cfg.Location,
 		Now:                    time.Now,
 		Logger:                 logger,
 	}
@@ -293,6 +295,7 @@ func newHandler(cfg config.Config, logger *slog.Logger, cluster *kube.Cluster, d
 		Audience: loop.Audience,
 		Now:      time.Now,
 		Logger:   logger,
+		Location: cfg.Location,
 	}
 	if cfg.OIDC.Enabled() {
 		login, err := newOIDC(cfg, logger)

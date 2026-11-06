@@ -44,6 +44,10 @@ type Config struct {
 	PVCPendingAfter  time.Duration
 	CronJobGrace     time.Duration
 	CronJobTimeZone  string // how schedules without spec.timeZone are read; empty = UTC
+	// Location is the zone (SMOKEALARM_TIME_ZONE, default UTC) for times in the
+	// web UI, the downtime form, mails and chat messages. Storage and the
+	// webhook stay in UTC.
+	Location *time.Location
 	// KubeletCAFile verifies the kubelets' serving certificates for pvc-usage
 	// instead of the CA of the API client. Empty = that CA.
 	KubeletCAFile string
@@ -123,6 +127,7 @@ func Load(getenv func(string) string) (Config, error) {
 	if _, err := time.LoadLocation(cfg.CronJobTimeZone); err != nil {
 		r.fail("SMOKEALARM_CRONJOB_TIME_ZONE: %q is not a known time zone", cfg.CronJobTimeZone)
 	}
+	cfg.Location = loadLocation(&r)
 	validatePasswordHash(&r, cfg.AdminPasswordHash)
 	validateBaseURL(&r, cfg.BaseURL)
 	validateSMTP(&r, cfg.SMTP)
@@ -246,4 +251,23 @@ func parseList(s string) []string {
 		}
 	}
 	return items
+}
+
+// loadLocation reads SMOKEALARM_TIME_ZONE. UTC is the default, so nothing
+// changes for those who do not set it.
+func loadLocation(r *reader) *time.Location {
+	name := r.text("SMOKEALARM_TIME_ZONE", "UTC")
+	// time.LoadLocation also takes "Local", which is not an IANA name: the
+	// zone would depend on the TZ of the container, and the UI would show
+	// the word "Local" as the zone.
+	if name == "Local" {
+		r.fail("SMOKEALARM_TIME_ZONE: %q is not an IANA time zone name, for example Europe/Zurich", name)
+		return time.UTC
+	}
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		r.fail("SMOKEALARM_TIME_ZONE: %q is not a known time zone", name)
+		return time.UTC
+	}
+	return loc
 }

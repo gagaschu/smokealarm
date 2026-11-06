@@ -20,7 +20,7 @@ A short chat text in German:
 
 ```
 {{range .NodesDown}}Knoten {{.Name}} ausgefallen, {{len .Affected}} betroffen
-{{end}}{{range .New}}{{if eq .Severity "critical"}}KRITISCH{{else}}Warnung{{end}} {{.Object}}: {{.Reason}} (seit {{.Since.Format "02.01. 15:04"}} UTC)
+{{end}}{{range .New}}{{if eq .Severity "critical"}}KRITISCH{{else}}Warnung{{end}} {{.Object}}: {{.Reason}} (seit {{.Since.Format "02.01. 15:04 MST"}})
 {{end}}{{range .Resolved}}Behoben: {{.Object}}: {{.Reason}}
 {{end}}{{if .Omitted}}… und {{.Omitted}} weitere
 {{end}}{{.BaseURL}}
@@ -50,10 +50,10 @@ Each problem in these lists has:
 | `.Kind`, `.Namespace`, `.Name` | e.g. `Pod`, `media`, `jellyfin`; the namespace is empty for nodes |
 | `.Object` | The object as one label: `Pod media/jellyfin` |
 | `.Message` | The message, always on one line |
-| `.Since`, `.ResolvedAt` | When it was first seen and when it was resolved (zero unless resolved), in UTC. Format them with a Go layout: `{{.Since.Format "02.01.2006 15:04"}}` |
+| `.Since`, `.ResolvedAt` | When it was first seen and when it was resolved (zero unless resolved), in the time zone `SMOKEALARM_TIME_ZONE` (UTC by default). `MST` in a layout writes its abbreviation, for example `CET`. Format them with a Go layout: `{{.Since.Format "02.01.2006 15:04"}}` |
 | `.Affected` | For a node that is down: the problems it holds back, each with `.Object` and `.Reason` |
 
-Only the functions that come with text/template are available: `if`, `range`, `with`, `eq`, `ne`, `len`, `index`, `printf`, `and`, `or`, `not` and a few more. Times are always UTC.
+Only the functions that come with text/template are available: `if`, `range`, `with`, `eq`, `ne`, `len`, `index`, `printf`, `and`, `or`, `not` and a few more. Times are in `SMOKEALARM_TIME_ZONE`, UTC by default. A template that writes the text "UTC" next to a time shows the wrong zone once you set another one: use `MST` in the layout instead.
 
 The subject is put on one line after rendering, so line breaks in `subject.tmpl` only help readability and can never add a mail header. It is cut at 200 bytes, so it fits into a mail header line and leaves room for the text on Telegram. Spaces and blank lines at the start and end of a chat text are removed.
 

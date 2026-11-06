@@ -201,3 +201,20 @@ func TestCertExpiryKeyIsStableAcrossSeverities(t *testing.T) {
 		t.Errorf("key changed with the severity: %q, %q, %q", soonKey, verySoonKey, expiredKey)
 	}
 }
+
+func TestCertExpiryMessageUsesTheConfiguredZone(t *testing.T) {
+	loc, err := time.LoadLocation("Europe/Zurich")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap := &Snapshot{Now: testNow, Certificates: []Certificate{
+		{Meta: certMeta(), NotAfter: expiresIn(9*24*time.Hour + 3*time.Hour)},
+	}}
+	opts := testOptions()
+	opts.Location = loc
+	got := CertExpiry(snap, opts)
+	want := "expires in 9d 3h (2026-11-12T16:00:00+01:00)"
+	if len(got) != 1 || got[0].Message != want {
+		t.Errorf("got %+v, want message %q", got, want)
+	}
+}

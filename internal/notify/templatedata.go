@@ -2,6 +2,8 @@ package notify
 
 import (
 	"time"
+
+	"github.com/gagaschu/smokealarm/internal/checks"
 )
 
 // templateData is what every message template gets: the subject, the mail
@@ -32,8 +34,8 @@ type templateProblem struct {
 	Name       string
 	Object     string // "Pod media/jellyfin"
 	Message    string
-	Since      time.Time // UTC
-	ResolvedAt time.Time // UTC; zero unless resolved
+	Since      time.Time // in SMOKEALARM_TIME_ZONE
+	ResolvedAt time.Time // in SMOKEALARM_TIME_ZONE; zero unless resolved
 	Affected   []templateAffected
 }
 
@@ -50,15 +52,18 @@ func newTemplateData(n Notification, kind string) templateData {
 	return templateData{
 		Target:    kind,
 		Summary:   summaryLine(n),
-		NodesDown: templateProblems(nodes),
-		New:       templateProblems(others),
-		Reminders: templateProblems(n.Reminders),
-		Resolved:  templateProblems(n.Resolved),
+		NodesDown: templateProblems(nodes, n.Location),
+		New:       templateProblems(others, n.Location),
+		Reminders: templateProblems(n.Reminders, n.Location),
+		Resolved:  templateProblems(n.Resolved, n.Location),
 		BaseURL:   n.BaseURL,
 	}
 }
 
-func templateProblems(alerts []Alert) []templateProblem {
+// templateProblems converts the alerts, with their times in the given zone
+// (nil means UTC).
+func templateProblems(alerts []Alert, loc *time.Location) []templateProblem {
+	loc = checks.ZoneOrUTC(loc)
 	var problems []templateProblem
 	for _, a := range alerts {
 		p := templateProblem{
@@ -70,8 +75,8 @@ func templateProblems(alerts []Alert) []templateProblem {
 			Name:       oneLine(a.Object.Name),
 			Object:     oneLine(a.Object.Label()),
 			Message:    oneLine(a.Message),
-			Since:      a.Since.UTC(),
-			ResolvedAt: a.ResolvedAt.UTC(),
+			Since:      a.Since.In(loc),
+			ResolvedAt: a.ResolvedAt.In(loc),
 		}
 		for _, affected := range a.Affected {
 			p.Affected = append(p.Affected, templateAffected{

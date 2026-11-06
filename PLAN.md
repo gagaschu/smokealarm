@@ -319,6 +319,7 @@ Durations: Go format (`30s`, `5m`, `2h`) plus a `d` suffix for days (`30d`). Lis
 | `SMOKEALARM_PVC_PENDING_AFTER` | `5m` | `pvc-pending` threshold |
 | `SMOKEALARM_CRONJOB_GRACE` | `5m` | Tolerance for `cronjob-missed` |
 | `SMOKEALARM_CRONJOB_TIME_ZONE` | (UTC) | time zone for schedules without `spec.timeZone` (since phase 16) |
+| `SMOKEALARM_TIME_ZONE` | `UTC` | phase 25: zone for all times shown or entered (web, downtime form, mails, chat, check messages); webhook time fields and storage stay UTC (webhook subject/message are the shared texts); `Local` refused; repeated DST hour in the downtime form: keep the running end, else the earlier future moment. Helm `config.timeZone` |
 | `SMOKEALARM_KUBELET_CA_FILE` | (CA of the API client) | phase 21: CA for the kubelet serving certificates (`pvc-usage`); Helm `kubelet.caConfigMap` |
 | `SMOKEALARM_ADMIN_USER` | **required** | Admin username |
 | `SMOKEALARM_ADMIN_PASSWORD_HASH` | **required** | bcrypt hash (`smokealarm hash-password`) |

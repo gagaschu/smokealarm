@@ -90,6 +90,8 @@ spec:
             - name: SMOKEALARM_CRONJOB_TIME_ZONE
               value: {{ . | quote }}
             {{- end }}
+            - name: SMOKEALARM_TIME_ZONE
+              value: {{ .Values.config.timeZone | default "UTC" | quote }}
             {{- with include "smokealarm.baseUrl" . }}
             - name: SMOKEALARM_BASE_URL
               value: {{ . | quote }}

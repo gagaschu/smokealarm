@@ -111,7 +111,7 @@ type report struct {
 // worse, or the annotation changes).
 func (e *Engine) buildReport(records, due []store.Record, silenced map[string]bool,
 	target notify.Notifier) report {
-	r := report{notification: notify.Notification{BaseURL: e.BaseURL}}
+	r := report{notification: notify.Notification{BaseURL: e.BaseURL, Location: e.Location}}
 	n := &r.notification
 	for _, rec := range records {
 		firing := rec.State == store.StateFiring

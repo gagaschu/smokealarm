@@ -47,6 +47,7 @@ func TestLoadDefaults(t *testing.T) {
 		PodPendingAfter:  5 * time.Minute,
 		PVCPendingAfter:  5 * time.Minute,
 		CronJobGrace:     5 * time.Minute,
+		Location:         time.UTC,
 		SMTP:             SMTPConfig{Port: 587, TLS: "starttls"},
 		Notify:           NotifyConfig{NtfyServer: "https://ntfy.sh"},
 		OIDC:             OIDCConfig{Name: "OIDC", Scopes: []string{"openid", "email"}, GroupsClaim: "groups"},
@@ -151,6 +152,8 @@ func TestLoadRejectsBadAlertAndRetention(t *testing.T) {
 		{"negative pvc pending", map[string]string{"SMOKEALARM_PVC_PENDING_AFTER": "-1m"}, "SMOKEALARM_PVC_PENDING_AFTER"},
 		{"negative cronjob grace", map[string]string{"SMOKEALARM_CRONJOB_GRACE": "-1m"}, "SMOKEALARM_CRONJOB_GRACE"},
 		{"unknown time zone", map[string]string{"SMOKEALARM_CRONJOB_TIME_ZONE": "Europe/Atlantis"}, "SMOKEALARM_CRONJOB_TIME_ZONE"},
+		{"unknown display time zone", map[string]string{"SMOKEALARM_TIME_ZONE": "Europe/Atlantis"}, "SMOKEALARM_TIME_ZONE"},
+		{"local display time zone", map[string]string{"SMOKEALARM_TIME_ZONE": "Local"}, "SMOKEALARM_TIME_ZONE"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -215,6 +218,16 @@ func TestCronJobTimeZoneIsRead(t *testing.T) {
 	}
 	if cfg.CronJobTimeZone != "Europe/Berlin" {
 		t.Errorf("CronJobTimeZone = %q", cfg.CronJobTimeZone)
+	}
+}
+
+func TestTimeZoneIsRead(t *testing.T) {
+	cfg, err := Load(env(map[string]string{"SMOKEALARM_TIME_ZONE": "Europe/Zurich"}))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Location.String() != "Europe/Zurich" {
+		t.Errorf("Location = %q, want Europe/Zurich", cfg.Location)
 	}
 }
 

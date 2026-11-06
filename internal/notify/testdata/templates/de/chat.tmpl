@@ -1,4 +1,4 @@
-{{- define "zeit"}}{{.Format "02.01. 15:04"}} UTC{{end -}}
+{{- define "zeit"}}{{.Format "02.01. 15:04 MST"}}{{end -}}
 {{- range .NodesDown}}Knoten {{.Name}} ausgefallen seit {{template "zeit" .Since}}{{with .Affected}}, {{len .}} betroffen{{end}}
 {{end -}}
 {{- range .New}}{{if eq .Severity "critical"}}KRITISCH{{else}}Warnung{{end}} {{.Object}}: {{.Reason}} (seit {{template "zeit" .Since}})

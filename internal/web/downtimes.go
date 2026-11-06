@@ -10,7 +10,7 @@ import (
 )
 
 // Time layouts of an <input type="datetime-local">. The browser sends no time
-// zone, so the form says "UTC" and the value is read as UTC.
+// zone, so the form names the configured zone and the value is read in it.
 const (
 	dateTimeLocalFormat        = "2006-01-02T15:04"
 	dateTimeLocalSecondsFormat = "2006-01-02T15:04:05"
@@ -34,7 +34,7 @@ type downtimeFormView struct {
 	Reason    string
 	Until     string // value of the input field
 	Min       string // the current minute: earlier values are in the past
-	Now       string // current time, so the reader can compare it with UTC
+	Now       string // current time, so the reader can compare it with the zone
 	Existing  string // end of the downtime that would be replaced, if any
 }
 
@@ -47,7 +47,7 @@ func (s *Server) downtimeEnds(ctx context.Context, now time.Time) (map[string]st
 	}
 	ends := map[string]string{}
 	for _, d := range active {
-		ends[d.Key] = d.ExpiresAt.UTC().Format(timeFormat)
+		ends[d.Key] = d.ExpiresAt.In(s.zone()).Format(timeFormat)
 	}
 	return ends, nil
 }
@@ -76,7 +76,7 @@ func (s *Server) downtimes(w http.ResponseWriter, r *http.Request) {
 			ID:        d.ID,
 			Object:    d.Object.Label(),
 			Reason:    d.Reason,
-			Until:     d.ExpiresAt.UTC().Format(timeFormat),
+			Until:     d.ExpiresAt.In(s.zone()).Format(timeFormat),
 			Remaining: formatAge(d.ExpiresAt.Sub(now)),
 			Firing:    firing[d.Key],
 		})
@@ -109,14 +109,19 @@ func (s *Server) createDowntime(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := s.Now()
+	keep, err := s.downtimeEnd(r.Context(), rec.Key, now)
+	if err != nil {
+		s.serverError(w, "load downtimes", err)
+		return
+	}
 	value := r.PostFormValue("until")
-	until, problem := parseUntil(value, now)
+	until, problem := parseUntil(value, now, s.zone(), keep)
 	if problem != "" {
 		s.renderDowntimeForm(w, r, rec, value, problem, http.StatusBadRequest)
 		return
 	}
 
-	err := s.Store.SetDowntime(r.Context(), store.Downtime{
+	err = s.Store.SetDowntime(r.Context(), store.Downtime{
 		Key:       rec.Key,
 		Check:     rec.Check,
 		Object:    rec.Object,
@@ -128,8 +133,23 @@ func (s *Server) createDowntime(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, "set downtime", err)
 		return
 	}
-	s.Logger.Info("downtime set", "key", rec.Key, "until", until.Format(timeFormat))
+	s.Logger.Info("downtime set", "key", rec.Key, "until", until.In(s.zone()).Format(timeFormat))
 	http.Redirect(w, r, "/downtimes", http.StatusSeeOther)
+}
+
+// downtimeEnd is the end of the running downtime of the problem with the given
+// key, or the zero time if it has none.
+func (s *Server) downtimeEnd(ctx context.Context, key string, now time.Time) (time.Time, error) {
+	active, err := s.Store.ActiveDowntimes(ctx, now)
+	if err != nil {
+		return time.Time{}, err
+	}
+	for _, d := range active {
+		if d.Key == key {
+			return d.ExpiresAt, nil
+		}
+	}
+	return time.Time{}, nil
 }
 
 // endDowntime ends a running downtime now. If the problem is still firing, the
@@ -174,7 +194,7 @@ func (s *Server) loadFinding(w http.ResponseWriter, r *http.Request, value strin
 // renderDowntimeForm shows the form. An empty until means nothing was entered
 // yet: it then suggests the end of the running downtime, or a new one.
 func (s *Server) renderDowntimeForm(w http.ResponseWriter, r *http.Request, rec store.Record, until, errorText string, status int) {
-	now := s.Now().UTC()
+	now := s.Now().In(s.zone())
 	active, err := s.Store.ActiveDowntimes(r.Context(), now)
 	if err != nil {
 		s.serverError(w, "load downtimes", err)
@@ -196,9 +216,9 @@ func (s *Server) renderDowntimeForm(w http.ResponseWriter, r *http.Request, rec 
 		if d.Key != rec.Key {
 			continue
 		}
-		form.Existing = d.ExpiresAt.UTC().Format(timeFormat)
+		form.Existing = d.ExpiresAt.In(s.zone()).Format(timeFormat)
 		if until == "" {
-			form.Until = d.ExpiresAt.UTC().Format(dateTimeLocalFormat)
+			form.Until = d.ExpiresAt.In(s.zone()).Format(dateTimeLocalFormat)
 		}
 	}
 	s.render(w, status, "downtime_form", page{
@@ -206,18 +226,61 @@ func (s *Server) renderDowntimeForm(w http.ResponseWriter, r *http.Request, rec 
 	})
 }
 
-// parseUntil reads the value of the form field as UTC and checks that it lies
-// in the future. If it does not, the second result is a message for the user.
-func parseUntil(value string, now time.Time) (time.Time, string) {
-	until, err := time.Parse(dateTimeLocalFormat, value)
+// parseUntil reads the value of the form field in the given zone and checks
+// that it lies in the future. If it does not, the second result is a message
+// for the user.
+//
+// On the night the clocks go back, a wall-clock time exists twice. If one of
+// the two moments is keep (the end of the running downtime, which the form
+// shows unchanged), that one is taken, so saving the form as it is does not
+// move the end by an hour. Otherwise the earlier moment that is still in the
+// future is taken. A time that does not exist (the clocks jump forward) is
+// read as Go reads it, within an hour of what was typed.
+func parseUntil(value string, now time.Time, loc *time.Location, keep time.Time) (time.Time, string) {
+	until, err := time.ParseInLocation(dateTimeLocalFormat, value, loc)
 	if err != nil {
-		until, err = time.Parse(dateTimeLocalSecondsFormat, value)
+		until, err = time.ParseInLocation(dateTimeLocalSecondsFormat, value, loc)
 	}
 	if err != nil {
 		return time.Time{}, "Please enter a date and time."
 	}
-	if !until.After(now) {
-		return time.Time{}, "The end of a downtime must be in the future."
+	moments := sameWallClock(until, loc)
+	if !keep.IsZero() {
+		for _, m := range moments {
+			if m.Truncate(time.Minute).Equal(keep.Truncate(time.Minute)) {
+				return m, ""
+			}
+		}
 	}
-	return until, ""
+	for _, m := range moments {
+		if m.After(now) {
+			return m, ""
+		}
+	}
+	return time.Time{}, "The end of a downtime must be in the future."
+}
+
+// sameWallClock returns t and, if the clocks went back around t, the other
+// moment that shows the same wall-clock time in loc, earliest first.
+func sameWallClock(t time.Time, loc *time.Location) []time.Time {
+	wall := t.In(loc).Format(dateTimeLocalSecondsFormat)
+	// The offsets half a day before and after t differ if a change of the
+	// clocks lies in between; the difference is how far the other moment is
+	// away.
+	_, before := t.Add(-12 * time.Hour).In(loc).Zone()
+	_, after := t.Add(12 * time.Hour).In(loc).Zone()
+	if before == after {
+		return []time.Time{t}
+	}
+	shift := time.Duration(before-after) * time.Second
+	for _, other := range []time.Time{t.Add(-shift), t.Add(shift)} {
+		if other.In(loc).Format(dateTimeLocalSecondsFormat) != wall {
+			continue
+		}
+		if other.Before(t) {
+			return []time.Time{other, t}
+		}
+		return []time.Time{t, other}
+	}
+	return []time.Time{t}
 }

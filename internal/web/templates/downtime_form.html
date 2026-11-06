@@ -10,10 +10,10 @@
   {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
   <form class="stack" method="post" action="/downtimes">
     <input type="hidden" name="finding" value="{{.DowntimeForm.FindingID}}">
-    <label class="field">Until (UTC)
+    <label class="field">Until ({{.Zone}})
       <input type="datetime-local" name="until" value="{{.DowntimeForm.Until}}" min="{{.DowntimeForm.Min}}" required>
     </label>
-    <p class="footnote">Enter the time in UTC, not your local time. It is now {{.DowntimeForm.Now}}.</p>
+    <p class="footnote">Enter the time in {{.Zone}}, which may differ from your local time. It is now {{.DowntimeForm.Now}}.</p>
     <button class="primary" type="submit">{{template "icon-bell-off"}}Save downtime</button>
   </form>
 </section>
