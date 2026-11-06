@@ -47,9 +47,9 @@ func TestNewOIDCFailsForAnUnusableCAFile(t *testing.T) {
 
 func TestOIDCFingerprintFollowsTheAllowlists(t *testing.T) {
 	c := oidcTestConfig().OIDC
-	want := auth.OIDCFingerprint(c.IssuerURL, c.ClientID, c.AllowedEmails, c.AllowedGroups)
+	want := auth.OIDCFingerprint(c.IssuerURL, c.ClientID, c.GroupsClaim, c.AllowedEmails, c.AllowedGroups)
 	if oidcFingerprint(c) != want {
-		t.Error("the fingerprint does not use issuer, client and both allowlists")
+		t.Error("the fingerprint does not use issuer, client, groups claim and both allowlists")
 	}
 	c.AllowedGroups = []string{"ops", "dev"}
 	if oidcFingerprint(c) == want {

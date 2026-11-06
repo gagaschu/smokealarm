@@ -42,7 +42,8 @@ func newOIDC(cfg config.Config, logger *slog.Logger) (*auth.OIDC, error) {
 }
 
 // oidcFingerprint is the value that OIDC sessions carry: it changes when the
-// provider, the client or an allowlist changes, which ends those sessions.
+// provider, the client, the groups claim or an allowlist changes, which ends
+// those sessions.
 func oidcFingerprint(c config.OIDCConfig) string {
-	return auth.OIDCFingerprint(c.IssuerURL, c.ClientID, c.AllowedEmails, c.AllowedGroups)
+	return auth.OIDCFingerprint(c.IssuerURL, c.ClientID, c.GroupsClaim, c.AllowedEmails, c.AllowedGroups)
 }

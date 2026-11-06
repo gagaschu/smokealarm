@@ -327,7 +327,7 @@ func TestOIDCSessionIsValidWhileOIDCIsOn(t *testing.T) {
 	now := testNow
 	s, _ := newTestSessions(t, &now, true)
 	s.Credentials = CredentialsFingerprint("admin", "hash")
-	s.OIDCCredentials = OIDCFingerprint("https://id.example.org", "smokealarm", []string{"a@example.org"}, nil)
+	s.OIDCCredentials = OIDCFingerprint("https://id.example.org", "smokealarm", "groups", []string{"a@example.org"}, nil)
 
 	oidcCookie := loginWith(t, s, MethodOIDC)
 	passwordCookie := loginWith(t, s, MethodPassword)
@@ -341,7 +341,7 @@ func TestOIDCSessionIsValidWhileOIDCIsOn(t *testing.T) {
 	}
 
 	// A new allowlist ends the OIDC sessions and leaves the password ones.
-	s.OIDCCredentials = OIDCFingerprint("https://id.example.org", "smokealarm", []string{"someone-else@example.org"}, nil)
+	s.OIDCCredentials = OIDCFingerprint("https://id.example.org", "smokealarm", "groups", []string{"someone-else@example.org"}, nil)
 	if _, ok, _ := s.Valid(requestWith(oidcCookie)); ok {
 		t.Error("an OIDC session must end when the allowlist changes")
 	}
@@ -360,7 +360,7 @@ func TestPasswordChangeLeavesOIDCSessionsAlone(t *testing.T) {
 	now := testNow
 	s, _ := newTestSessions(t, &now, true)
 	s.Credentials = CredentialsFingerprint("admin", "old hash")
-	s.OIDCCredentials = OIDCFingerprint("https://id.example.org", "smokealarm", nil, []string{"ops"})
+	s.OIDCCredentials = OIDCFingerprint("https://id.example.org", "smokealarm", "groups", nil, []string{"ops"})
 	oidcCookie := loginWith(t, s, MethodOIDC)
 	passwordCookie := loginWith(t, s, MethodPassword)
 
@@ -403,24 +403,25 @@ func TestStartRefusesOIDCWhenItIsNotConfigured(t *testing.T) {
 }
 
 func TestOIDCFingerprint(t *testing.T) {
-	base := OIDCFingerprint("https://id.example.org", "smokealarm", []string{"a@example.org", "b@example.org"}, []string{"ops", "dev"})
-	if got := OIDCFingerprint("https://id.example.org", "smokealarm", []string{"b@example.org", "a@example.org"}, []string{"dev", "ops"}); got != base {
+	base := OIDCFingerprint("https://id.example.org", "smokealarm", "groups", []string{"a@example.org", "b@example.org"}, []string{"ops", "dev"})
+	if got := OIDCFingerprint("https://id.example.org", "smokealarm", "groups", []string{"b@example.org", "a@example.org"}, []string{"dev", "ops"}); got != base {
 		t.Error("a different order of the allowlists must not change the fingerprint")
 	}
 	tests := []struct {
-		name             string
-		issuer, clientID string
-		emails, groups   []string
+		name                          string
+		issuer, clientID, groupsClaim string
+		emails, groups                []string
 	}{
-		{"other issuer", "https://other.example.org", "smokealarm", []string{"a@example.org", "b@example.org"}, []string{"ops", "dev"}},
-		{"other client", "https://id.example.org", "other", []string{"a@example.org", "b@example.org"}, []string{"ops", "dev"}},
-		{"fewer emails", "https://id.example.org", "smokealarm", []string{"a@example.org"}, []string{"ops", "dev"}},
-		{"fewer groups", "https://id.example.org", "smokealarm", []string{"a@example.org", "b@example.org"}, []string{"ops"}},
-		{"an email moved to the groups", "https://id.example.org", "smokealarm", []string{"a@example.org"}, []string{"b@example.org", "ops", "dev"}},
+		{"other issuer", "https://other.example.org", "smokealarm", "groups", []string{"a@example.org", "b@example.org"}, []string{"ops", "dev"}},
+		{"other client", "https://id.example.org", "other", "groups", []string{"a@example.org", "b@example.org"}, []string{"ops", "dev"}},
+		{"other groups claim", "https://id.example.org", "smokealarm", "roles", []string{"a@example.org", "b@example.org"}, []string{"ops", "dev"}},
+		{"fewer emails", "https://id.example.org", "smokealarm", "groups", []string{"a@example.org"}, []string{"ops", "dev"}},
+		{"fewer groups", "https://id.example.org", "smokealarm", "groups", []string{"a@example.org", "b@example.org"}, []string{"ops"}},
+		{"an email moved to the groups", "https://id.example.org", "smokealarm", "groups", []string{"a@example.org"}, []string{"b@example.org", "ops", "dev"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := OIDCFingerprint(tt.issuer, tt.clientID, tt.emails, tt.groups)
+			got := OIDCFingerprint(tt.issuer, tt.clientID, tt.groupsClaim, tt.emails, tt.groups)
 			if got == base {
 				t.Error("fingerprint did not change")
 			}

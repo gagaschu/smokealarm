@@ -98,7 +98,7 @@ func newOIDCEnv(t *testing.T, name string) (*testEnv, *webIdP) {
 		Client: idp.server.Client(), Now: func() time.Time { return testNow },
 	}
 	e.server.OIDCName = name
-	e.server.Sessions.OIDCCredentials = auth.OIDCFingerprint(idp.server.URL, oidcTestClientID, []string{"gabriel@example.org"}, nil)
+	e.server.Sessions.OIDCCredentials = auth.OIDCFingerprint(idp.server.URL, oidcTestClientID, "groups", []string{"gabriel@example.org"}, nil)
 	var err error
 	if e.handler, err = e.server.Handler(); err != nil {
 		t.Fatalf("Handler: %v", err)
@@ -110,6 +110,17 @@ func newOIDCEnv(t *testing.T, name string) (*testEnv, *webIdP) {
 func cookieNamed(rec *httptest.ResponseRecorder, name string) *http.Cookie {
 	for _, c := range rec.Result().Cookies() {
 		if c.Name == name {
+			return c
+		}
+	}
+	return nil
+}
+
+// oidcLoginCookie returns the OIDC login cookie from a response: its name starts
+// with smokealarm_oidc_ and ends with the state.
+func oidcLoginCookie(rec *httptest.ResponseRecorder) *http.Cookie {
+	for _, c := range rec.Result().Cookies() {
+		if strings.HasPrefix(c.Name, "smokealarm_oidc_") {
 			return c
 		}
 	}
@@ -129,9 +140,9 @@ func startOIDC(t *testing.T, e *testEnv, idp *webIdP) (callback string, cookie *
 	if err != nil || !strings.HasPrefix(location.String(), idp.server.URL+"/authorize?") {
 		t.Fatalf("redirect to %q, want the authorize endpoint of the provider", rec.Header().Get("Location"))
 	}
-	cookie = cookieNamed(rec, "smokealarm_oidc")
-	if cookie == nil {
-		t.Fatal("/login/oidc set no login cookie")
+	cookie = oidcLoginCookie(rec)
+	if cookie == nil || cookie.Name != "smokealarm_oidc_"+location.Query().Get("state") {
+		t.Fatalf("/login/oidc set the login cookie %+v, want one named after the state", cookie)
 	}
 	idp.mu.Lock()
 	idp.nonce = location.Query().Get("nonce")
@@ -157,7 +168,6 @@ func TestLoginPageShowsTheButtonNextToThePasswordForm(t *testing.T) {
 		name, oidcName string
 		want, notWant  string
 	}{
-		{"default name", "", "Login with OIDC", ""},
 		{"own name", "MeineID", "Login with MeineID", "Login with OIDC"},
 		{"special characters are escaped", "<b>x</b>", "Login with &lt;b&gt;x&lt;/b&gt;", "<b>x</b>"},
 	}
@@ -194,7 +204,7 @@ func TestOIDCLoginEndToEnd(t *testing.T) {
 	if session == nil || !session.HttpOnly || !session.Secure {
 		t.Fatalf("session cookie = %+v, want one that is HttpOnly and Secure", session)
 	}
-	if deleted := cookieNamed(rec, "smokealarm_oidc"); deleted == nil || deleted.MaxAge >= 0 {
+	if deleted := oidcLoginCookie(rec); deleted == nil || deleted.MaxAge >= 0 {
 		t.Errorf("the login cookie was not deleted: %+v", deleted)
 	}
 
@@ -203,14 +213,14 @@ func TestOIDCLoginEndToEnd(t *testing.T) {
 		t.Errorf("GET / with the OIDC session = %d, want 200", page.Code)
 	}
 	// And it ends when the allowlist changes.
-	e.server.Sessions.OIDCCredentials = auth.OIDCFingerprint(idp.server.URL, oidcTestClientID, []string{"somebody-else@example.org"}, nil)
+	e.server.Sessions.OIDCCredentials = auth.OIDCFingerprint(idp.server.URL, oidcTestClientID, "groups", []string{"somebody-else@example.org"}, nil)
 	if page := e.do(http.MethodGet, "/", nil, session); page.Code != http.StatusSeeOther {
 		t.Errorf("GET / after the allowlist changed = %d, want a redirect to the login", page.Code)
 	}
 }
 
 func TestOIDCLoginOfSomeoneNotOnTheAllowlist(t *testing.T) {
-	e, idp := newOIDCEnv(t, "")
+	e, idp := newOIDCEnv(t, "OIDC")
 	idp.email = "stranger@example.org"
 	callback, loginCookie := startOIDC(t, e, idp)
 
@@ -236,7 +246,7 @@ func TestOIDCLoginOfSomeoneNotOnTheAllowlist(t *testing.T) {
 }
 
 func TestOIDCCallbackWithoutTheLoginCookie(t *testing.T) {
-	e, idp := newOIDCEnv(t, "")
+	e, idp := newOIDCEnv(t, "OIDC")
 	callback, _ := startOIDC(t, e, idp)
 
 	rec := e.do(http.MethodGet, callback, nil, nil) // another browser, no cookie
@@ -264,13 +274,13 @@ func TestOIDCStartWhileTheProviderIsDown(t *testing.T) {
 	if !strings.Contains(body, `name="password"`) {
 		t.Error("the password form must stay available when the provider is down")
 	}
-	if cookieNamed(rec, "smokealarm_oidc") != nil {
+	if oidcLoginCookie(rec) != nil {
 		t.Error("a login cookie was set although the login could not start")
 	}
 }
 
 func TestPasswordLoginStillWorksWithOIDCOn(t *testing.T) {
-	e, _ := newOIDCEnv(t, "")
+	e, _ := newOIDCEnv(t, "OIDC")
 	if cookie := e.login(); e.do(http.MethodGet, "/", nil, cookie).Code != http.StatusOK {
 		t.Error("the password session does not work while OIDC is on")
 	}

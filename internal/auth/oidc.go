@@ -20,9 +20,12 @@ import (
 )
 
 const (
-	// oidcCookieName holds state, nonce and PKCE verifier of a login that is
-	// under way. They are random, belong to one browser and are used once.
-	oidcCookieName = "smokealarm_oidc"
+	// oidcCookiePrefix starts the name of the cookie that holds nonce and PKCE
+	// verifier of a login that is under way; the state completes the name.
+	// One cookie per login, so two tabs that log in at once do not overwrite
+	// each other, and only who knows the state can end a login. The values
+	// are random, belong to one browser and are used once.
+	oidcCookiePrefix = "smokealarm_oidc_"
 	// oidcCookiePath limits the cookie to the two OIDC routes.
 	oidcCookiePath = "/login/oidc"
 	// oidcLoginTimeout is how long the user has to log in at the provider.
@@ -32,6 +35,8 @@ const (
 	oidcRetryAfter = 30 * time.Second
 	// oidcRequestTimeout bounds every request to the provider.
 	oidcRequestTimeout = 10 * time.Second
+	// maxOIDCRedirects is how many redirects a GET to the provider follows.
+	maxOIDCRedirects = 5
 	// minSecretPart is the shortest text that is taken out of an error as a
 	// possible secret; shorter ones are words, and removing them would make
 	// the message unreadable.
@@ -68,9 +73,10 @@ type OIDC struct {
 
 // NewOIDCHTTPClient returns the client for all requests to the identity
 // provider. With a CA file it trusts that CA instead of the system's, for a
-// provider with an internal certificate. It does not follow redirects, because
-// a token request that is forwarded would send the client secret elsewhere.
-// The proxy from HTTPS_PROXY is used.
+// provider with an internal certificate. It follows redirects only for GET
+// requests (discovery, keys) and never from https to http; the token request
+// is a POST and is not forwarded, because that would send the client secret
+// elsewhere. The proxy from HTTPS_PROXY is used.
 func NewOIDCHTTPClient(caFile string) (*http.Client, error) {
 	transport := &http.Transport{
 		Proxy:               http.ProxyFromEnvironment,
@@ -88,12 +94,21 @@ func NewOIDCHTTPClient(caFile string) (*http.Client, error) {
 		transport.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
 	}
 	return &http.Client{
-		Transport: transport,
-		Timeout:   oidcRequestTimeout,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
+		Transport:     transport,
+		Timeout:       oidcRequestTimeout,
+		CheckRedirect: checkOIDCRedirect,
 	}, nil
+}
+
+// checkOIDCRedirect lets a GET follow a few redirects, as some providers move
+// their discovery document or keys, and keeps everything else where it is.
+func checkOIDCRedirect(req *http.Request, via []*http.Request) error {
+	first := via[0]
+	if first.Method != http.MethodGet || len(via) > maxOIDCRedirects ||
+		(first.URL.Scheme == "https" && req.URL.Scheme != "https") {
+		return http.ErrUseLastResponse
+	}
+	return nil
 }
 
 // Begin starts a login: it remembers state, nonce and PKCE verifier in a
@@ -114,8 +129,8 @@ func (o *OIDC) Begin(w http.ResponseWriter, r *http.Request) (string, error) {
 	}
 	verifier := oauth2.GenerateVerifier()
 
-	// All three are URL-safe base64, so a dot cannot be part of one of them.
-	http.SetCookie(w, o.cookie(state+"."+nonce+"."+verifier, int(oidcLoginTimeout/time.Second)))
+	// Both are URL-safe base64, so a dot cannot be part of one of them.
+	http.SetCookie(w, o.cookie(state, nonce+"."+verifier, int(oidcLoginTimeout/time.Second)))
 	authURL := o.oauth(provider).AuthCodeURL(state, oidc.Nonce(nonce), oauth2.S256ChallengeOption(verifier))
 	return authURL, nil
 }
@@ -125,24 +140,26 @@ func (o *OIDC) Begin(w http.ResponseWriter, r *http.Request) (string, error) {
 // the name to show for the user. The error says why a login failed; it is for
 // the log, not for the user, and never contains a secret.
 func (o *OIDC) Finish(w http.ResponseWriter, r *http.Request) (string, error) {
-	cookie, cookieErr := r.Cookie(oidcCookieName)
-	// One try per cookie, whatever comes out of it.
-	http.SetCookie(w, o.cookie("", -1))
-
 	query := r.URL.Query()
+	// The state names the cookie, so a request without the right state finds
+	// none and cannot end a login that is under way, not even with an error.
+	state := query.Get("state")
+	cookie, cookieErr := r.Cookie(oidcCookiePrefix + state)
+	if state == "" || cookieErr != nil {
+		if problem := query.Get("error"); problem != "" {
+			return "", fmt.Errorf("the provider refused the login (no login of this browser has this state): %.100q", problem)
+		}
+		return "", errors.New("no login is under way with this state: the cookie is missing or expired, or the state does not match the one this browser started with")
+	}
+	// One try per cookie, whatever comes out of it.
+	http.SetCookie(w, o.cookie(state, "", -1))
+
 	if problem := query.Get("error"); problem != "" {
 		return "", fmt.Errorf("the provider refused the login: %.100q", problem)
 	}
-	if cookieErr != nil {
-		return "", errors.New("no login is under way: the cookie is missing or expired")
-	}
-	parts := strings.Split(cookie.Value, ".")
-	if len(parts) != 3 {
+	nonce, verifier, ok := strings.Cut(cookie.Value, ".")
+	if !ok || nonce == "" || verifier == "" || strings.Contains(verifier, ".") {
 		return "", errors.New("the login cookie is not valid")
-	}
-	state, nonce, verifier := parts[0], parts[1], parts[2]
-	if subtle.ConstantTimeCompare([]byte(query.Get("state")), []byte(state)) != 1 {
-		return "", errors.New("the state does not match the one this browser started with")
 	}
 	code := query.Get("code")
 	if code == "" {
@@ -180,6 +197,11 @@ func (o *OIDC) Finish(w http.ResponseWriter, r *http.Request) (string, error) {
 // discover returns the provider, asking for its configuration if that has not
 // worked yet. A failure is remembered for a short time, so a provider that is
 // down is not asked again and again.
+//
+// The request does not depend on the browser's: a client that goes away must
+// not make a failure that everybody else then sees. The lock makes requests
+// that come in meanwhile wait for this one answer instead of asking again;
+// once the provider is known, nobody waits.
 func (o *OIDC) discover(ctx context.Context) (*oidc.Provider, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -189,6 +211,8 @@ func (o *OIDC) discover(ctx context.Context) (*oidc.Provider, error) {
 	if o.failure != nil && o.Now().Sub(o.failedAt) < oidcRetryAfter {
 		return nil, o.failure
 	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), oidcRequestTimeout)
+	defer cancel()
 	provider, err := oidc.NewProvider(oidc.ClientContext(ctx, o.Client), o.IssuerURL)
 	if err != nil {
 		o.failure = fmt.Errorf("discover the OIDC provider %s: %w", o.IssuerURL, err)
@@ -209,10 +233,11 @@ func (o *OIDC) oauth(provider *oidc.Provider) *oauth2.Config {
 	}
 }
 
-// cookie builds the login cookie. A negative maxAge deletes it.
-func (o *OIDC) cookie(value string, maxAge int) *http.Cookie {
+// cookie builds the login cookie of the login with this state. A negative
+// maxAge deletes it.
+func (o *OIDC) cookie(state, value string, maxAge int) *http.Cookie {
 	return &http.Cookie{
-		Name:     oidcCookieName,
+		Name:     oidcCookiePrefix + state,
 		Value:    value,
 		Path:     oidcCookiePath,
 		MaxAge:   maxAge,
@@ -252,15 +277,20 @@ func (o *OIDC) allow(claims map[string]json.RawMessage) (string, error) {
 	}
 
 	reason := "no allowed email or group"
-	if email != "" && !verified && slices.Contains(o.AllowedEmails, email) {
+	switch {
+	case email != "" && !verified && slices.Contains(o.AllowedEmails, email):
 		reason = "the email is on the allowlist but the provider does not say it is verified"
+	case len(o.AllowedGroups) > 0 && len(listClaim(claims, o.GroupsClaim)) == 0:
+		// Many providers send the groups only for an extra scope or mapper.
+		reason = fmt.Sprintf("no allowed email, and the ID token has no groups in the %q claim: does the provider need a scope (SMOKEALARM_OIDC_SCOPES) or a mapper to send them?", o.GroupsClaim)
 	}
 	return "", fmt.Errorf("%.100q is not allowed: %s", name, reason)
 }
 
 // withoutSecrets takes the client secret and the code out of an error from the
 // token request. The libraries do not put them there, but a provider can echo
-// them in an error body, and an error ends up in the log.
+// them in an error body, and an error ends up in the log. The original error
+// stays reachable with errors.As, for code that needs its type.
 func (o *OIDC) withoutSecrets(err error, code string) error {
 	text := err.Error()
 	for _, secret := range []string{o.ClientSecret, code} {
@@ -268,8 +298,17 @@ func (o *OIDC) withoutSecrets(err error, code string) error {
 			text = strings.ReplaceAll(text, secret, "[removed]")
 		}
 	}
-	return errors.New(text)
+	return &redactedError{text: text, err: err}
 }
+
+// redactedError is an error whose message has the secrets taken out.
+type redactedError struct {
+	text string
+	err  error
+}
+
+func (e *redactedError) Error() string { return e.text }
+func (e *redactedError) Unwrap() error { return e.err }
 
 // stringClaim returns a claim that is a string, or "" if it is missing or of
 // another type.

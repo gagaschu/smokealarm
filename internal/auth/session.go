@@ -54,16 +54,16 @@ func CredentialsFingerprint(username, passwordHash string) string {
 
 // OIDCFingerprint turns the settings that decide who may log in with OIDC
 // into the value for Sessions.OIDCCredentials. Changing the provider, the
-// client or an allowlist therefore ends the OIDC sessions, like a new
-// password ends the password sessions. The lists are sorted, so only a real
-// change counts, not a different order.
-func OIDCFingerprint(issuer, clientID string, emails, groups []string) string {
+// client, the groups claim or an allowlist therefore ends the OIDC sessions,
+// like a new password ends the password sessions. The lists are sorted, so
+// only a real change counts, not a different order.
+func OIDCFingerprint(issuer, clientID, groupsClaim string, emails, groups []string) string {
 	sorted := func(items []string) string {
 		items = slices.Clone(items)
 		slices.Sort(items)
 		return strings.Join(items, "\x01")
 	}
-	return hashID("oidc\x00" + issuer + "\x00" + clientID + "\x00" + sorted(emails) + "\x00" + sorted(groups))
+	return hashID("oidc\x00" + issuer + "\x00" + clientID + "\x00" + groupsClaim + "\x00" + sorted(emails) + "\x00" + sorted(groups))
 }
 
 // fingerprint returns the value a session of this login method carries.

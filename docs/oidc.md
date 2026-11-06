@@ -97,5 +97,5 @@ One provider only. No roles or rights per user. No single logout and no refresh 
 - The ID token is checked by the [go-oidc](https://github.com/coreos/go-oidc) library: signature, issuer, audience, expiry and nonce.
 - The issuer URL must use `https`. Plain `http` is accepted only for `localhost`.
 - The client secret, tokens, codes and the login cookie are never logged, never part of an error message and never shown on the status page.
-- Requests to the provider don't follow redirects, so a redirect can't send the client secret to another host.
+- Only GET requests to the provider (its configuration and keys) follow redirects, at most 5 and never from https to http. The token request is not forwarded, so a redirect can't send the client secret to another host.
 - The login failure page doesn't give the reason (for example that an address is not on the allowlist). The reason is in the log.

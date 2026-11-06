@@ -6,13 +6,11 @@ import (
 	"github.com/gagaschu/smokealarm/internal/auth"
 )
 
-// oidcName is what the login button says it logs in with.
+// oidcName is what the login button says it logs in with, or "" when OIDC is
+// off. The configuration gives the name a default and never leaves it empty.
 func (s *Server) oidcName() string {
 	if s.OIDC == nil {
 		return ""
-	}
-	if s.OIDCName == "" {
-		return "OIDC"
 	}
 	return s.OIDCName
 }

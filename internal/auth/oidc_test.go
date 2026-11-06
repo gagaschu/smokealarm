@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
@@ -8,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -21,6 +23,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"golang.org/x/oauth2"
 )
 
 const (
@@ -223,13 +227,13 @@ func begin(t *testing.T, f *fakeIdP, o *OIDC) attempt {
 	if err != nil {
 		t.Fatalf("Begin: %v", err)
 	}
-	cookies := rec.Result().Cookies()
-	if len(cookies) != 1 || cookies[0].Name != oidcCookieName {
-		t.Fatalf("Begin set cookies %v, want just %s", cookies, oidcCookieName)
-	}
 	u, err := url.Parse(authURL)
 	if err != nil {
 		t.Fatalf("parse auth URL: %v", err)
+	}
+	cookies := rec.Result().Cookies()
+	if want := oidcCookiePrefix + u.Query().Get("state"); len(cookies) != 1 || cookies[0].Name != want {
+		t.Fatalf("Begin set cookies %v, want just %s", cookies, want)
 	}
 	return attempt{cookie: cookies[0], query: url.Values{"code": {f.authorize(authURL)}, "state": {u.Query().Get("state")}}}
 }
@@ -254,8 +258,8 @@ func TestOIDCBeginSetsTheLoginCookie(t *testing.T) {
 	if !c.HttpOnly || !c.Secure || c.SameSite != http.SameSiteLaxMode || c.Path != "/login/oidc" || c.MaxAge != 600 {
 		t.Errorf("cookie = %+v, want HttpOnly, Secure, SameSite=Lax, path /login/oidc, 10 minutes", c)
 	}
-	if parts := strings.Split(c.Value, "."); len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
-		t.Errorf("cookie value %q is not state.nonce.verifier", c.Value)
+	if parts := strings.Split(c.Value, "."); len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		t.Errorf("cookie value %q is not nonce.verifier", c.Value)
 	}
 
 	// Without HTTPS (local development) the cookie must not be Secure.
@@ -281,6 +285,9 @@ func TestOIDCFinish(t *testing.T) {
 		attempt  func(*attempt)
 		wantName string
 		wantErr  string // empty: the login works
+		// keepsCookie: the request has no state of a login under way, so it
+		// must not touch the cookie of that login.
+		keepsCookie bool
 	}{
 		{name: "allowed email", wantName: "gabriel@example.org"},
 		{name: "email in other case", claims: map[string]any{"email": "Gabriel@Example.org"}, wantName: "gabriel@example.org"},
@@ -290,7 +297,7 @@ func TestOIDCFinish(t *testing.T) {
 		{name: "allowed group without an email", claims: map[string]any{"email": nil, "groups": []string{"ops"}, "preferred_username": "gabi"}, wantName: "gabi"},
 		{name: "name falls back to sub", claims: map[string]any{"email": nil, "groups": []string{"ops"}}, wantName: "user-1"},
 		{name: "group of the right name but another claim", claims: map[string]any{"email": "stranger@example.org", "groups": nil, "roles": []string{"ops"}},
-			wantErr: "no allowed email or group"},
+			wantErr: `no groups in the "groups" claim`},
 		{name: "email not on the list", claims: map[string]any{"email": "stranger@example.org"}, wantErr: "no allowed email or group"},
 		{name: "email not verified", claims: map[string]any{"email_verified": false}, wantErr: "does not say it is verified"},
 		{name: "email_verified missing", claims: map[string]any{"email_verified": nil}, wantErr: "does not say it is verified"},
@@ -300,17 +307,25 @@ func TestOIDCFinish(t *testing.T) {
 		{name: "wrong audience", claims: map[string]any{"aud": "another-client"}, wantErr: "expected audience"},
 		{name: "wrong issuer", claims: map[string]any{"iss": "https://evil.example.org"}, wantErr: "different provider"},
 		{name: "signed with another key", idp: func(f *fakeIdP) { f.signKey = otherKey }, wantErr: "failed to verify signature"},
-		{name: "forged state", attempt: func(a *attempt) { a.query.Set("state", "forged") }, wantErr: "state does not match"},
-		{name: "no state", attempt: func(a *attempt) { a.query.Del("state") }, wantErr: "state does not match"},
-		{name: "no cookie", attempt: func(a *attempt) { a.cookie = nil }, wantErr: "no login is under way"},
+		{name: "forged state", attempt: func(a *attempt) { a.query.Set("state", "forged") }, wantErr: "state does not match", keepsCookie: true},
+		{name: "no state", attempt: func(a *attempt) { a.query.Del("state") }, wantErr: "state does not match", keepsCookie: true},
+		{name: "no cookie", attempt: func(a *attempt) { a.cookie = nil }, wantErr: "no login is under way", keepsCookie: true},
 		{name: "broken cookie", attempt: func(a *attempt) { a.cookie.Value = "abc" }, wantErr: "cookie is not valid"},
 		{name: "no code", attempt: func(a *attempt) { a.query.Del("code") }, wantErr: "no code"},
 		{name: "unknown code", attempt: func(a *attempt) { a.query.Set("code", "guessed") }, wantErr: "exchange the code"},
-		{name: "refused by the provider", attempt: func(a *attempt) { a.query = url.Values{"error": {"access_denied"}} }, wantErr: "access_denied"},
+		{name: "refused by the provider", attempt: func(a *attempt) {
+			a.query = url.Values{"error": {"access_denied"}, "state": a.query["state"]}
+		}, wantErr: "access_denied"},
+		// Somebody else sends the browser to the callback with an error: the
+		// login under way goes on.
+		{name: "error without the state", attempt: func(a *attempt) { a.query = url.Values{"error": {"access_denied"}} },
+			wantErr: "access_denied", keepsCookie: true},
 		{name: "wrong PKCE verifier", attempt: func(a *attempt) {
-			parts := strings.Split(a.cookie.Value, ".")
-			a.cookie.Value = parts[0] + "." + parts[1] + ".not-the-verifier-of-this-login"
+			nonce, _, _ := strings.Cut(a.cookie.Value, ".")
+			a.cookie.Value = nonce + ".not-the-verifier-of-this-login"
 		}, wantErr: "exchange the code"},
+		{name: "groups claim missing", claims: map[string]any{"email": "stranger@example.org", "groups": nil},
+			wantErr: `no groups in the "groups" claim`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -337,9 +352,15 @@ func TestOIDCFinish(t *testing.T) {
 				t.Errorf("a failed login returned the name %q", name)
 			}
 
-			// Whatever the result, the cookie is deleted: one try per cookie.
 			cookies := rec.Result().Cookies()
-			if len(cookies) != 1 || cookies[0].Name != oidcCookieName || cookies[0].MaxAge >= 0 {
+			if tt.keepsCookie {
+				if len(cookies) != 0 {
+					t.Errorf("cookies after Finish = %v, want the login cookie left alone", cookies)
+				}
+				return
+			}
+			// Whatever the result, the cookie is deleted: one try per cookie.
+			if len(cookies) != 1 || cookies[0].Name != a.cookie.Name || cookies[0].MaxAge >= 0 {
 				t.Errorf("cookies after Finish = %v, want the login cookie deleted", cookies)
 			}
 		})
@@ -478,7 +499,7 @@ func TestOIDCHTTPClientTrustsTheGivenCA(t *testing.T) {
 	}
 }
 
-func TestOIDCHTTPClientDoesNotFollowRedirects(t *testing.T) {
+func TestOIDCHTTPClientDoesNotForwardAPost(t *testing.T) {
 	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		t.Error("the redirect was followed")
 	}))
@@ -499,5 +520,102 @@ func TestOIDCHTTPClientDoesNotFollowRedirects(t *testing.T) {
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusTemporaryRedirect {
 		t.Errorf("status = %d, want the redirect itself", resp.StatusCode)
+	}
+}
+
+func TestOIDCHTTPClientFollowsRedirectsOfAGet(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	}))
+	t.Cleanup(target.Close)
+	redirect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL, http.StatusMovedPermanently)
+	}))
+	t.Cleanup(redirect.Close)
+
+	client, err := NewOIDCHTTPClient("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := client.Get(redirect.URL)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want 200 from the target of the redirect", resp.StatusCode)
+	}
+}
+
+func TestOIDCRedirectRules(t *testing.T) {
+	request := func(method, address string) *http.Request {
+		return httptest.NewRequest(method, address, nil)
+	}
+	tests := []struct {
+		name   string
+		via    []*http.Request
+		next   *http.Request
+		follow bool
+	}{
+		{"GET to https", []*http.Request{request("GET", "https://id.example.org/a")}, request("GET", "https://id.example.org/b"), true},
+		{"POST", []*http.Request{request("POST", "https://id.example.org/token")}, request("GET", "https://id.example.org/b"), false},
+		{"https to http", []*http.Request{request("GET", "https://id.example.org/a")}, request("GET", "http://id.example.org/b"), false},
+		{"too many", []*http.Request{
+			request("GET", "https://id.example.org/1"), request("GET", "https://id.example.org/2"),
+			request("GET", "https://id.example.org/3"), request("GET", "https://id.example.org/4"),
+			request("GET", "https://id.example.org/5"), request("GET", "https://id.example.org/6"),
+		}, request("GET", "https://id.example.org/7"), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := checkOIDCRedirect(tt.next, tt.via) == nil; got != tt.follow {
+				t.Errorf("follow = %v, want %v", got, tt.follow)
+			}
+		})
+	}
+}
+
+func TestOIDCTwoLoginsAtOnce(t *testing.T) {
+	now := testNow
+	f := newFakeIdP(t, now)
+	o := newTestOIDC(f, &now)
+	first, second := begin(t, f, o), begin(t, f, o)
+	if first.cookie.Name == second.cookie.Name {
+		t.Fatal("two logins share one cookie")
+	}
+	// The browser holds both cookies; each callback finds its own.
+	for _, a := range []attempt{first, second} {
+		req := httptest.NewRequest(http.MethodGet, "/login/oidc/callback?"+a.query.Encode(), nil)
+		req.AddCookie(first.cookie)
+		req.AddCookie(second.cookie)
+		if _, err := o.Finish(httptest.NewRecorder(), req); err != nil {
+			t.Errorf("Finish of the login with cookie %s: %v", a.cookie.Name, err)
+		}
+	}
+}
+
+func TestOIDCDiscoveryOutlivesTheRequest(t *testing.T) {
+	now := testNow
+	f := newFakeIdP(t, now)
+	o := newTestOIDC(f, &now)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // the browser went away before discovery began
+	req := httptest.NewRequest(http.MethodGet, "/login/oidc", nil).WithContext(ctx)
+	if _, err := o.Begin(httptest.NewRecorder(), req); err != nil {
+		t.Fatalf("Begin with a cancelled request: %v; the discovery must not depend on it", err)
+	}
+	begin(t, f, o) // and the next user is not blocked by a remembered failure
+}
+
+func TestOIDCTokenErrorKeepsItsType(t *testing.T) {
+	now := testNow
+	f := newFakeIdP(t, now)
+	o := newTestOIDC(f, &now)
+	a := begin(t, f, o)
+	a.query.Set("code", "guessed-code")
+	_, _, err := finish(o, a)
+	var retrieve *oauth2.RetrieveError
+	if !errors.As(err, &retrieve) || retrieve.Response == nil || retrieve.Response.StatusCode != http.StatusBadRequest {
+		t.Errorf("error %v does not unwrap to the RetrieveError of the 400 answer", err)
 	}
 }
