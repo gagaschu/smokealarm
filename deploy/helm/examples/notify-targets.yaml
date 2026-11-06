@@ -1,7 +1,7 @@
 # Send notifications to a self-hosted ntfy server and to Telegram, besides (or
 # instead of) mail. ntfy (the phone) gets only critical problems, Telegram gets
 # everything. Annotations can send the problems of one app or namespace to some
-# targets only (README, "Routing").
+# targets only (docs/routing.md).
 #
 # Topic, access token and bot token are secrets. Pass them on the command line,
 # so they end up in the chart's Secret and not in a file:
@@ -20,7 +20,7 @@
 #
 # Slack, Teams and the generic webhook work the same way:
 # notifications.slack.webhookUrl, notifications.teams.webhookUrl,
-# notifications.webhook.url (and .header). See the README for each.
+# notifications.webhook.url (and .header). See docs/notifications.md for each.
 notifications:
   ntfy:
     server: https://ntfy.example.org

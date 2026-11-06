@@ -6,8 +6,8 @@ import (
 
 // templateData is what every message template gets: the subject, the mail
 // body and the chat text, built in or written by the user. One type for all,
-// so a template can be moved from one file to another, and the README
-// describes one set of fields.
+// so a template can be moved from one file to another, and
+// docs/message-templates.md describes one set of fields.
 type templateData struct {
 	Target    string // the kind of target: "mail", "ntfy", "telegram", "slack", "teams"
 	Summary   string // the built-in summary line, e.g. "3 new problems, 1 resolved"

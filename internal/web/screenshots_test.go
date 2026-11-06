@@ -23,7 +23,7 @@ import (
 	"github.com/gagaschu/smokealarm/internal/store"
 )
 
-// The screenshots in the README are taken by TestScreenshots. Normal test runs
+// The screenshots in the README and the docs are taken by TestScreenshots. Normal test runs
 // skip it. After a change to the look, take them again with
 //
 //	make screenshots
@@ -32,10 +32,10 @@ import (
 // Chrome or Chromium (set CHROME to its path if it is not found) and, to keep
 // the files small, pngquant.
 
-// screenshotDir is where the README expects the images, seen from this package.
+// screenshotDir is where the README and the docs expect the images, seen from this package.
 const screenshotDir = "../../docs/screenshots"
 
-// screenshot is one image for the README.
+// screenshot is one image for the README or the docs.
 type screenshot struct {
 	file   string // file name in screenshotDir
 	path   string // page on the test server, see screenshotPages
@@ -59,7 +59,7 @@ func screenshots() []screenshot {
 
 func TestScreenshots(t *testing.T) {
 	if os.Getenv("UPDATE_SCREENSHOTS") != "1" {
-		t.Skip("set UPDATE_SCREENSHOTS=1 to take the README screenshots (make screenshots)")
+		t.Skip("set UPDATE_SCREENSHOTS=1 to take the screenshots for the docs (make screenshots)")
 	}
 	chrome, ok := findChrome()
 	if !ok {

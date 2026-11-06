@@ -1,5 +1,5 @@
 # Messages in German, with the cluster name in every subject, through your own
-# message templates (README, "Message templates"). The subject is used by every
+# message templates (docs/message-templates.md). The subject is used by every
 # target; the mail and the chat targets (ntfy, Telegram, Slack, Teams) each
 # get their own text. A file named after a target replaces the general one for
 # that target only, e.g. slack.chat.tmpl or ntfy.subject.tmpl.

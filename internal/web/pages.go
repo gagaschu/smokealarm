@@ -513,7 +513,7 @@ func formatAge(d time.Duration) string {
 // any client can forge it. Behind a proxy all clients therefore share one
 // limit: five wrong logins by anybody block the login for everybody for up to
 // 15 minutes. Sessions keep working. That is fine for a UI that only trusted
-// people can reach; the README says what to do otherwise.
+// people can reach; docs/security.md says what to do otherwise.
 func clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
