@@ -59,6 +59,12 @@ func run() error {
 		return fmt.Errorf("select checks: %w", err)
 	}
 	logger.Info("checks selected", "enabled", len(enabledChecks), "disabled", cfg.DisabledChecks)
+	// Before anything talks to the cluster, so a broken template stops the
+	// start at once, with the file and the line.
+	templates, err := notify.LoadTemplates(cfg.TemplateDir)
+	if err != nil {
+		return fmt.Errorf("load message templates from %s: %w", cfg.TemplateDir, err)
+	}
 
 	// Stop cleanly on Ctrl-C locally and on SIGTERM from Kubernetes.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -100,10 +106,6 @@ func run() error {
 		return fmt.Errorf("create cluster: %w", err)
 	}
 
-	templates, err := notify.LoadTemplates(cfg.TemplateDir)
-	if err != nil {
-		return fmt.Errorf("load message templates from %s: %w", cfg.TemplateDir, err)
-	}
 	notifiers := newNotifiers(cfg, logger, notify.NewHTTPClient(), time.Now, templates)
 	for _, file := range unusedTemplates(notifiers, templates) {
 		logger.Warn("message template not used by any configured target", "file", file)
