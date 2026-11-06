@@ -48,7 +48,7 @@ An acknowledgement covers one problem, identified by its key: check, object and 
 
 ## Downtimes
 
-A downtime silences one problem, warning or critical, until a fixed date and time, for example during planned work or while something flaps. You set it from the overview or, if the problem is resolved right now, from the history. The **Downtimes** page lists the running ones, and you can end them early there. Times are entered and shown in UTC, like in the mails, and the end must be in the future. A new downtime for the same problem replaces the old one.
+A downtime silences one problem, warning or critical, until a fixed date and time, for example during planned work or while something flaps. You set it from the overview or, if the problem is resolved right now, from the history. The **Downtimes** page lists the running ones, and you can end them early there. Times are entered and shown in the [time zone](#time-zone) you configured (UTC by default), like in the mails, and the end must be in the future. A new downtime for the same problem replaces the old one.
 
 While a downtime runs, the problem sends nothing: no first mail, no reminder and no "resolved". It stays visible in the web UI with a mark.
 
@@ -57,6 +57,12 @@ When the downtime ends (on time or early) and the problem is still there, you ge
 Downtimes and acknowledgements work together like this: while a downtime runs, it wins, so an acknowledged problem that goes away during a downtime sends no "resolved". The acknowledgement outlasts the downtime, though: if the problem is still there when the downtime ends, no mail is sent, and "resolved" is reported later.
 
 A downtime covers exactly one problem, with the same rules as an acknowledgement: same check, object and reason. A new reason is a new problem, except for `pvc-usage`, `cert-expiry` and `workload-replicas`, and so is a new object name. In practice: **a pod recreated by its Deployment gets a new name, so a downtime on its `pod-crashloop` problem no longer covers it, and it sends mail as usual.** A downtime on the Deployment's `workload-replicas` problem keeps working, but it does not silence the problems of the pods themselves.
+
+## Time zone
+
+All times the web interface, the mails and the chat messages show are in one time zone, set with `SMOKEALARM_TIME_ZONE` (Helm `config.timeZone`), for example `Europe/Zurich`. The default is UTC. The zone is named in the column headers and in the downtime form, and mails and chat messages end their times with its abbreviation (`CET`, `CEST`). The time you enter in the downtime form is read in this zone. On the night the clocks change, a time that does not exist or exists twice is read as one of the two possible moments, within an hour of what you typed; check the end on the Downtimes page.
+
+Only the display changes. smokealarm stores and compares times as absolute points in time, so changing the zone never changes when a problem fires or resolves. The JSON of the webhook stays in UTC, because programs read it.
 
 ## When a node is down
 
