@@ -1,10 +1,12 @@
 # Tests, container image and Helm chart.
 #
 # Pull request: test, then build the image for amd64 and arm64 without pushing it.
-# Push to main: test, then push ghcr.io/gagaschu/smokealarm:main and :sha-<commit>.
-# Tag v1.2.3:   test, then push :1.2.3, :1.2 and :latest (no "latest" for a
-#               pre-release such as v1.2.3-rc.1), and after the image the Helm
-#               chart as oci://ghcr.io/gagaschu/charts/smokealarm, version 1.2.3.
+# Push to main: test, then push ghcr.io/gagaschu/smokealarm:sha-<commit>, and
+#               :main if that commit is still the newest on main.
+# Tag v1.2.3:   test, then push :1.2.3, :1.2 and, if it is the highest release,
+#               :latest; after the image the Helm chart as
+#               oci://ghcr.io/gagaschu/charts/smokealarm, version 1.2.3.
+#               A pre-release such as v1.2.3-rc.1 pushes only :1.2.3-rc.1.
 #
 # A version tag must match version/appVersion in the Helm chart, because the
 # chart uses appVersion as its default image tag.
@@ -19,9 +21,13 @@ on:
 permissions:
   contents: read
 
+# A pull request has one group, so a new push cancels the outdated run. Every
+# push to main and every tag gets a group of its own: GitHub would otherwise
+# cancel a waiting run when the next one queues, and that commit would never
+# get its image. Runs on main can therefore finish out of order, which is why
+# :main is only moved by the run of the newest commit (see "Move :main").
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  # Only an outdated pull request run is cancelled; main and tags always finish.
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -77,6 +83,18 @@ jobs:
         id: go
         run: echo "version=$(awk '/^go /{print $2}' go.mod)" >> "$GITHUB_OUTPUT"
 
+      # "latest" is the highest release, not the most recent tag: a fix for an
+      # older line (v0.1.1 after v0.2.0) must not move it back.
+      - name: Is this the highest release?
+        id: release
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          highest=$(git ls-remote --tags --refs origin 'v*' | sed 's|.*refs/tags/||' |
+            { grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true; } | sort -V | tail -n 1)
+          if [ "$GITHUB_REF_NAME" = "$highest" ]; then latest=true; else latest=false; fi
+          echo "highest release: $highest, latest for $GITHUB_REF_NAME: $latest"
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+
       # The Dockerfile cross-compiles in its build stage, so no QEMU is needed.
       - uses: docker/setup-buildx-action@v4
 
@@ -84,13 +102,15 @@ jobs:
         id: meta
         with:
           images: ${{ env.IMAGE }}
+          # sha-<commit> only for main, so a tag run does not write it a second
+          # time. :main is not here: it is moved after the push. A pre-release
+          # gets only {{version}} (metadata-action leaves out {{major}}.{{minor}}).
           tags: |
-            type=ref,event=branch
-            type=sha,prefix=sha-,format=short
+            type=sha,prefix=sha-,format=short,enable={{is_default_branch}}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-') }}
-          # "latest" only from the line above: a release tag that is not a pre-release.
+            type=raw,value=latest,enable=${{ steps.release.outputs.latest == 'true' }}
+          # "latest" only from the line above.
           flavor: latest=false
 
       - uses: docker/login-action@v4
@@ -101,6 +121,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: docker/build-push-action@v7
+        id: build
         with:
           context: .
           platforms: ${{ env.PLATFORMS }}
@@ -112,12 +133,27 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # Only for a version tag: a chart version is a release, and the chart's
-  # default image tag (appVersion) must already exist, hence after "image".
-  # The test job has already checked that the tag equals version and appVersion.
+      # Only the run of the newest commit on main moves :main, so a slower run
+      # of an older commit cannot set it back.
+      - name: Move :main
+        if: github.ref == 'refs/heads/main'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          head=$(git ls-remote origin refs/heads/main | cut -f1)
+          if [ "$head" != "$GITHUB_SHA" ]; then
+            echo "::notice::main is at $head now, so :main stays where the newer run puts it"
+            exit 0
+          fi
+          docker buildx imagetools create --tag "$IMAGE:main" "$IMAGE@$DIGEST"
+
+  # Only for a release tag, not a pre-release: a chart version is a release,
+  # and the chart's default image tag (appVersion) must already exist, hence
+  # after "image". The test job has already checked that the tag equals version
+  # and appVersion.
   chart:
     needs: image
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
     runs-on: ubuntu-latest
     permissions:
       contents: read

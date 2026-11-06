@@ -9,8 +9,9 @@ The image contains one static binary and is built for `linux/amd64` and `linux/a
 | Tag | What it is |
 | --- | --- |
 | `0.1.0`, `0.1` | a release, and the newest release of that minor version |
-| `latest` | the newest release |
+| `latest` | the highest release |
 | `main`, `sha-<commit>` | the newest commit on `main` and every single commit on `main`; not a release |
+| `0.2.0-rc.1` | a pre-release; image only, no chart |
 
 To build the image yourself and push it to your own registry:
 

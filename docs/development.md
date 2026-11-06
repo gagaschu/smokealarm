@@ -24,7 +24,7 @@ Use a throw-away cluster or namespace to try things out. For example, `kubectl c
 
 ## CI and releases
 
-[.github/workflows/ci.yml](../.github/workflows/ci.yml) runs `make test`, `make chart` and golangci-lint on every pull request, on every push to `main` and on every version tag. After that it builds the image for `linux/amd64` and `linux/arm64`. A pull request only builds it; `main` pushes `ghcr.io/gagaschu/smokealarm:main` and `:sha-<commit>`.
+[.github/workflows/ci.yml](../.github/workflows/ci.yml) runs `make test`, `make chart` and golangci-lint on every pull request, on every push to `main` and on every version tag. After that it builds the image for `linux/amd64` and `linux/arm64`. A pull request only builds it. `main` pushes `ghcr.io/gagaschu/smokealarm:sha-<commit>` for every commit, and moves `:main` to it if no newer commit has landed on `main` in the meantime (runs of several quick merges can finish out of order).
 
 Every pull request with a change users notice adds a line under `## [Unreleased]` in [CHANGELOG.md](../CHANGELOG.md), in the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) groups (Added, Changed, Deprecated, Removed, Fixed, Security). Refactoring, tests and CI need no entry.
 
@@ -33,5 +33,5 @@ A release is a Git tag:
 1. In a pull request: set `version` and `appVersion` in [Chart.yaml](../deploy/helm/smokealarm/Chart.yaml) to the new version, rename `## [Unreleased]` in CHANGELOG.md to `## [x.y.z] - <date>` with a new empty `## [Unreleased]` above it, and update the compare links at the bottom.
 2. After the merge, tag that commit on `main` and push the tag: `git tag v0.1.0 && git push origin v0.1.0`.
 
-The tag `v0.1.0` pushes `:0.1.0`, `:0.1` and `:latest`, and after the image the chart as `oci://ghcr.io/gagaschu/charts/smokealarm` version `0.1.0`. Chart versions are only published from tags, never from `main`. A pre-release such as `v0.2.0-rc.1` pushes only `:0.2.0-rc.1`. The workflow fails before building if the tag does not match the chart, because the chart uses `appVersion` as its default image tag.
+The tag `v0.1.0` pushes `:0.1.0` and `:0.1`, `:latest` if it is the highest release tag (a fix `v0.1.1` after `v0.2.0` leaves `latest` on 0.2.0), and after the image the chart as `oci://ghcr.io/gagaschu/charts/smokealarm` version `0.1.0`. Chart versions are only published from release tags, never from `main`. A pre-release such as `v0.2.0-rc.1` pushes only the image `:0.2.0-rc.1`, no chart; try it from a checkout with `--set image.tag=0.2.0-rc.1`. The workflow fails before building if the tag does not match the chart, because the chart uses `appVersion` as its default image tag.
 
