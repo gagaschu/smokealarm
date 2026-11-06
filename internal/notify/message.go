@@ -137,15 +137,24 @@ func ChatBody(n Notification, limit int) string {
 
 // cutText shortens s to at most limit bytes without splitting a character, and
 // marks the cut with "…". It is for single fields with a hard limit, such as
-// the Slack header.
+// the Slack header. A limit too small for the "…" gives as much of s as fits,
+// and a limit of 0 or less gives nothing.
 func cutText(s string, limit int) string {
 	if len(s) <= limit {
 		return s
 	}
 	const ellipsis = "…"
-	end := limit - len(ellipsis)
+	if limit < len(ellipsis) {
+		return s[:runeStart(s, max(limit, 0))]
+	}
+	return s[:runeStart(s, limit-len(ellipsis))] + ellipsis
+}
+
+// runeStart is the largest index of at most end where a character of s
+// starts, so that s[:index] does not split one. end must be below len(s).
+func runeStart(s string, end int) int {
 	for end > 0 && !utf8.RuneStart(s[end]) {
 		end--
 	}
-	return s[:end] + ellipsis
+	return end
 }

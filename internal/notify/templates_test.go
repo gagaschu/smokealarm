@@ -1,9 +1,12 @@
 package notify
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"mime"
 	"net/http"
 	"os"
@@ -32,7 +35,7 @@ func templateDir(t *testing.T, files map[string]string) string {
 // loadTemplates loads the files and fails the test on an error.
 func loadTemplates(t *testing.T, files map[string]string) *Templates {
 	t.Helper()
-	templates, err := LoadTemplates(templateDir(t, files))
+	templates, err := LoadTemplates(templateDir(t, files), slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatalf("LoadTemplates: %v", err)
 	}
@@ -40,7 +43,7 @@ func loadTemplates(t *testing.T, files map[string]string) *Templates {
 }
 
 func TestLoadTemplatesWithoutDirectory(t *testing.T) {
-	templates, err := LoadTemplates("")
+	templates, err := LoadTemplates("", slog.New(slog.DiscardHandler))
 	if err != nil || templates != nil {
 		t.Fatalf("LoadTemplates(\"\") = %v, %v; want nil, nil", templates, err)
 	}
@@ -68,12 +71,14 @@ func TestLoadTemplatesErrors(t *testing.T) {
 		{"only when shortened", map[string]string{"chat.tmpl": "x{{if .Omitted}}{{.Nope}}{{end}}"}, []string{"chat.tmpl", "Nope"}},
 		{"only for one target", map[string]string{"chat.tmpl": `x{{if eq .Target "teams"}}{{.Nope}}{{end}}`}, []string{"chat.tmpl", "Nope"}},
 		{"only for affected problems", map[string]string{"chat.tmpl": "x{{range .NodesDown}}{{range .Affected}}{{.Nope}}{{end}}{{end}}"}, []string{"Nope"}},
+		{"only for a reminder alone", map[string]string{"subject.tmpl": "{{if .Resolved}}R{{else}}{{(index .New 0).Reason}}{{end}}"}, []string{"subject.tmpl", "index"}},
+		{"only for a node down alone", map[string]string{"subject.tmpl": "{{if or .Resolved .Reminders}}R{{else}}{{(index .New 0).Reason}}{{end}}"}, []string{"subject.tmpl", "index"}},
 		{"empty", map[string]string{"ntfy.subject.tmpl": "{{/* nothing */}}  \n"}, []string{"ntfy.subject.tmpl", "empty"}},
 		{"several", map[string]string{"chat.tmpl": "{{.A}}", "mail.tmpl": "{{.B}}"}, []string{"chat.tmpl", "mail.tmpl"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := LoadTemplates(templateDir(t, tt.files))
+			_, err := LoadTemplates(templateDir(t, tt.files), slog.New(slog.DiscardHandler))
 			if err == nil {
 				t.Fatal("want an error")
 			}
@@ -87,7 +92,7 @@ func TestLoadTemplatesErrors(t *testing.T) {
 }
 
 func TestLoadTemplatesMissingDirectory(t *testing.T) {
-	_, err := LoadTemplates(filepath.Join(t.TempDir(), "nothing-here"))
+	_, err := LoadTemplates(filepath.Join(t.TempDir(), "nothing-here"), slog.New(slog.DiscardHandler))
 	if err == nil || !strings.Contains(err.Error(), "nothing-here") {
 		t.Errorf("error = %v, want one that names the directory", err)
 	}
@@ -108,13 +113,32 @@ func TestLoadTemplatesFromAConfigMapVolume(t *testing.T) {
 	if err := os.Symlink(filepath.Join("..data", "chat.tmpl"), filepath.Join(dir, "chat.tmpl")); err != nil {
 		t.Fatal(err)
 	}
-	templates, err := LoadTemplates(dir)
+	var log bytes.Buffer
+	templates, err := LoadTemplates(dir, slog.New(slog.NewTextHandler(&log, nil)))
 	if err != nil {
 		t.Fatalf("LoadTemplates: %v", err)
 	}
 	text, fallback := templates.chatBody("slack", mixed(), 3000)
 	if text != "from the ConfigMap" || fallback != nil {
 		t.Errorf("chatBody = %q, %v", text, fallback)
+	}
+	// Only the file that may be a typo is logged, not the hidden entries or
+	// the directory.
+	if got := log.String(); strings.Count(got, "level=WARN") != 1 || !strings.Contains(got, "file=README.md") {
+		t.Errorf("log = %q, want one warning about README.md", got)
+	}
+}
+
+// A template with the wrong ending keeps the built-in message, so it is
+// logged: "chat.tpl" is a typo more often than not.
+func TestLoadTemplatesWarnsAboutAWrongEnding(t *testing.T) {
+	var log bytes.Buffer
+	templates, err := LoadTemplates(templateDir(t, map[string]string{"chat.tpl": "x"}), slog.New(slog.NewTextHandler(&log, nil)))
+	if err != nil || templates != nil {
+		t.Fatalf("LoadTemplates = %v, %v; want nil, nil", templates, err)
+	}
+	if !strings.Contains(log.String(), "file=chat.tpl") {
+		t.Errorf("log = %q, want a warning about chat.tpl", log.String())
 	}
 }
 
@@ -242,7 +266,7 @@ func TestUserSubjectIsOneLine(t *testing.T) {
 // The German templates in testdata/templates/de show every field; the golden
 // files are what a reader gets.
 func TestGermanTemplatesGolden(t *testing.T) {
-	templates, err := LoadTemplates(filepath.Join("testdata", "templates", "de"))
+	templates, err := LoadTemplates(filepath.Join("testdata", "templates", "de"), slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatalf("LoadTemplates: %v", err)
 	}
@@ -352,5 +376,71 @@ func templateTarget(t *testing.T, kind string, templates *Templates, status int)
 	}
 	return func(n Notification) error { return target.Send(ctx, n) }, func() string {
 		return "Title: " + got.header.Get("Title") + "\n" + string(got.body)
+	}
+}
+
+// A subject may list every problem, but it is cut, so that it fits into a
+// mail header line and leaves room for the Telegram text. A long one once
+// made the Telegram target panic.
+func TestLongSubjectIsCut(t *testing.T) {
+	templates := loadTemplates(t, map[string]string{"subject.tmpl": "{{range .New}}{{.Object}} {{end}}x"})
+	n := manyPods(500, testBaseURL)
+	subject, fallback := templates.subject("telegram", n)
+	if fallback != nil || len(subject) > maxSubjectLength || !strings.HasSuffix(subject, "…") {
+		t.Errorf("subject = %q (%d bytes), %v; want it cut at %d bytes", subject, len(subject), fallback, maxSubjectLength)
+	}
+	for _, kind := range []string{"ntfy", "telegram", "slack", "teams"} {
+		send, sent := templateTarget(t, kind, templates, http.StatusOK)
+		if err := send(n); err != nil {
+			t.Errorf("%s: Send = %v", kind, err)
+		}
+		if kind == "telegram" {
+			var message struct{ Text string }
+			if err := json.Unmarshal([]byte(strings.TrimPrefix(sent(), "Title: \n")), &message); err != nil {
+				t.Fatal(err)
+			}
+			if len(message.Text) > telegramLimit {
+				t.Errorf("telegram text is %d bytes, more than %d", len(message.Text), telegramLimit)
+			}
+		}
+	}
+
+	// Non-ASCII characters take three times the room once encoded; the
+	// header line still stays below the 998 bytes a mail line may have.
+	server := newFakeServer(t, fakeServerOptions{})
+	m := newTestMail(server, TLSNone)
+	m.Templates = loadTemplates(t, map[string]string{"subject.tmpl": "{{range .New}}Störung {{.Name}} {{end}}"})
+	if err := m.Send(context.Background(), n); err != nil {
+		t.Fatalf("mail: Send = %v", err)
+	}
+	for _, line := range strings.Split(string(server.received()[0].data), "\r\n") {
+		if len(line) > 998 {
+			t.Errorf("mail line of %d bytes: %.80s…", len(line), line)
+		}
+	}
+}
+
+// A template that lists only problems says nothing without them. If not even
+// one problem fits, that is no reason for the built-in template: the text with
+// one problem is cut.
+func TestChatTextIsCutIfNotEvenOneProblemFits(t *testing.T) {
+	templates := loadTemplates(t, map[string]string{"chat.tmpl": "{{range .New}}{{.Object}}: {{.Message}}\n{{end}}"})
+	text, fallback := templates.chatBody("slack", manyPods(3, ""), 40)
+	if fallback != nil || len(text) > 40 || !strings.HasPrefix(text, "Pod media/app-000: ") || !strings.HasSuffix(text, "…") {
+		t.Errorf("chat = %q, %v; want the first problem, cut", text, fallback)
+	}
+}
+
+// When the subject and the text both fall back, both are named.
+func TestBothFallbacksAreReported(t *testing.T) {
+	templates := loadTemplates(t, map[string]string{
+		"subject.tmpl": "{{if gt (len .New) 5}}{{index .New 9}}{{end}}S",
+		"chat.tmpl":    "{{if gt (len .New) 5}}{{index .New 9}}{{end}}C",
+	})
+	send, _ := templateTarget(t, "ntfy", templates, http.StatusOK)
+	err := send(manyPods(6, testBaseURL))
+	var fallback *FallbackError
+	if !errors.As(err, &fallback) || !strings.Contains(err.Error(), "subject.tmpl") || !strings.Contains(err.Error(), "chat.tmpl") {
+		t.Errorf("Send = %v, want fallbacks for subject.tmpl and chat.tmpl", err)
 	}
 }

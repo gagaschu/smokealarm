@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1113,7 +1114,7 @@ func checkExampleTemplates(t *testing.T, r *release) {
 			t.Fatal(err)
 		}
 	}
-	templates, err := notify.LoadTemplates(dir)
+	templates, err := notify.LoadTemplates(dir, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatalf("smokealarm rejects the example's templates: %v", err)
 	}

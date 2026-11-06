@@ -61,5 +61,5 @@ func (t *Telegram) Send(ctx context.Context, n Notification) error {
 	if err != nil {
 		return err
 	}
-	return firstFallback(subjectFallback, chatFallback)
+	return fallbacks(subjectFallback, chatFallback)
 }

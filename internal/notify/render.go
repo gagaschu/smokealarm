@@ -40,15 +40,22 @@ func render(tmpl *template.Template, data templateData) (string, error) {
 	return out.String(), nil
 }
 
-// renderSubject renders a subject and puts it on one line. It goes into the
-// mail header and the ntfy header, where a line break would start a header of
-// its own.
+// maxSubjectLength is the longest subject in bytes. A template may list
+// every problem in it, but the subject goes into a mail header line (at most
+// 998 bytes, after the encoding of non-ASCII characters, which can triple
+// them) and in front of the Telegram text, which shares its 4096 characters
+// with it. The built-in subjects are far shorter.
+const maxSubjectLength = 200
+
+// renderSubject renders a subject, puts it on one line and cuts it at
+// maxSubjectLength. It goes into the mail header and the ntfy header, where a
+// line break would start a header of its own.
 func renderSubject(tmpl *template.Template, data templateData) (string, error) {
 	subject, err := render(tmpl, data)
 	if err != nil {
 		return "", err
 	}
-	return oneLine(subject), nil
+	return cutText(oneLine(subject), maxSubjectLength), nil
 }
 
 // renderChat renders a chat text without spaces and blank lines at its start
@@ -71,34 +78,39 @@ func renderChat(tmpl *template.Template, data templateData) (string, error) {
 // halving the range (binary search): trying one problem less each time took a
 // minute and a half for a Teams message with a thousand problems. The result
 // always fits; with a template whose text does not grow evenly with the
-// problems it may show a few less than would fit. If not even the text
-// without any problem fits, it is cut.
+// problems it may show a few less than would fit. A text that says nothing
+// does not count as fitting (a template that only lists problems renders
+// nothing without them). If nothing fits, the text with the fewest problems
+// that says something is cut.
 func fitChat(tmpl *template.Template, data templateData, limit int) (string, error) {
 	text, err := renderChat(tmpl, data)
 	if err != nil || len(text) <= limit {
 		return text, err
 	}
-	fitting, found := "", false
-	low, high := 0, data.problemCount()-1 // the numbers of problems still to try
+	fitting := ""
+	shortest, shortestKeep := text, data.problemCount() // to cut if nothing fits
+	low, high := 0, data.problemCount()-1               // the numbers of problems still to try
 	for low <= high {
 		keep := (low + high) / 2
 		text, err := renderChat(tmpl, data.keepFirst(keep))
 		if err != nil {
 			return "", err
 		}
-		if len(text) <= limit {
-			fitting, found = text, true
+		switch {
+		case text == "":
+			low = keep + 1 // it needs more problems to say something
+		case len(text) <= limit:
+			fitting = text
 			low = keep + 1
-		} else {
+		default:
 			high = keep - 1
 		}
+		if text != "" && keep < shortestKeep {
+			shortest, shortestKeep = text, keep
+		}
 	}
-	if found {
+	if fitting != "" {
 		return fitting, nil
 	}
-	text, err = renderChat(tmpl, data.keepFirst(0))
-	if err != nil {
-		return "", err
-	}
-	return cutText(text, limit), nil
+	return cutText(shortest, limit), nil
 }

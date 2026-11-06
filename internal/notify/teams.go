@@ -51,7 +51,7 @@ func (t *Teams) Send(ctx context.Context, n Notification) error {
 	if err != nil {
 		return err
 	}
-	return firstFallback(subjectFallback, textFallback)
+	return fallbacks(subjectFallback, textFallback)
 }
 
 // teamsMessage encodes the message, with as much of the text as fits. A retry

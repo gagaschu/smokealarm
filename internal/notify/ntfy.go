@@ -59,7 +59,7 @@ func (t *Ntfy) Send(ctx context.Context, n Notification) error {
 	if err != nil {
 		return err
 	}
-	return firstFallback(subjectFallback, textFallback)
+	return fallbacks(subjectFallback, textFallback)
 }
 
 // ntfyPriority decides how loudly the phone announces the message, and the

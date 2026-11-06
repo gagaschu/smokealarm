@@ -61,7 +61,7 @@ func run() error {
 	logger.Info("checks selected", "enabled", len(enabledChecks), "disabled", cfg.DisabledChecks)
 	// Before anything talks to the cluster, so a broken template stops the
 	// start at once, with the file and the line.
-	templates, err := notify.LoadTemplates(cfg.TemplateDir)
+	templates, err := notify.LoadTemplates(cfg.TemplateDir, logger)
 	if err != nil {
 		return fmt.Errorf("load message templates from %s: %w", cfg.TemplateDir, err)
 	}

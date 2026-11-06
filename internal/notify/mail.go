@@ -77,7 +77,7 @@ func (m *Mail) Send(ctx context.Context, n Notification) error {
 	if err := m.deliver(ctx, from.Address, recipients, msg); err != nil {
 		return err
 	}
-	return firstFallback(subjectFallback, bodyFallback)
+	return fallbacks(subjectFallback, bodyFallback)
 }
 
 // addresses parses the configured sender and recipients.

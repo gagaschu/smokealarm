@@ -78,7 +78,7 @@ func TestNotifiersGetTheTemplates(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	templates, err := notify.LoadTemplates(dir)
+	templates, err := notify.LoadTemplates(dir, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -3,6 +3,7 @@ package notify
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"os"
 	"path/filepath"
@@ -76,9 +77,10 @@ func templateFiles() map[string][]string {
 // notifications for every target it is for, so a mistake (an unknown field, a
 // syntax error, a file name with a typo) stops the start with the file and the
 // line, instead of showing up in the first alarm. Hidden entries (a ConfigMap
-// volume keeps its files in "..data"), directories and files without the
-// .tmpl ending are skipped.
-func LoadTemplates(dir string) (*Templates, error) {
+// volume keeps its files in "..data") and directories are skipped. Files
+// without the .tmpl ending are skipped too, but logged as a warning, because
+// "chat.tpl" is more likely a typo than a file put there on purpose.
+func LoadTemplates(dir string, logger *slog.Logger) (*Templates, error) {
 	if dir == "" {
 		return nil, nil
 	}
@@ -91,7 +93,13 @@ func LoadTemplates(dir string) (*Templates, error) {
 	var errs []error
 	for _, entry := range entries {
 		name := entry.Name()
-		if strings.HasPrefix(name, ".") || !strings.HasSuffix(name, ".tmpl") {
+		if strings.HasPrefix(name, ".") {
+			continue
+		}
+		if !strings.HasSuffix(name, ".tmpl") {
+			if isFile(filepath.Join(dir, name)) {
+				logger.Warn("file in the template directory ignored: the name does not end in .tmpl", "file", name)
+			}
 			continue
 		}
 		tmpl, err := loadTemplateFile(filepath.Join(dir, name), valid)
@@ -110,6 +118,12 @@ func LoadTemplates(dir string) (*Templates, error) {
 		return nil, nil
 	}
 	return t, nil
+}
+
+// isFile says whether path is a file, following links (see loadTemplateFile).
+func isFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular()
 }
 
 // loadTemplateFile reads, parses and checks one file. It returns nil without
@@ -191,7 +205,8 @@ func renderPart(tmpl *template.Template, part string, data templateData) (string
 
 // sampleData are the made-up notifications for checking a template. The
 // first has something in every list and field, including problems left out
-// of a shortened chat text; the others have little, as real ones often do.
+// of a shortened chat text; the others have only one list each (new without
+// the base URL, resolved, a reminder, a node down), as real ones often do.
 func sampleData(kind string) []templateData {
 	since := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
 	pod := func(name string, severity checks.Severity) Alert {
@@ -226,6 +241,10 @@ func sampleData(kind string) []templateData {
 		full,
 		newTemplateData(Notification{New: []Alert{pod("jellyfin", checks.Critical)}}, kind),
 		newTemplateData(Notification{Resolved: []Alert{gone}}, kind),
+		// A reminder alone, as every CRITICAL_REPEAT_INTERVAL brings it.
+		newTemplateData(Notification{Reminders: []Alert{pod("radarr", checks.Critical)}}, kind),
+		// A node that went down, with nothing else.
+		newTemplateData(Notification{New: []Alert{node}}, kind),
 	}
 }
 
@@ -312,15 +331,21 @@ func (e *FallbackError) Error() string {
 
 func (e *FallbackError) Unwrap() error { return e.Err }
 
-// firstFallback returns the first of the fallbacks that is set, as an error,
-// or nil. A nil *FallbackError must not become a non-nil error.
-func firstFallback(fallbacks ...*FallbackError) error {
-	for _, fallback := range fallbacks {
+// fallbacks returns the fallbacks that are set as one error, or nil. A nil
+// *FallbackError must not become a non-nil error. With two (the subject and
+// the text), both are named, so that fixing one does not reveal the other only
+// at the next message; errors.As still finds the first.
+func fallbacks(list ...*FallbackError) error {
+	var errs []error
+	for _, fallback := range list {
 		if fallback != nil {
-			return fallback
+			errs = append(errs, fallback)
 		}
 	}
-	return nil
+	if len(errs) == 1 {
+		return errs[0]
+	}
+	return errors.Join(errs...)
 }
 
 // subject renders the subject for a kind of target.
