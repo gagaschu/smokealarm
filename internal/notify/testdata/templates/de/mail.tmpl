@@ -1,0 +1,28 @@
+{{- define "zeit"}}{{.Format "02.01.2006 15:04"}} UTC{{end -}}
+{{- define "problem"}}
+{{if eq .Severity "critical"}}KRITISCH{{else}}WARNUNG{{end}}: {{.Reason}}
+  Objekt:    {{.Object}}
+  Meldung:   {{.Message}}
+  Seit:      {{template "zeit" .Since}}
+{{range .Affected}}  Betroffen: {{.Object}} ({{.Reason}})
+{{end}}{{end -}}
+Cluster: pi-cluster
+{{if .NodesDown}}
+AUSGEFALLENE KNOTEN
+{{range .NodesDown}}{{template "problem" .}}{{end}}{{end}}
+{{- if .New}}
+NEUE PROBLEME
+{{range .New}}{{template "problem" .}}{{end}}{{end}}
+{{- if .Reminders}}
+WEITERHIN KRITISCH
+{{range .Reminders}}{{template "problem" .}}{{end}}{{end}}
+{{- if .Resolved}}
+BEHOBEN
+{{range .Resolved}}
+{{.Reason}}: {{.Object}}
+  Seit:      {{template "zeit" .Since}}
+  Behoben:   {{template "zeit" .ResolvedAt}}
+{{end}}{{end}}
+{{- with .BaseURL}}
+Details: {{.}}
+{{end -}}

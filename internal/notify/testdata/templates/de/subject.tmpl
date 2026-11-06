@@ -1,0 +1,8 @@
+{{- /* Betreff für alle Ziele. Wird danach auf eine Zeile gebracht. */ -}}
+[pi-cluster] {{if .NodesDown -}}
+  KNOTEN AUSGEFALLEN: {{range $i, $node := .NodesDown}}{{if $i}}, {{end}}{{$node.Name}}{{end}}
+{{- else if and (eq (len .New) 1) (not .Reminders) (not .Resolved) -}}
+  {{with index .New 0}}{{if eq .Severity "critical"}}KRITISCH{{else}}WARNUNG{{end}}: {{.Reason}} {{.Object}}{{end}}
+{{- else -}}
+  {{len .New}} neu, {{len .Reminders}} weiterhin kritisch, {{len .Resolved}} behoben
+{{- end}}

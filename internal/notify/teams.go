@@ -24,6 +24,8 @@ const (
 type Teams struct {
 	WebhookURL string // a secret: anybody with it can post to the channel
 	Client     *http.Client
+	// Templates are the user's message templates; nil means the built-in ones.
+	Templates *Templates
 }
 
 // Name identifies the target.
@@ -32,54 +34,61 @@ func (t *Teams) Name() string { return "teams" }
 // Description shows nothing of the URL, which is a secret as a whole.
 func (t *Teams) Description() string { return "teams" }
 
-// Send posts the card. Workflows answers 202 Accepted; any 2xx counts.
+// Send posts the card. Workflows answers 202 Accepted; any 2xx counts. A
+// *FallbackError means the message went out with a built-in template.
 func (t *Teams) Send(ctx context.Context, n Notification) error {
-	body, err := teamsMessage(n)
+	subject, subjectFallback := t.Templates.subject("teams", n)
+	body, textFallback, err := teamsMessage(t.Templates, n, subject)
 	if err != nil {
 		return fmt.Errorf("teams: encode message: %w", err)
 	}
-	return post(ctx, t.Client, request{
+	err = post(ctx, t.Client, request{
 		target:      "teams",
 		url:         t.WebhookURL,
 		contentType: "application/json",
 		body:        body,
 	})
+	if err != nil {
+		return err
+	}
+	return firstFallback(subjectFallback, textFallback)
 }
 
 // teamsMessage encodes the message, with as much of the text as fits. A retry
 // sends the same size, so a message that is too long would never get through.
-func teamsMessage(n Notification) ([]byte, error) {
+func teamsMessage(templates *Templates, n Notification, subject string) ([]byte, *FallbackError, error) {
 	for limit := teamsLimit; ; limit = limit * 3 / 4 {
+		text, fallback := templates.chatBody("teams", n, limit)
 		body, err := json.Marshal(map[string]any{
 			"type": "message",
 			"attachments": []any{map[string]any{
 				"contentType": "application/vnd.microsoft.card.adaptive",
 				"contentUrl":  nil,
-				"content":     teamsCard(n, limit),
+				"content":     teamsCard(subject, text, n.BaseURL),
 			}},
 		})
 		if err != nil || len(body) <= teamsMaxMessage || limit < teamsLimit/100 {
-			return body, err
+			return body, fallback, err
 		}
 	}
 }
 
-// teamsCard is the Adaptive Card: the subject in bold, the text up to the
-// limit, and a button to the web UI if its address is known.
-func teamsCard(n Notification, limit int) map[string]any {
+// teamsCard is the Adaptive Card: the subject in bold, the text, and a button
+// to the web UI if its address is known.
+func teamsCard(subject, text, baseURL string) map[string]any {
 	body := []any{
-		map[string]any{"type": "TextBlock", "text": Subject(n), "weight": "Bolder", "size": "Medium", "wrap": true},
+		map[string]any{"type": "TextBlock", "text": subject, "weight": "Bolder", "size": "Medium", "wrap": true},
 	}
-	body = append(body, teamsLines(ChatBody(n, limit))...)
+	body = append(body, teamsLines(text)...)
 	card := map[string]any{
 		"$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
 		"type":    "AdaptiveCard",
 		"version": "1.4",
 		"body":    body,
 	}
-	if n.BaseURL != "" {
+	if baseURL != "" {
 		card["actions"] = []any{
-			map[string]any{"type": "Action.OpenUrl", "title": "Open smokealarm", "url": n.BaseURL},
+			map[string]any{"type": "Action.OpenUrl", "title": "Open smokealarm", "url": baseURL},
 		}
 	}
 	return card

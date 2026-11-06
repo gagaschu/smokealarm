@@ -1,0 +1,12 @@
+{{- define "zeit"}}{{.Format "02.01. 15:04"}}{{end -}}
+{{- range .NodesDown}}Knoten {{.Name}} ausgefallen seit {{template "zeit" .Since}}{{with .Affected}}, {{len .}} betroffen{{end}}
+{{end -}}
+{{- range .New}}{{if eq .Severity "critical"}}KRITISCH{{else}}Warnung{{end}} {{.Object}}: {{.Reason}} (seit {{template "zeit" .Since}})
+{{end -}}
+{{- range .Reminders}}Weiterhin kritisch: {{.Object}}: {{.Reason}} (seit {{template "zeit" .Since}})
+{{end -}}
+{{- range .Resolved}}Behoben: {{.Object}}: {{.Reason}}
+{{end -}}
+{{- if .Omitted}}… und {{.Omitted}} weitere
+{{end -}}
+{{with .BaseURL}}{{.}}{{end}}

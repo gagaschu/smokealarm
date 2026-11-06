@@ -1,0 +1,39 @@
+[pi-cluster] KNOTEN AUSGEFALLEN: pi-3
+
+Cluster: pi-cluster
+
+AUSGEFALLENE KNOTEN
+
+KRITISCH: NotReady
+  Objekt:    Node pi-3
+  Meldung:   node is not ready for 10m0s (status Unknown): Kubelet stopped posting node status.
+  Seit:      03.11.2026 10:00 UTC
+  Betroffen: Deployment media/sonarr (ReplicasUnavailable)
+  Betroffen: Pod media/sonarr-7d9f-x2k4 (CrashLoopBackOff)
+
+NEUE PROBLEME
+
+KRITISCH: CrashLoopBackOff
+  Objekt:    Pod media/jellyfin
+  Meldung:   container jellyfin keeps crashing (7 restarts), last exit code 137 (Error)
+  Seit:      03.11.2026 10:00 UTC
+
+WARNUNG: ReplicasUnavailable
+  Objekt:    Deployment media/sonarr
+  Meldung:   1/2 replicas available
+  Seit:      03.11.2026 10:30 UTC
+
+WEITERHIN KRITISCH
+
+KRITISCH: NotReady
+  Objekt:    Node pi-2
+  Meldung:   node is not ready for 10m0s (status Unknown): Kubelet stopped posting node status.
+  Seit:      03.11.2026 10:00 UTC
+
+BEHOBEN
+
+ReplicasUnavailable: Deployment media/sonarr
+  Seit:      03.11.2026 10:30 UTC
+  Behoben:   03.11.2026 12:30 UTC
+
+Details: https://smokealarm.example.com
