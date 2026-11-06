@@ -137,6 +137,10 @@ spec:
             - name: SMOKEALARM_TELEGRAM_CHAT_IDS
               value: {{ join "," . | quote }}
             {{- end }}
+            {{- if .Values.kubelet.caConfigMap }}
+            - name: SMOKEALARM_KUBELET_CA_FILE
+              value: /etc/smokealarm/kubelet-ca/ca.crt
+            {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -176,6 +180,11 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+            {{- if .Values.kubelet.caConfigMap }}
+            - name: kubelet-ca
+              mountPath: /etc/smokealarm/kubelet-ca
+              readOnly: true
+            {{- end }}
       volumes:
         - name: data
           {{- if .Values.persistence.enabled }}
@@ -184,6 +193,14 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
+        {{- if .Values.kubelet.caConfigMap }}
+        - name: kubelet-ca
+          configMap:
+            name: {{ .Values.kubelet.caConfigMap }}
+            items:
+              - key: ca.crt
+                path: ca.crt
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

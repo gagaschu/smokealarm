@@ -393,7 +393,7 @@ func joined(lists ...[]string) string {
 
 func TestRBACDefaultAllowsOnlyReading(t *testing.T) {
 	r := render(t, "")
-	optional := []string{"/nodes/proxy:get", "argoproj.io/applications" + readOnly, "cert-manager.io/certificates" + readOnly}
+	optional := []string{"/nodes/stats:get", "argoproj.io/applications" + readOnly, "cert-manager.io/certificates" + readOnly}
 	if got := strings.Join(ruleSet(t, r), "\n"); got != joined(coreRules(), optional) {
 		t.Errorf("rules =\n%s\nwant\n%s", got, joined(coreRules(), optional))
 	}
@@ -421,18 +421,18 @@ func TestRBACSwitches(t *testing.T) {
 		wantOptional []string
 		wantDisabled string // comma separated, exact
 	}{
-		{"nothing optional", "rbac:\n  nodesProxy: false\n  certManager: false\n  argocd: false\n", nil,
+		{"nothing optional", "rbac:\n  nodesStats: false\n  certManager: false\n  argocd: false\n", nil,
 			"pvc-usage,cert-not-ready,cert-expiry,argocd-health,argocd-sync"},
-		{"no nodes/proxy", "rbac:\n  nodesProxy: false\n",
+		{"no nodes/stats", "rbac:\n  nodesStats: false\n",
 			[]string{"argoproj.io/applications" + readOnly, "cert-manager.io/certificates" + readOnly}, "pvc-usage"},
 		{"no cert-manager", "rbac:\n  certManager: false\n",
-			[]string{"/nodes/proxy:get", "argoproj.io/applications" + readOnly}, "cert-not-ready,cert-expiry"},
+			[]string{"/nodes/stats:get", "argoproj.io/applications" + readOnly}, "cert-not-ready,cert-expiry"},
 		{"no argocd", "rbac:\n  argocd: false\n",
-			[]string{"/nodes/proxy:get", "cert-manager.io/certificates" + readOnly}, "argocd-health,argocd-sync"},
+			[]string{"/nodes/stats:get", "cert-manager.io/certificates" + readOnly}, "argocd-health,argocd-sync"},
 		// Switching the check off by name must also drop the permission.
 		{"pvc-usage disabled by the user", "disabledChecks: [pvc-usage]\n",
 			[]string{"argoproj.io/applications" + readOnly, "cert-manager.io/certificates" + readOnly}, "pvc-usage"},
-		{"user list is merged without duplicates", "disabledChecks: [pod-restarts, pvc-usage]\nrbac:\n  nodesProxy: false\n",
+		{"user list is merged without duplicates", "disabledChecks: [pod-restarts, pvc-usage]\nrbac:\n  nodesStats: false\n",
 			[]string{"argoproj.io/applications" + readOnly, "cert-manager.io/certificates" + readOnly}, "pod-restarts,pvc-usage"},
 	}
 	for _, tt := range tests {
@@ -448,6 +448,55 @@ func TestRBACSwitches(t *testing.T) {
 	}
 }
 
+// rbac.nodesProxy was replaced; a value file that still sets it must not be
+// ignored silently.
+func TestOldNodesProxyValueFailsTheInstall(t *testing.T) {
+	for _, value := range []string{"true", "false"} {
+		out, err := helmTemplate(t, "smokealarm", baseValues+"rbac:\n  nodesProxy: "+value+"\n")
+		if err == nil || !strings.Contains(out, "rbac.nodesStats") {
+			t.Errorf("nodesProxy: %s: err = %v, output %q; want an error that points to rbac.nodesStats", value, err, out)
+		}
+	}
+}
+
+func TestNoProxyRuleAtAll(t *testing.T) {
+	for _, rule := range ruleSet(t, render(t, "")) {
+		if strings.Contains(rule, "proxy") {
+			t.Errorf("rule %q: smokealarm must not get any proxy subresource", rule)
+		}
+	}
+}
+
+func TestKubeletCAFromAConfigMap(t *testing.T) {
+	r := render(t, "kubelet:\n  caConfigMap: kubelet-ca\n")
+	if got := r.env()["SMOKEALARM_KUBELET_CA_FILE"]; got != "/etc/smokealarm/kubelet-ca/ca.crt" {
+		t.Errorf("SMOKEALARM_KUBELET_CA_FILE = %q", got)
+	}
+	pod := r.deployment().Spec.Template.Spec
+	mounted := false
+	for _, m := range pod.Containers[0].VolumeMounts {
+		if m.Name == "kubelet-ca" {
+			mounted = m.MountPath == "/etc/smokealarm/kubelet-ca" && m.ReadOnly
+		}
+	}
+	if !mounted {
+		t.Errorf("volume mounts = %+v, want kubelet-ca read-only at /etc/smokealarm/kubelet-ca", pod.Containers[0].VolumeMounts)
+	}
+	found := false
+	for _, v := range pod.Volumes {
+		if v.Name == "kubelet-ca" && v.ConfigMap != nil {
+			found = v.ConfigMap.Name == "kubelet-ca" && len(v.ConfigMap.Items) == 1 && v.ConfigMap.Items[0].Key == "ca.crt"
+		}
+	}
+	if !found {
+		t.Errorf("volumes = %+v, want the ConfigMap kubelet-ca with the key ca.crt", pod.Volumes)
+	}
+
+	if _, set := render(t, "").env()["SMOKEALARM_KUBELET_CA_FILE"]; set {
+		t.Error("SMOKEALARM_KUBELET_CA_FILE is set without kubelet.caConfigMap")
+	}
+}
+
 // rbacSwitches maps each optional permission switch of the chart to the checks
 // that need that permission.
 func rbacSwitches() []struct {
@@ -458,7 +507,7 @@ func rbacSwitches() []struct {
 		value  string
 		covers func(checks.Check) bool
 	}{
-		{"nodesProxy", func(c checks.Check) bool { return c.Name == checks.PVCUsageCheck }},
+		{"nodesStats", func(c checks.Check) bool { return c.Name == checks.PVCUsageCheck }},
 		{"certManager", func(c checks.Check) bool { return c.Requires == checks.RequiresCertManager }},
 		{"argocd", func(c checks.Check) bool { return c.Requires == checks.RequiresArgoCD }},
 	}
@@ -790,6 +839,8 @@ config:
   cronjobGrace: 9m
   cronjobTimeZone: Europe/Berlin
 disabledChecks: [pod-restarts]
+kubelet:
+  caConfigMap: kubelet-ca
 smtp:
   host: mail.example.com
   port: 465
@@ -848,6 +899,7 @@ func TestEverySettingBecomesAnEnvironmentVariable(t *testing.T) {
 		"SMOKEALARM_CRONJOB_GRACE":            "9m",
 		"SMOKEALARM_CRONJOB_TIME_ZONE":        "Europe/Berlin",
 		"SMOKEALARM_DISABLED_CHECKS":          "pod-restarts",
+		"SMOKEALARM_KUBELET_CA_FILE":          "/etc/smokealarm/kubelet-ca/ca.crt",
 		"SMOKEALARM_SMTP_HOST":                "mail.example.com",
 		"SMOKEALARM_SMTP_PORT":                "465",
 		"SMOKEALARM_SMTP_TLS":                 "tls",
@@ -887,7 +939,7 @@ func TestEverySettingBecomesAnEnvironmentVariable(t *testing.T) {
 // The values must not only be present but also be accepted by the program, and
 // the checks the chart switches off must exist.
 func TestRenderedEnvironmentIsAValidConfig(t *testing.T) {
-	allOptionalOff := "rbac:\n  nodesProxy: false\n  certManager: false\n  argocd: false\n"
+	allOptionalOff := "rbac:\n  nodesStats: false\n  certManager: false\n  argocd: false\n"
 	for name, values := range map[string]string{"every setting": everySetting, "all optional permissions off": allOptionalOff} {
 		t.Run(name, func(t *testing.T) {
 			env := render(t, values).environment()

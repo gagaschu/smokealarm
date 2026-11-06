@@ -78,7 +78,10 @@ off. Without the permission they could not read their data.
 {{- range .Values.disabledChecks -}}
 {{- $list = append $list . -}}
 {{- end -}}
-{{- if not .Values.rbac.nodesProxy -}}
+{{- if hasKey .Values.rbac "nodesProxy" -}}
+{{- fail "rbac.nodesProxy was replaced by rbac.nodesStats: pvc-usage now asks the kubelets directly and needs only get on nodes/stats. Rename the value (or remove it to keep the default true)." -}}
+{{- end -}}
+{{- if not .Values.rbac.nodesStats -}}
 {{- $list = append $list "pvc-usage" -}}
 {{- end -}}
 {{- if not .Values.rbac.certManager -}}

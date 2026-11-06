@@ -121,17 +121,27 @@ notifications:
 # (and their open problems are reported as "resolved", see disabledChecks).
 rbac:
   create: true
-  # nodes/proxy: needed by pvc-usage to read the volume usage from the kubelets.
-  # Think before you keep this on: although the only verb is "get", access to
-  # nodes/proxy reaches the kubelet API of every node, which is more than the
-  # name suggests (see "Kubernetes RBAC good practices" in the Kubernetes docs).
-  # Set it to false, or put pvc-usage in disabledChecks, to leave it out. The
-  # rule is also left out automatically when pvc-usage is in disabledChecks.
-  nodesProxy: true
+  # nodes/stats (get): needed by pvc-usage, which asks every kubelet for its
+  # volume usage directly (https://<node InternalIP>:10250/stats/summary). It
+  # grants resource statistics only: no logs, no exec, no pod list. The pod must
+  # reach the kubelet port of every node, and the kubelets must use webhook
+  # authentication and authorization (the default on k3s and kubeadm); see the
+  # README. The rule is left out when pvc-usage is in disabledChecks.
+  # (Replaces rbac.nodesProxy, which is refused now.)
+  nodesStats: true
   # certificates.cert-manager.io: needed by cert-not-ready and cert-expiry.
   certManager: true
   # applications.argoproj.io: needed by argocd-health and argocd-sync.
   argocd: true
+
+# --- Kubelet ---------------------------------------------------------------------
+# pvc-usage verifies the TLS certificate of every kubelet. By default it trusts
+# the CA of the service account (ca.crt), which signs the kubelet serving
+# certificates on k3s. If yours are signed by another CA, put that CA into a
+# ConfigMap in the release namespace under the key ca.crt and name it here:
+#   kubectl -n smokealarm create configmap kubelet-ca --from-file=ca.crt=/path/to/kubelet-ca.crt
+kubelet:
+  caConfigMap: ""           # SMOKEALARM_KUBELET_CA_FILE, mounted read-only
 
 serviceAccount:
   create: true
