@@ -17,11 +17,15 @@ spec:
     metadata:
       labels:
         {{- include "smokealarm.selectorLabels" . | nindent 8 }}
-      {{- if or (not .Values.existingSecret) .Values.podAnnotations }}
+      {{- if or (not .Values.existingSecret) .Values.templates .Values.podAnnotations }}
       annotations:
         {{- if not .Values.existingSecret }}
         # A new password hash, SMTP login or target secret restarts the pod.
         checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- end }}
+        {{- if .Values.templates }}
+        # Templates are read at startup only, so a change restarts the pod.
+        checksum/templates: {{ include (print $.Template.BasePath "/message-templates.yaml") . | sha256sum }}
         {{- end }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
@@ -141,6 +145,10 @@ spec:
             - name: SMOKEALARM_KUBELET_CA_FILE
               value: /etc/smokealarm/kubelet-ca/ca.crt
             {{- end }}
+            {{- if .Values.templates }}
+            - name: SMOKEALARM_TEMPLATE_DIR
+              value: /etc/smokealarm/templates
+            {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -185,6 +193,11 @@ spec:
               mountPath: /etc/smokealarm/kubelet-ca
               readOnly: true
             {{- end }}
+            {{- if .Values.templates }}
+            - name: templates
+              mountPath: /etc/smokealarm/templates
+              readOnly: true
+            {{- end }}
       volumes:
         - name: data
           {{- if .Values.persistence.enabled }}
@@ -200,6 +213,11 @@ spec:
             items:
               - key: ca.crt
                 path: ca.crt
+        {{- end }}
+        {{- if .Values.templates }}
+        - name: templates
+          configMap:
+            name: {{ include "smokealarm.fullname" . }}-templates
         {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
