@@ -26,9 +26,11 @@ Use a throw-away cluster or namespace to try things out. For example, `kubectl c
 
 [.github/workflows/ci.yml](../.github/workflows/ci.yml) runs `make test`, `make chart` and golangci-lint on every pull request, on every push to `main` and on every version tag. After that it builds the image for `linux/amd64` and `linux/arm64`. A pull request only builds it; `main` pushes `ghcr.io/gagaschu/smokealarm:main` and `:sha-<commit>`.
 
+Every pull request with a change users notice adds a line under `## [Unreleased]` in [CHANGELOG.md](../CHANGELOG.md), in the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) groups (Added, Changed, Deprecated, Removed, Fixed, Security). Refactoring, tests and CI need no entry.
+
 A release is a Git tag:
 
-1. Set `version` and `appVersion` in [Chart.yaml](../deploy/helm/smokealarm/Chart.yaml) to the new version and write the release notes in [CHANGELOG.md](../CHANGELOG.md), in a pull request.
+1. In a pull request: set `version` and `appVersion` in [Chart.yaml](../deploy/helm/smokealarm/Chart.yaml) to the new version, rename `## [Unreleased]` in CHANGELOG.md to `## [x.y.z] - <date>` with a new empty `## [Unreleased]` above it, and update the compare links at the bottom.
 2. After the merge, tag that commit on `main` and push the tag: `git tag v0.1.0 && git push origin v0.1.0`.
 
 The tag `v0.1.0` pushes `:0.1.0`, `:0.1` and `:latest`. A pre-release such as `v0.2.0-rc.1` pushes only `:0.2.0-rc.1`. The workflow fails before building if the tag does not match the chart, because the chart uses `appVersion` as its default image tag.

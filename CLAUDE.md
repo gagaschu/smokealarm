@@ -5,6 +5,7 @@
 ## Git workflow
 - One branch per phase, based on main: phase-<n>-<short-name>.
 - Commit at logical steps with clear messages. Never push to main, never force-push.
+- Every PR with a change users notice (behavior, configuration, chart values, docs they follow) adds a line under `## [Unreleased]` in CHANGELOG.md, in the Keep a Changelog groups (Added, Changed, Deprecated, Removed, Fixed, Security), written for users, with the variable or value name. Refactoring, tests and CI only need no entry; say so in the PR description.
 - End of a phase: go build, go vet, go test and golangci-lint are green. Push the branch, open a pull request against main with a short summary (what's new, how to try it locally), then stop and wait.
 - CI is in .github/workflows/ci.yml (tests, image build; push to ghcr.io on main and on v* tags). See docs/development.md.
 
