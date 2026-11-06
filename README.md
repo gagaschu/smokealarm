@@ -232,7 +232,7 @@ A target uses its own file first, then the general one, then the built-in templa
 
 ```
 {{range .NodesDown}}Knoten {{.Name}} ausgefallen, {{len .Affected}} betroffen
-{{end}}{{range .New}}{{if eq .Severity "critical"}}KRITISCH{{else}}Warnung{{end}} {{.Object}}: {{.Reason}} (seit {{.Since.Format "02.01. 15:04"}})
+{{end}}{{range .New}}{{if eq .Severity "critical"}}KRITISCH{{else}}Warnung{{end}} {{.Object}}: {{.Reason}} (seit {{.Since.Format "02.01. 15:04"}} UTC)
 {{end}}{{range .Resolved}}Behoben: {{.Object}}: {{.Reason}}
 {{end}}{{if .Omitted}}… und {{.Omitted}} weitere
 {{end}}{{.BaseURL}}
@@ -263,11 +263,11 @@ Each problem in these lists has:
 | `.Since`, `.ResolvedAt` | When it was first seen and when it was resolved (zero unless resolved), in UTC. Format them with a Go layout: `{{.Since.Format "02.01.2006 15:04"}}` |
 | `.Affected` | For a node that is down: the problems it holds back, each with `.Object` and `.Reason` |
 
-Only the functions that come with text/template are available: `if`, `range`, `with`, `eq`, `ne`, `len`, `index`, `printf`, `and`, `or`, `not` and a few more. The subject is put on one line after rendering, so line breaks in `subject.tmpl` only make it easier to read and can never add a mail header. Spaces and blank lines at the start and end of a chat text are removed. Times are always UTC.
+Only the functions that come with text/template are available: `if`, `range`, `with`, `eq`, `ne`, `len`, `index`, `printf`, `and`, `or`, `not` and a few more. The subject is put on one line after rendering, so line breaks in `subject.tmpl` only make it easier to read and can never add a mail header. It is cut at 200 bytes, so it fits into a mail header line and leaves room for the text on Telegram. Spaces and blank lines at the start and end of a chat text are removed. Times are always UTC.
 
-**Long messages.** If a chat text is longer than the service allows (the limits above), smokealarm renders it again with fewer problems, the last ones first, and sets `.Omitted` to how many it left out, so your template can say `… und 3 weitere`. If not even the text without any problem fits, it is cut off with `…`. Mails and subjects are not shortened (only the Slack header, at 150 characters).
+**Long messages.** If a chat text is longer than the service allows (the limits above), smokealarm renders it again with fewer problems, the last ones first, and sets `.Omitted` to how many it left out, so your template can say `… und 3 weitere`. If not even one problem fits, the text with the fewest problems is cut off with `…`. Mails are not shortened; subjects are cut at 200 bytes (the Slack header at 150 characters).
 
-**Mistakes.** At startup smokealarm renders every file with made-up notifications for every target it is for. A syntax error, an unknown field (`{{.Sinse}}`), a file name that is not in the table (`slak.chat.tmpl`) or a template that renders nothing stops the start with the file and the line. A file for a target that is not configured is only logged as a warning. If a template still fails with a real notification (say `{{index .New 5}}` when there are fewer problems) or renders nothing, that message goes out with the built-in template instead, so the alarm still arrives. The log and the status page say so ("built-in template used", with the error); the status page also lists the templates each target uses.
+**Mistakes.** At startup smokealarm renders every file with made-up notifications for every target it is for. A syntax error, an unknown field (`{{.Sinse}}`), a file name that is not in the table (`slak.chat.tmpl`) or a template that renders nothing stops the start with the file and the line. A file for a target that is not configured, and a file whose name does not end in `.tmpl` (`chat.tpl`), are only logged as a warning. If a template still fails with a real notification (say `{{index .New 5}}` when there are fewer problems) or renders nothing, that message goes out with the built-in template instead, so the alarm still arrives. The log and the status page say so ("built-in template used", with the error); the status page also lists the templates each target uses.
 
 Templates are read at startup only: restart smokealarm after a change. The chart does that itself, with a checksum annotation on the pod.
 
