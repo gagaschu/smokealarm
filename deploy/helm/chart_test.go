@@ -667,6 +667,9 @@ func TestNotes(t *testing.T) {
 		{"mail only", "smtp:\n  host: mail.example.com\n  from: a@example.com\n  to: [b@example.com]\n",
 			nil, []string{"No notification target"}},
 		{"ntfy only", "notifications:\n  ntfy:\n    topic: alerts\n", nil, []string{"No notification target"}},
+		{"no oidc", "", nil, []string{"OIDC", "redirect URI"}},
+		{"oidc names the redirect uri", oidcSettings() + "config:\n  baseUrl: https://alarm.example.org/\n",
+			[]string{"OIDC login is on", "https://alarm.example.org/login/oidc/callback"}, []string{"//login"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -954,6 +957,16 @@ notifications:
   teams:
     webhookUrl: https://example.logic.azure.com/workflows/teams-secret
     minSeverity: critical
+oidc:
+  issuerUrl: https://id.example.org/realms/home
+  clientId: smokealarm
+  clientSecret: oidc-client-secret-xyz
+  name: MeineID
+  scopes: [openid, email, groups]
+  groupsClaim: roles
+  allowedEmails: [gabriel@example.org, ops@example.org]
+  allowedGroups: [ops, dev]
+  caConfigMap: oidc-ca
 templates:
   chat.tmpl: "{{len .New}} new"
 `
@@ -1009,6 +1022,15 @@ func TestEverySettingBecomesAnEnvironmentVariable(t *testing.T) {
 		"SMOKEALARM_TEAMS_MIN_SEVERITY":       "critical",
 		"SMOKEALARM_WEBHOOK_MIN_SEVERITY":     "warning",
 		"SMOKEALARM_SLACK_MIN_SEVERITY":       "critical",
+		"SMOKEALARM_OIDC_ISSUER_URL":          "https://id.example.org/realms/home",
+		"SMOKEALARM_OIDC_CLIENT_ID":           "smokealarm",
+		"SMOKEALARM_OIDC_CLIENT_SECRET":       "oidc-client-secret-xyz",
+		"SMOKEALARM_OIDC_NAME":                "MeineID",
+		"SMOKEALARM_OIDC_SCOPES":              "openid,email,groups",
+		"SMOKEALARM_OIDC_GROUPS_CLAIM":        "roles",
+		"SMOKEALARM_OIDC_ALLOWED_EMAILS":      "gabriel@example.org,ops@example.org",
+		"SMOKEALARM_OIDC_ALLOWED_GROUPS":      "ops,dev",
+		"SMOKEALARM_OIDC_CA_FILE":             "/etc/smokealarm/oidc-ca/ca.crt",
 	}
 	for name, value := range want {
 		if got[name] != value {
@@ -1043,7 +1065,9 @@ func TestRenderedEnvironmentIsAValidConfig(t *testing.T) {
 				cfg.PodPendingAfter != 7*time.Minute || cfg.RestartThreshold != 10 || cfg.CookieSecure ||
 				!cfg.SMTP.Enabled() || len(cfg.SMTP.To) != 2 || len(cfg.IgnoreNamespaces) != 2 ||
 				cfg.Notify.WebhookHeaderName != "Authorization" || len(cfg.Notify.TelegramChatIDs) != 2 || !cfg.Notify.AllowHTTP ||
-				!slices.Equal(cfg.CriticalOnly, []string{"mail", "ntfy", "slack", "teams"}) {
+				!slices.Equal(cfg.CriticalOnly, []string{"mail", "ntfy", "slack", "teams"}) ||
+				!cfg.OIDC.Enabled() || cfg.OIDC.Name != "MeineID" || len(cfg.OIDC.Scopes) != 3 ||
+				len(cfg.OIDC.AllowedEmails) != 2 || len(cfg.OIDC.AllowedGroups) != 2 {
 				t.Errorf("config = %+v, not what the values say", cfg)
 			}
 		})
@@ -1057,6 +1081,8 @@ func exampleCommandLine(file string) string {
 	case "notify-targets.yaml":
 		return "notifications:\n  ntfy:\n    topic: example-topic\n" +
 			"  telegram:\n    botToken: '123456:example'\n    chatIds: ['-1001234567890']\n"
+	case "oidc.yaml":
+		return "oidc:\n  clientSecret: example-client-secret\n"
 	}
 	return ""
 }
@@ -1152,5 +1178,136 @@ func TestServiceAccountTokenIsMounted(t *testing.T) {
 	r.as("ClusterRoleBinding", &binding)
 	if len(binding.Subjects) != 1 || binding.Subjects[0].Name != "smokealarm" || binding.Subjects[0].Namespace != "monitoring" {
 		t.Errorf("binding subjects = %+v, want the service account in the release namespace", binding.Subjects)
+	}
+}
+
+// oidcSettings returns the oidc block of a working OIDC setup, without the
+// settings named in leaveOut. The caller adds config.baseUrl.
+func oidcSettings(leaveOut ...string) string {
+	settings := []struct{ key, line string }{
+		{"issuerUrl", "  issuerUrl: https://id.example.org/realms/home\n"},
+		{"clientId", "  clientId: smokealarm\n"},
+		{"clientSecret", "  clientSecret: oidc-client-secret-xyz\n"},
+		{"allowedEmails", "  allowedEmails: [gabriel@example.org]\n"},
+	}
+	block := "oidc:\n"
+	for _, s := range settings {
+		if !slices.Contains(leaveOut, s.key) {
+			block += s.line
+		}
+	}
+	return block
+}
+
+const oidcBaseURL = "config:\n  baseUrl: https://smokealarm.example.org\n"
+
+func TestNoOIDCByDefault(t *testing.T) {
+	for name, values := range map[string]string{"defaults": "", "values of an older release without the block": "oidc: null\n"} {
+		t.Run(name, func(t *testing.T) {
+			r := render(t, values)
+			for key := range r.environment() {
+				if strings.HasPrefix(key, "SMOKEALARM_OIDC_") {
+					t.Errorf("%s is set although OIDC is off", key)
+				}
+			}
+			for _, v := range r.deployment().Spec.Template.Spec.Volumes {
+				if v.Name == "oidc-ca" {
+					t.Error("the OIDC CA volume exists although OIDC is off")
+				}
+			}
+		})
+	}
+}
+
+func TestOIDCClientSecretIsOnlyInTheSecret(t *testing.T) {
+	r := render(t, oidcSettings()+oidcBaseURL)
+	var secret corev1.Secret
+	r.as("Secret", &secret)
+	if secret.StringData["SMOKEALARM_OIDC_CLIENT_SECRET"] != "oidc-client-secret-xyz" {
+		t.Fatalf("the Secret lacks the client secret: %v", secret.StringData)
+	}
+	raw, _ := r.find("Deployment").MarshalJSON()
+	if strings.Contains(string(raw), "oidc-client-secret-xyz") {
+		t.Error("the client secret appears in the Deployment; it belongs in the Secret only")
+	}
+	env := r.env()
+	if _, found := env["SMOKEALARM_OIDC_CLIENT_SECRET"]; found {
+		t.Error("the client secret is a plain environment variable")
+	}
+	if env["SMOKEALARM_OIDC_ISSUER_URL"] == "" || env["SMOKEALARM_OIDC_CLIENT_ID"] != "smokealarm" ||
+		env["SMOKEALARM_OIDC_ALLOWED_EMAILS"] != "gabriel@example.org" {
+		t.Errorf("the plain settings are missing: %v", env)
+	}
+	// Settings left empty keep the program's defaults.
+	for _, key := range []string{"SMOKEALARM_OIDC_NAME", "SMOKEALARM_OIDC_SCOPES", "SMOKEALARM_OIDC_GROUPS_CLAIM", "SMOKEALARM_OIDC_ALLOWED_GROUPS", "SMOKEALARM_OIDC_CA_FILE"} {
+		if _, found := env[key]; found {
+			t.Errorf("%s is set although its value is empty", key)
+		}
+	}
+}
+
+func TestOIDCWithExistingSecret(t *testing.T) {
+	values := "existingSecret: my-secret\n" + oidcSettings("clientSecret") + oidcBaseURL
+	out, err := helmTemplate(t, "smokealarm", values)
+	if err != nil {
+		t.Fatalf("helm template: %v\n%s", err, out)
+	}
+	if r := parseRelease(t, out); r.has("Secret") || r.env()["SMOKEALARM_OIDC_ISSUER_URL"] == "" {
+		t.Errorf("want no Secret and the OIDC settings in the Deployment, got %v", r.kinds())
+	}
+
+	// A client secret in the values would be ignored silently; refuse it.
+	out, err = helmTemplate(t, "smokealarm", "existingSecret: my-secret\n"+oidcSettings()+oidcBaseURL)
+	if err == nil || !strings.Contains(out, "existingSecret is set") {
+		t.Errorf("err = %v, output %q; want an error about the client secret in the values", err, out)
+	}
+}
+
+// Settings that make no sense alone fail the install, not the pod.
+func TestIncompleteOIDCFailsTheInstall(t *testing.T) {
+	tests := []struct{ name, values, want string }{
+		{"no client id", oidcSettings("clientId") + oidcBaseURL, "oidc.clientId"},
+		{"no client secret", oidcSettings("clientSecret") + oidcBaseURL, "oidc.clientSecret"},
+		{"no allowlist", oidcSettings("allowedEmails") + oidcBaseURL, "oidc.allowedEmails or oidc.allowedGroups"},
+		{"no address of the web UI", oidcSettings(), "redirect URI"},
+		{"client id without the issuer", "oidc:\n  clientId: smokealarm\n", "oidc.issuerUrl is not"},
+		{"name without the issuer", "oidc:\n  name: MeineID\n", "oidc.issuerUrl is not"},
+		{"CA without the issuer", "oidc:\n  caConfigMap: oidc-ca\n", "oidc.issuerUrl is not"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := helmTemplate(t, "smokealarm", baseValues, tt.values)
+			if err == nil || !strings.Contains(out, tt.want) {
+				t.Errorf("err = %v, output %q; want an error about %s", err, out, tt.want)
+			}
+		})
+	}
+	// The ingress host is enough for the address.
+	if _, err := helmTemplate(t, "smokealarm", baseValues, oidcSettings(), "ingress:\n  enabled: true\n  host: smoke.example.com\n"); err != nil {
+		t.Errorf("OIDC with an ingress host and no config.baseUrl: %v", err)
+	}
+}
+
+func TestOIDCCAFromAConfigMap(t *testing.T) {
+	r := render(t, oidcSettings()+"  caConfigMap: oidc-ca\n"+oidcBaseURL)
+	if got := r.env()["SMOKEALARM_OIDC_CA_FILE"]; got != "/etc/smokealarm/oidc-ca/ca.crt" {
+		t.Errorf("SMOKEALARM_OIDC_CA_FILE = %q", got)
+	}
+	pod := r.deployment().Spec.Template.Spec
+	mounted := false
+	for _, m := range pod.Containers[0].VolumeMounts {
+		if m.Name == "oidc-ca" {
+			mounted = m.MountPath == "/etc/smokealarm/oidc-ca" && m.ReadOnly
+		}
+	}
+	found := false
+	for _, v := range pod.Volumes {
+		if v.Name == "oidc-ca" && v.ConfigMap != nil {
+			found = v.ConfigMap.Name == "oidc-ca" && len(v.ConfigMap.Items) == 1 && v.ConfigMap.Items[0].Key == "ca.crt"
+		}
+	}
+	if !mounted || !found {
+		t.Errorf("want oidc-ca mounted read-only from the ConfigMap oidc-ca (key ca.crt); mounts %+v, volumes %+v",
+			pod.Containers[0].VolumeMounts, pod.Volumes)
 	}
 }

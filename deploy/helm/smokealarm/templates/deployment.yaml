@@ -149,11 +149,43 @@ spec:
             - name: SMOKEALARM_TEMPLATE_DIR
               value: /etc/smokealarm/templates
             {{- end }}
+            {{- with .Values.oidc }}
+            {{- if .issuerUrl }}
+            - name: SMOKEALARM_OIDC_ISSUER_URL
+              value: {{ .issuerUrl | quote }}
+            - name: SMOKEALARM_OIDC_CLIENT_ID
+              value: {{ .clientId | quote }}
+            {{- with .name }}
+            - name: SMOKEALARM_OIDC_NAME
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .scopes }}
+            - name: SMOKEALARM_OIDC_SCOPES
+              value: {{ join "," . | quote }}
+            {{- end }}
+            {{- with .groupsClaim }}
+            - name: SMOKEALARM_OIDC_GROUPS_CLAIM
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .allowedEmails }}
+            - name: SMOKEALARM_OIDC_ALLOWED_EMAILS
+              value: {{ join "," . | quote }}
+            {{- end }}
+            {{- with .allowedGroups }}
+            - name: SMOKEALARM_OIDC_ALLOWED_GROUPS
+              value: {{ join "," . | quote }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- if include "smokealarm.oidcCAConfigMap" . }}
+            - name: SMOKEALARM_OIDC_CA_FILE
+              value: /etc/smokealarm/oidc-ca/ca.crt
+            {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
-          # The password hash, the SMTP login and the secrets of the
-          # notification targets come from a Secret.
+          # The password hash, the SMTP login, the OIDC client secret and the
+          # secrets of the notification targets come from a Secret.
           envFrom:
             - secretRef:
                 name: {{ include "smokealarm.secretName" . }}
@@ -193,6 +225,11 @@ spec:
               mountPath: /etc/smokealarm/kubelet-ca
               readOnly: true
             {{- end }}
+            {{- if include "smokealarm.oidcCAConfigMap" . }}
+            - name: oidc-ca
+              mountPath: /etc/smokealarm/oidc-ca
+              readOnly: true
+            {{- end }}
             {{- if .Values.templates }}
             - name: templates
               mountPath: /etc/smokealarm/templates
@@ -210,6 +247,14 @@ spec:
         - name: kubelet-ca
           configMap:
             name: {{ include "smokealarm.kubeletCAConfigMap" . }}
+            items:
+              - key: ca.crt
+                path: ca.crt
+        {{- end }}
+        {{- if include "smokealarm.oidcCAConfigMap" . }}
+        - name: oidc-ca
+          configMap:
+            name: {{ include "smokealarm.oidcCAConfigMap" . }}
             items:
               - key: ca.crt
                 path: ca.crt

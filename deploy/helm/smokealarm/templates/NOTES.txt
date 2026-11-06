@@ -8,6 +8,14 @@ Open the web UI:
   then open http://localhost:8080
 {{- end }}
 Log in as "{{ .Values.auth.adminUser }}".
+{{- with .Values.oidc }}
+{{- if .issuerUrl }}
+
+OIDC login is on. Register this redirect URI at your identity provider:
+  {{ include "smokealarm.baseUrl" $ | trimSuffix "/" }}/login/oidc/callback
+The admin login stays as the way in if the provider is down.
+{{- end }}
+{{- end }}
 {{- if and (not .Values.ingress.enabled) .Values.config.cookieSecure }}
 
 NOTE: config.cookieSecure is true, so browsers only keep the login cookie over
