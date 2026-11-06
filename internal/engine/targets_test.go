@@ -357,3 +357,45 @@ func TestStatusForgetsTheErrorOnceTheProblemIsAcknowledged(t *testing.T) {
 	h.mustRun(time.Minute)
 	h.wantTargetError(false)
 }
+
+// PR #27 second review: a firing problem that is no longer meant for the
+// target, and whose start it never heard, is not owed to it.
+func TestStatusForgetsTheErrorWhenTheProblemIsNoLongerForTheTarget(t *testing.T) {
+	tests := []struct {
+		name  string
+		later checks.Finding
+	}{
+		{"now a warning for a critical-only target", finding("a", checks.Warning)},
+		{"annotation moved to another target", withTargets(finding("a", checks.Critical), "second")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h, _ := twoTargets(t)
+			h.engine.MinSeverity = map[string]checks.Severity{"fake": checks.Critical}
+			h.findings = []checks.Finding{finding("a", checks.Critical)}
+			h.mustRun(0)
+			h.notifier.fail = true
+			_ = h.run(2 * time.Minute) // its first message to "fake" fails
+			h.wantTargetError(true)
+
+			h.findings = []checks.Finding{tt.later}
+			h.mustRun(time.Minute)
+			h.wantTargetError(false)
+		})
+	}
+}
+
+// A target that heard the start is still owed the end, also when the problem
+// is no longer meant for it.
+func TestStatusKeepsTheErrorWhenTheTargetIsOwedTheEnd(t *testing.T) {
+	h, _ := twoTargets(t)
+	h.engine.CriticalRepeatInterval = time.Hour
+	h.findings = []checks.Finding{finding("a", checks.Critical)}
+	h.mustRun(0)
+	h.mustRun(2 * time.Minute) // "fake" hears the start
+	h.notifier.fail = true
+	_ = h.run(time.Hour) // its reminder fails
+	h.findings = []checks.Finding{withTargets(finding("a", checks.Critical), "second")}
+	h.mustRun(time.Minute)
+	h.wantTargetError(true)
+}
