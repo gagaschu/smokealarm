@@ -61,7 +61,9 @@ func (e *Engine) notifyTarget(ctx context.Context, target notify.Notifier, unkno
 		return fmt.Errorf("mark silently resolved findings for %s: %w", name, err)
 	}
 	if len(n.New) == 0 && len(n.Reminders) == 0 && len(n.Resolved) == 0 {
-		e.clearNotifyError(name)
+		if !r.postponed {
+			e.clearNotifyError(name)
+		}
 		return nil
 	}
 
@@ -91,6 +93,10 @@ type report struct {
 	firingIDs    []int64 // reported as new or as a reminder, once sending worked
 	resolvedIDs  []int64 // reported as resolved, once sending worked
 	silentIDs    []int64 // over without a mail
+	// postponed says that a message for this target is held back for now (a
+	// downtime, RESOLVE_AFTER, an escalation that waits). It is still owed,
+	// so an old sending error is not forgotten.
+	postponed bool
 }
 
 // buildReport sorts the unreported records and the due reminders for one
@@ -103,6 +109,9 @@ func (e *Engine) buildReport(records, due []store.Record, silenced map[string]bo
 	n := &r.notification
 	for _, rec := range records {
 		firing := rec.State == store.StateFiring
+		if firing && (silenced[rec.Key] || rec.EscalatingSince != nil || rec.GoneSince != nil) && e.routedTo(target, rec) {
+			r.postponed = true
+		}
 		switch {
 		case silenced[rec.Key] && firing:
 			// Not marked as reported: the mail goes out when the downtime ends.

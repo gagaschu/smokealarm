@@ -249,3 +249,54 @@ func TestStatusForgetsTheErrorWhenNothingIsLeftToSend(t *testing.T) {
 		t.Errorf("target = %+v, want no error", status)
 	}
 }
+
+// wantTargetError fails unless the first target shows a sending error, or none.
+func (h *harness) wantTargetError(want bool) {
+	h.t.Helper()
+	status := h.engine.Status().Targets[0]
+	if got := status.LastError != ""; got != want {
+		h.t.Fatalf("target = %+v, want an error: %v", status, want)
+	}
+}
+
+// Issue #26 finding 1: a message that is only postponed is still owed, so the
+// status must go on showing that sending to the target fails.
+func TestStatusKeepsTheErrorWhileTheMessageWaitsForResolveAfter(t *testing.T) {
+	h := newHarness(t)
+	h.engine.ResolveAfter = 5 * time.Minute
+	h.findings = []checks.Finding{finding("a", checks.Critical)}
+	h.mustRun(0)
+	h.notifier.fail = true
+	_ = h.run(2 * time.Minute) // "a" fires, but its first message fails
+	h.wantTargetError(true)
+
+	h.findings = nil
+	h.mustRun(time.Minute) // gone for a moment: nothing to send, but still owed
+	h.wantTargetError(true)
+}
+
+func TestStatusKeepsTheErrorWhileTheMessageWaitsForADowntime(t *testing.T) {
+	h := newHarness(t)
+	h.findings = []checks.Finding{finding("a", checks.Critical)}
+	h.mustRun(0)
+	h.notifier.fail = true
+	_ = h.run(2 * time.Minute)
+	h.setDowntime("a", time.Hour)
+	h.mustRun(time.Minute)
+	h.wantTargetError(true)
+}
+
+// A problem that does not go to the target at all is not owed to it.
+func TestStatusForgetsTheErrorDespiteAProblemForOtherTargets(t *testing.T) {
+	h := newHarness(t)
+	h.engine.MinSeverity = map[string]checks.Severity{"fake": checks.Critical}
+	h.findings = []checks.Finding{finding("a", checks.Critical), finding("b", checks.Warning)}
+	h.mustRun(0)
+	h.notifier.fail = true
+	_ = h.run(2 * time.Minute) // "a" fires, but its first message fails
+	h.wantTargetError(true)
+
+	h.findings = []checks.Finding{finding("b", checks.Warning)}
+	h.mustRun(time.Minute) // "a" ends unheard; "b" is not for this target
+	h.wantTargetError(false)
+}
