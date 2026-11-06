@@ -36,6 +36,11 @@ type Server struct {
 	Sessions *auth.Sessions
 	Limiter  *auth.RateLimiter
 
+	// OIDC is the login with an identity provider. nil means it is off: there
+	// is no button and no route for it. OIDCName is the name in the button.
+	OIDC     *auth.OIDC
+	OIDCName string
+
 	// Status returns what the engine knows about itself.
 	Status func() engine.Status
 	// Audience says which notification targets hear about a problem, and
@@ -73,6 +78,12 @@ func (s *Server) Handler() (http.Handler, error) {
 
 	mux.HandleFunc("GET /login", s.loginPage)
 	mux.HandleFunc("POST /login", s.loginSubmit)
+	if s.OIDC != nil {
+		// Both are GET requests that need no session. The cookie that Begin
+		// sets protects the callback, so there is no cross-origin check.
+		mux.HandleFunc("GET /login/oidc", s.oidcStart)
+		mux.HandleFunc("GET /login/oidc/callback", s.oidcCallback)
+	}
 
 	// Everything below needs a valid session.
 	protected := func(handler http.HandlerFunc) http.Handler {

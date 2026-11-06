@@ -35,6 +35,9 @@ type page struct {
 
 	// login and downtime form
 	Error string
+	// OIDCName is the name in the button "Login with ...". Empty means OIDC is
+	// off and there is no button.
+	OIDCName string
 
 	// overview
 	Problems          []problemView
@@ -149,13 +152,19 @@ func (s *Server) serverError(w http.ResponseWriter, what string, err error) {
 	http.Error(w, "internal error", http.StatusInternalServerError)
 }
 
+// loginPageData is the login page, with the OIDC button if OIDC is on and
+// an error text if there is one.
+func (s *Server) loginPageData(errorText string) page {
+	return page{Title: "Log in", Error: errorText, OIDCName: s.oidcName()}
+}
+
 // loginPage shows the login form, or skips it if there is a session already.
 func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {
 	if _, ok, err := s.Sessions.Valid(r); err == nil && ok {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
-	s.render(w, http.StatusOK, "login", page{Title: "Log in"})
+	s.render(w, http.StatusOK, "login", s.loginPageData(""))
 }
 
 // loginSubmit checks the credentials and starts a session. After a login
@@ -166,9 +175,7 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 	if !s.Limiter.Attempt(client) {
 		// No password check at all, so a blocked client learns nothing.
 		s.Logger.Warn("login blocked after too many failures", "client", client)
-		s.render(w, http.StatusTooManyRequests, "login", page{
-			Title: "Log in", Error: "Too many failed attempts. Please try again later.",
-		})
+		s.render(w, http.StatusTooManyRequests, "login", s.loginPageData("Too many failed attempts. Please try again later."))
 		return
 	}
 
@@ -183,9 +190,7 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 		// What was typed is never logged: people sometimes type their password
 		// into the user field.
 		s.Logger.Warn("login failed", "client", client)
-		s.render(w, http.StatusUnauthorized, "login", page{
-			Title: "Log in", Error: "Invalid username or password.",
-		})
+		s.render(w, http.StatusUnauthorized, "login", s.loginPageData("Invalid username or password."))
 		return
 	}
 
@@ -194,7 +199,7 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, "start session", err)
 		return
 	}
-	s.Logger.Info("login succeeded", "client", client, "username", s.Login.Username)
+	s.Logger.Info("login succeeded", "client", client, "username", s.Login.Username, "method", auth.MethodPassword)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 

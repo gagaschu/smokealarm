@@ -15,5 +15,9 @@
     </label>
     <button class="primary" type="submit">Log in</button>
   </form>
+  {{if .OIDCName}}
+  <p class="login-or">or</p>
+  <a class="button" href="/login/oidc">Login with {{.OIDCName}}</a>
+  {{end}}
 </section>
 {{end}}
