@@ -412,6 +412,7 @@ All configuration is done through environment variables starting with `SMOKEALAR
 | `SMOKEALARM_PVC_PENDING_AFTER` | `5m` | `pvc-pending` reports claims that are pending longer than this. |
 | `SMOKEALARM_CRONJOB_GRACE` | `5m` | How late a CronJob run may be before `cronjob-missed` reports it. |
 | `SMOKEALARM_CRONJOB_TIME_ZONE` | (UTC) | The time zone the Kubernetes controller reads schedules in, for CronJobs without `spec.timeZone`, for example `Europe/Berlin`. See the note below. |
+| `SMOKEALARM_KUBELET_CA_FILE` | (the CA of the API client) | A PEM file with the CA that signed the kubelet serving certificates, for `pvc-usage`. Only needed if that is not the CA of the service account (`ca.crt`). The chart sets it from `kubelet.caConfigMap`. See [Volume usage and the kubelet](#volume-usage-and-the-kubelet). |
 | `SMOKEALARM_SESSION_TTL` | `7d` | How long a login stays valid. |
 | `SMOKEALARM_COOKIE_SECURE` | `true` | Send the login cookie only over HTTPS. Set `false` only for local development over plain HTTP. |
 | `SMOKEALARM_SMTP_HOST` | – | Mail server. Setting it switches mail on. |
@@ -457,7 +458,7 @@ Severity is either critical (act now) or warning (have a look soon). The status 
 | `job-failed` | warning | A Job failed. For CronJobs only the newest Job counts, so old failures do not alarm forever. |
 | `cronjob-missed` | warning | A scheduled CronJob run did not happen (suspended CronJobs are ignored). |
 | `pvc-pending` | warning | A claim is pending longer than `SMOKEALARM_PVC_PENDING_AFTER`. Claims of a `WaitForFirstConsumer` storage class are skipped, because they stay pending until a pod uses them. |
-| `pvc-usage` | warning / critical | A volume is more than 85 % (warning) or 95 % (critical) full. Needs the `nodes/proxy` permission; see the note below. |
+| `pvc-usage` | warning / critical | A volume is more than 85 % (warning) or 95 % (critical) full. Asks the kubelets directly and needs `get` on `nodes/stats`; see [Volume usage and the kubelet](#volume-usage-and-the-kubelet). |
 | `cert-not-ready` | warning | A cert-manager Certificate is not `Ready`. Only if cert-manager is installed. |
 | `cert-expiry` | warning / critical | A certificate expires in less than 14 days (warning) or 3 days (critical), or has expired. Only if cert-manager is installed. |
 | `argocd-health` | critical | An Argo CD Application is `Degraded` or `Missing`. Only if Argo CD is installed. |
@@ -472,7 +473,7 @@ Notes:
 - A CronJob without `spec.timeZone` runs in the local time of the Kubernetes controller. On k3s the controller runs inside the host process, so that should be the host's time zone (check with `timedatectl`). smokealarm cannot see it from the API and assumes UTC. If the host is not on UTC, set `SMOKEALARM_CRONJOB_TIME_ZONE` to the same zone, or daily and weekly CronJobs are reported as missed most of the day. Short schedules like `*/5 * * * *` are not affected.
 - A schedule that never comes true, like `0 0 31 2 *` for a CronJob that only runs by hand, is never reported as missed.
 - `pvc-usage` looks at the filesystem a volume lives on, because that is what the kubelet reports. With k3s `local-path` that is the node's disk, and the requested size is not enforced, so the check only fires when the node disk is nearly full. It is more useful for volumes with their own filesystem (Longhorn, Ceph, block volumes).
-- If `pvc-usage` can't read the volume stats (no permission, a node doesn't answer), it is skipped for that run, open problems stay open, and the status page shows the reason.
+- If `pvc-usage` can't read the volume stats (no permission, a node doesn't answer, a certificate can't be verified), it is skipped for that run, open problems stay open, and the status page shows the reason.
 - While a node is down it can't be asked. A `pvc-usage` problem whose volume isn't measured then stays open, because the volume may live on that node. It also stays open if its pod is deleted meanwhile, until all nodes are back.
 
 ### Ignoring things
@@ -484,9 +485,17 @@ Notes:
 
 ## Security
 
-smokealarm only needs `get`, `list` and `watch` on a short list of resources, and the `ClusterRole` from the Helm chart grants just that, apart from `get` on `nodes/proxy` (see below). It never reads Secrets. The optional permissions each have a switch: `rbac.nodesProxy` for `pvc-usage`, `rbac.certManager` for cert-manager Certificates and `rbac.argocd` for Argo CD Applications. Turning a switch off disables the checks that need it. The ClusterRole is named `<namespace>-<release>`, so the chart can be installed in several namespaces.
+smokealarm only needs `get`, `list` and `watch` on a short list of resources, and the `ClusterRole` from the Helm chart grants just that, plus `get` on `nodes/stats` for the volume usage. It never reads Secrets. The optional permissions each have a switch: `rbac.nodesStats` for `pvc-usage`, `rbac.certManager` for cert-manager Certificates and `rbac.argocd` for Argo CD Applications. Turning a switch off disables the checks that need it. The ClusterRole is named `<namespace>-<release>`, so the chart can be installed in several namespaces.
 
-`nodes/proxy` is more than read access. `pvc-usage` gets volume usage from the kubelets, which requires `get` on `nodes/proxy`. The Kubernetes documentation ([RBAC good practices](https://kubernetes.io/docs/concepts/security/rbac-good-practices/#access-to-proxy-subresource-of-nodes)) warns that this reaches the kubelet API, including container logs and command execution in pods, and bypasses audit logging and admission control. In its words, `get` on `nodes/proxy` "is not a read-only permission". smokealarm only calls `stats/summary`, but a stolen service account token would have the same reach. The rule only exists while `pvc-usage` is active. If you don't need the check, set `rbac.nodesProxy=false` or add `pvc-usage` to `disabledChecks`, and the permission goes away.
+`nodes/stats` grants resource statistics only: no logs, no command execution, no list of pods. smokealarm used to read the stats through the API server, which needs `get` on `nodes/proxy`, and the Kubernetes documentation ([RBAC good practices](https://kubernetes.io/docs/concepts/security/rbac-good-practices/#access-to-proxy-subresource-of-nodes)) warns that this reaches the whole kubelet API. It now asks the kubelets itself and never needs `nodes/proxy`. The rule only exists while `pvc-usage` is active. If you don't need the check, set `rbac.nodesStats=false` or add `pvc-usage` to `disabledChecks`, and the permission goes away. Values files that still set the old `rbac.nodesProxy` are refused with a hint.
+
+### Volume usage and the kubelet
+
+`pvc-usage` calls `https://<node InternalIP>:<kubelet port>/stats/summary` on every Ready node (the port the node publishes, usually 10250) with the service account token. The kubelet checks the token and the permission itself. That needs three things from the cluster; if one is missing, the check is skipped and the status page says which:
+
+- **The kubelet port must be reachable from the smokealarm pod.** A NetworkPolicy or a host firewall can block it. Through the API server this was never a question. Status page: "could not reach the kubelet of node …".
+- **The kubelet's certificate must be verifiable.** smokealarm always verifies it, against the CA of the service account (`ca.crt`) unless `SMOKEALARM_KUBELET_CA_FILE` is set; the certificate must also contain the node IP. On k3s the kubelet serving certificates are signed by the cluster's server CA. On kubeadm clusters they are self-signed unless `serverTLSBootstrap: true` is set in the kubelet configuration (and the certificate requests are approved). If your kubelet certificates come from another CA, put it into a ConfigMap and set `kubelet.caConfigMap` (see [values.yaml](deploy/helm/smokealarm/values.yaml)). Status page: "could not verify the TLS certificate of the kubelet on node …".
+- **The kubelet must use webhook authentication and authorization** (`authentication-token-webhook` and `authorization-mode=Webhook`, the default on k3s and kubeadm). Otherwise it answers 401 or 403, as it does when `nodes/stats` is missing. Status page: "the kubelet of node … refused the request".
 
 The container runs as non-root with a read-only root filesystem, all capabilities dropped, no privilege escalation and the default seccomp profile. It can only write to the data volume.
 
@@ -516,7 +525,7 @@ export SMOKEALARM_ADMIN_PASSWORD_HASH="$(make -s hash-password)"
 make run         # runs against the cluster from KUBECONFIG, UI on http://localhost:8080
 ```
 
-`make run` sets the user to `admin` and uses plain-text logs and a cookie that works over HTTP. The variables above override all of this. To try it out, use a throw-away cluster or namespace. For example, `kubectl create deployment brokendep --image=does-not-exist/nope` produces a critical finding after `SMOKEALARM_ALERT_AFTER`.
+`make run` sets the user to `admin` and uses plain-text logs and a cookie that works over HTTP. `pvc-usage` then calls the kubelets from your machine, with the credentials of your kubeconfig, so the node IPs must be reachable from there; otherwise the check is skipped with the reason on the status page. The variables above override all of this. To try it out, use a throw-away cluster or namespace. For example, `kubectl create deployment brokendep --image=does-not-exist/nope` produces a critical finding after `SMOKEALARM_ALERT_AFTER`.
 
 `make help` lists all tasks. The code is meant to be readable without knowing Go; [ARCHITECTURE.md](ARCHITECTURE.md) is the place to start.
 
