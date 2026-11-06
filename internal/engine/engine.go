@@ -65,6 +65,10 @@ type Engine struct {
 	// BaseURL is the link to the web UI that notifications point to. It may
 	// be empty.
 	BaseURL string
+	// TemplateFiles names the user's message templates each target uses, by
+	// Notifier.Name, for the status page (see notify.Templates.Describe).
+	// Missing means none to show.
+	TemplateFiles map[string]string
 
 	// Now is injectable so tests control the time.
 	Now    func() time.Time

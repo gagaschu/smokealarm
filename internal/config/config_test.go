@@ -217,6 +217,19 @@ func TestCronJobTimeZoneIsRead(t *testing.T) {
 	}
 }
 
+func TestTemplateDirIsRead(t *testing.T) {
+	cfg, err := Load(env(map[string]string{"SMOKEALARM_TEMPLATE_DIR": "/etc/smokealarm/templates"}))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.TemplateDir != "/etc/smokealarm/templates" {
+		t.Errorf("TemplateDir = %q", cfg.TemplateDir)
+	}
+	if cfg, _ := Load(env(nil)); cfg.TemplateDir != "" {
+		t.Errorf("TemplateDir without the variable = %q, want empty", cfg.TemplateDir)
+	}
+}
+
 func TestKubeletCAFileIsRead(t *testing.T) {
 	cfg, err := Load(env(map[string]string{"SMOKEALARM_KUBELET_CA_FILE": "/etc/smokealarm/kubelet-ca/ca.crt"}))
 	if err != nil {

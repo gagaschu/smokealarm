@@ -100,12 +100,20 @@ func run() error {
 		return fmt.Errorf("create cluster: %w", err)
 	}
 
-	notifiers := newNotifiers(cfg, logger, notify.NewHTTPClient(), time.Now)
+	templates, err := notify.LoadTemplates(cfg.TemplateDir)
+	if err != nil {
+		return fmt.Errorf("load message templates from %s: %w", cfg.TemplateDir, err)
+	}
+	notifiers := newNotifiers(cfg, logger, notify.NewHTTPClient(), time.Now, templates)
+	for _, file := range unusedTemplates(notifiers, templates) {
+		logger.Warn("message template not used by any configured target", "file", file)
+	}
 	minSeverity := minSeverities(notifiers, cfg.CriticalOnly)
 	if err := syncTargets(ctx, logger, db, notifiers, minSeverity); err != nil {
 		return err
 	}
 	loop := newEngine(cfg, logger, cluster, db, activeChecks, unavailable, notifiers, minSeverity)
+	loop.TemplateFiles = templateFiles(notifiers, templates)
 	handler, err := newHandler(cfg, logger, cluster, db, loop)
 	if err != nil {
 		return fmt.Errorf("create web handler: %w", err)

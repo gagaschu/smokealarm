@@ -438,6 +438,7 @@ All configuration is done through environment variables starting with `SMOKEALAR
 | `SMOKEALARM_TELEGRAM_MIN_SEVERITY` | `warning` | The same for Telegram, all chats. |
 | `SMOKEALARM_SLACK_MIN_SEVERITY` | `warning` | The same for Slack. |
 | `SMOKEALARM_TEAMS_MIN_SEVERITY` | `warning` | The same for Teams. |
+| `SMOKEALARM_TEMPLATE_DIR` | – | A directory with your own message templates for the subject and text of mail, ntfy, Telegram, Slack and Teams. Empty means the built-in messages. The chart sets it from `templates`. See [Message templates](#message-templates). |
 
 For local runs, smokealarm also reads the standard `KUBECONFIG` variable. In a pod it uses the service account.
 

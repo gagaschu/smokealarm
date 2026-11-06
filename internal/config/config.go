@@ -46,6 +46,10 @@ type Config struct {
 	// KubeletCAFile verifies the kubelets' serving certificates for pvc-usage
 	// instead of the CA of the API client. Empty = that CA.
 	KubeletCAFile string
+	// TemplateDir holds the user's message templates (see notify.Templates).
+	// Empty = the built-in messages only. The files are checked at startup by
+	// notify.LoadTemplates, not here, so there is one place for it.
+	TemplateDir string
 }
 
 // Load builds the configuration. The lookup function is injected (instead of
@@ -80,6 +84,7 @@ func Load(getenv func(string) string) (Config, error) {
 		CronJobGrace:      r.duration("SMOKEALARM_CRONJOB_GRACE", 5*time.Minute),
 		CronJobTimeZone:   r.text("SMOKEALARM_CRONJOB_TIME_ZONE", ""),
 		KubeletCAFile:     r.text("SMOKEALARM_KUBELET_CA_FILE", ""),
+		TemplateDir:       r.text("SMOKEALARM_TEMPLATE_DIR", ""),
 	}
 
 	if cfg.CheckInterval <= 0 {
