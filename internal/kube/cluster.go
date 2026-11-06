@@ -55,10 +55,9 @@ type Cluster struct {
 	certificates   cache.SharedIndexInformer
 	applications   cache.SharedIndexInformer
 
-	// volumeStats switches the kubelet stats collection on. fetchStats reads
-	// the stats of one node; tests replace it.
-	volumeStats bool
-	fetchStats  statsFetcher
+	// fetchStats reads the kubelet stats of one node; nil means the volume
+	// usage is not collected (pvc-usage is off). Tests replace it.
+	fetchStats statsFetcher
 
 	// syncTimeout is a field so tests can make it short.
 	syncTimeout time.Duration
@@ -79,11 +78,9 @@ type namedInformer struct {
 // Options tells the cluster which optional parts to use.
 type Options struct {
 	Features Features
-	// VolumeStats collects the volume usage from the kubelets. Leave it off if
-	// pvc-usage is disabled.
-	VolumeStats bool
-	// KubeletClient calls the kubelets, see NewKubeletClient (needs the RBAC
-	// permission get on nodes/stats). Required if VolumeStats is on.
+	// KubeletClient calls the kubelets for the volume usage, see
+	// NewKubeletClient (needs the RBAC permission get on nodes/stats). Leave it
+	// nil if pvc-usage is disabled: then no kubelet is asked.
 	KubeletClient *http.Client
 	// APIProbe asks whether the API server answers, see APIProbe. Without it a
 	// stopped API server is not noticed, so only tests leave it out.
@@ -96,7 +93,6 @@ type Options struct {
 func New(client kubernetes.Interface, dynamicClient dynamic.Interface, options Options, logger *slog.Logger) (*Cluster, error) {
 	c := &Cluster{
 		logger:      logger,
-		volumeStats: options.VolumeStats,
 		syncTimeout: syncTimeout,
 		health:      newAPIHealth(),
 		probe:       options.APIProbe,
@@ -105,10 +101,7 @@ func New(client kubernetes.Interface, dynamicClient dynamic.Interface, options O
 		eventFactory: informers.NewSharedInformerFactoryWithOptions(client, resyncPeriod,
 			informers.WithTweakListOptions(onlyWarnings)),
 	}
-	if options.VolumeStats {
-		if options.KubeletClient == nil {
-			return nil, errors.New("volume stats need a kubelet client")
-		}
+	if options.KubeletClient != nil {
 		c.fetchStats = kubeletStatsFetcher(options.KubeletClient)
 	}
 	c.namespaces = c.coreFactory.Core().V1().Namespaces().Informer()

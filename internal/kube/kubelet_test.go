@@ -2,7 +2,10 @@ package kube
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"io"
 	"log"
 	"log/slog"
@@ -15,6 +18,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
+	"unicode/utf8"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -101,7 +106,7 @@ func kubeletClientFor(t *testing.T, server *httptest.Server) *http.Client {
 // replacing the fetcher.
 func httpsCluster(t *testing.T, client *http.Client) *Cluster {
 	t.Helper()
-	cluster, err := New(fake.NewClientset(), nil, Options{VolumeStats: true, KubeletClient: client},
+	cluster, err := New(fake.NewClientset(), nil, Options{KubeletClient: client},
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -131,7 +136,8 @@ func TestKubeletRefusesTheRequest(t *testing.T) {
 			if usage != nil {
 				t.Errorf("usage = %v, want none", usage)
 			}
-			for _, want := range []string{"pi-1", "HTTP " + strconv.Itoa(code), "nodes/stats", "SMOKEALARM_DISABLED_CHECKS=pvc-usage"} {
+			// The kubelet's own answer says which user and subresource it checked.
+			for _, want := range []string{"pi-1", "HTTP " + strconv.Itoa(code), "subresource=stats", "nodes/stats", "SMOKEALARM_DISABLED_CHECKS=pvc-usage"} {
 				if !strings.Contains(reason, want) {
 					t.Errorf("reason %q does not contain %q", reason, want)
 				}
@@ -310,9 +316,126 @@ func TestKubeletStatsURLWithoutInternalIP(t *testing.T) {
 	}
 }
 
-func TestVolumeStatsNeedAKubeletClient(t *testing.T) {
-	_, err := New(fake.NewClientset(), nil, Options{VolumeStats: true}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if err == nil {
-		t.Error("expected an error for volume stats without a kubelet client")
+// A kubelet that accepts the connection but answers slowly is not a network
+// problem, so the reason must not send the user looking for a firewall rule.
+func TestKubeletAnswersTooSlowly(t *testing.T) {
+	server := fakeKubelet(t, func(_ http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-time.After(5 * time.Second):
+		}
+	})
+	cluster := httpsCluster(t, kubeletClientFor(t, server))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	_, reason := cluster.collectVolumeUsage(ctx, []*corev1.Node{nodeAt(t, "pi-1", server.URL)})
+	if !strings.Contains(reason, "did not answer in time") || strings.Contains(reason, "NetworkPolicy") {
+		t.Errorf("reason %q; want a slow answer, not an unreachable kubelet", reason)
+	}
+}
+
+func TestKubeletAnswerTooLarge(t *testing.T) {
+	server := fakeKubelet(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(make([]byte, maxStatsSize+1))
+	})
+	_, reason := httpsCluster(t, kubeletClientFor(t, server)).collectVolumeUsage(context.Background(),
+		[]*corev1.Node{nodeAt(t, "pi-1", server.URL)})
+	if !strings.Contains(reason, "larger than 32 MiB") {
+		t.Errorf("reason %q; want the size named instead of a parse error", reason)
+	}
+}
+
+// Of an error answer only the start is kept, however long it is.
+func TestKubeletLongErrorAnswer(t *testing.T) {
+	server := fakeKubelet(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, strings.Repeat("broken ", 1<<20))
+	})
+	_, reason := httpsCluster(t, kubeletClientFor(t, server)).collectVolumeUsage(context.Background(),
+		[]*corev1.Node{nodeAt(t, "pi-1", server.URL)})
+	if !strings.Contains(reason, "HTTP 500") || len(reason) > 2*excerptLength {
+		t.Errorf("reason has %d bytes: %.300q; want HTTP 500 and a short excerpt", len(reason), reason)
+	}
+}
+
+func TestExcerptCutsBetweenCharacters(t *testing.T) {
+	// "ä" takes two bytes, so one of them falls on the limit.
+	text := excerpt([]byte(strings.Repeat("a", excerptLength-1) + strings.Repeat("ä", 10)))
+	if !utf8.ValidString(text) || !strings.HasSuffix(text, "…") || len(text) > excerptLength+len("…") {
+		t.Errorf("excerpt = %q; want valid UTF-8, cut with an ellipsis", text)
+	}
+	if got := excerpt([]byte("  Forbidden\n  (user=x)  ")); got != "Forbidden (user=x)" {
+		t.Errorf("excerpt = %q, want it on one line", got)
+	}
+}
+
+func TestSkipReasons(t *testing.T) {
+	cert := httptest.NewTLSServer(http.NotFoundHandler())
+	defer cert.Close()
+	kubeletAddr := &net.TCPAddr{IP: net.ParseIP("10.0.0.11"), Port: 10250}
+	readReset := func(localPort int) error {
+		return &url.Error{Op: "Get", URL: "https://10.0.0.11:10250/stats/summary", Err: &net.OpError{
+			Op: "read", Net: "tcp", Addr: kubeletAddr,
+			Source: &net.TCPAddr{IP: net.ParseIP("10.42.0.7"), Port: localPort},
+			Err:    errors.New("connection reset by peer"),
+		}}
+	}
+	tests := []struct {
+		name     string
+		err      error
+		want     []string
+		unwanted []string
+	}{
+		{"certificate without the node IP", &url.Error{Op: "Get", URL: "https://10.0.0.11:10250/stats/summary",
+			Err: &tls.CertificateVerificationError{Err: x509.HostnameError{Certificate: cert.Certificate(), Host: "10.0.0.11"}}},
+			[]string{"does not name the address", "10.0.0.11", "InternalIP"}, []string{"SMOKEALARM_KUBELET_CA_FILE"}},
+		{"unknown CA", &tls.CertificateVerificationError{Err: x509.UnknownAuthorityError{}},
+			[]string{"could not verify", "SMOKEALARM_KUBELET_CA_FILE", "serverTLSBootstrap"}, nil},
+		{"TLS alert from the kubelet", &net.OpError{Op: "remote error", Err: errors.New("tls: handshake failure")},
+			[]string{"could not read the kubelet stats", "tls: handshake failure"}, []string{"could not reach"}},
+		{"connection reset", readReset(51234),
+			[]string{"read 10.0.0.11:10250: connection reset by peer"}, []string{"51234", "could not reach"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reason := skipReasonFor("pi-1", tt.err)
+			for _, want := range tt.want {
+				if !strings.Contains(reason, want) {
+					t.Errorf("reason %q does not contain %q", reason, want)
+				}
+			}
+			for _, unwanted := range tt.unwanted {
+				if strings.Contains(reason, unwanted) {
+					t.Errorf("reason %q contains %q", reason, unwanted)
+				}
+			}
+		})
+	}
+
+	// The engine logs a skip whenever its reason changes, so the same cause
+	// must give the same text on every run.
+	if first, second := skipReasonFor("pi-1", readReset(51234)), skipReasonFor("pi-1", readReset(51999)); first != second {
+		t.Errorf("reasons differ by the local port:\n%s\n%s", first, second)
+	}
+}
+
+// HTTPS_PROXY is meant for the notification targets; the kubelets are inside
+// the cluster and must be called directly.
+func TestKubeletConfigUsesNoProxy(t *testing.T) {
+	original := &rest.Config{BearerToken: testToken}
+	cfg, err := kubeletConfig(original, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "https://10.0.0.11:10250/stats/summary", nil)
+	if cfg.Proxy == nil {
+		t.Fatal("no proxy function: client-go would use HTTPS_PROXY")
+	}
+	if proxy, err := cfg.Proxy(req); proxy != nil || err != nil {
+		t.Errorf("proxy = %v, %v; want none", proxy, err)
+	}
+	if original.Proxy != nil {
+		t.Error("kubeletConfig changed the config of the API client")
 	}
 }

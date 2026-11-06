@@ -83,9 +83,9 @@ func run() error {
 		return err
 	}
 
-	volumeStats := hasCheck(activeChecks, checks.PVCUsageCheck)
+	// Without pvc-usage no kubelet is asked, so no client is built either.
 	var kubeletClient *http.Client
-	if volumeStats {
+	if hasCheck(activeChecks, checks.PVCUsageCheck) {
 		kubeletClient, err = kube.NewKubeletClient(clients.Config, cfg.KubeletCAFile)
 		if err != nil {
 			return fmt.Errorf("create kubelet client: %w", err)
@@ -93,7 +93,6 @@ func run() error {
 	}
 	cluster, err := kube.New(clients.Kube, clients.Dynamic, kube.Options{
 		Features:      features,
-		VolumeStats:   volumeStats,
 		KubeletClient: kubeletClient,
 		APIProbe:      kube.APIProbe(clients.Kube),
 	}, logger)

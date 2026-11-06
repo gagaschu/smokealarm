@@ -78,7 +78,7 @@ func readyNode(name string, ready corev1.ConditionStatus) *corev1.Node {
 
 func testCluster(t *testing.T, fetch statsFetcher) *Cluster {
 	t.Helper()
-	cluster, err := New(fake.NewClientset(), nil, Options{VolumeStats: true, KubeletClient: http.DefaultClient},
+	cluster, err := New(fake.NewClientset(), nil, Options{},
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -169,7 +169,7 @@ func TestCollectVolumeUsageIgnoresNotReadyNodes(t *testing.T) {
 
 func TestBuildSnapshotCollectsVolumeUsage(t *testing.T) {
 	client := fake.NewClientset(readyNode("pi-1", corev1.ConditionTrue))
-	cluster, err := New(client, nil, Options{VolumeStats: true, KubeletClient: http.DefaultClient}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	cluster, err := New(client, nil, Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +190,7 @@ func TestBuildSnapshotCollectsVolumeUsage(t *testing.T) {
 
 func TestBuildSnapshotMarksCheckSkipped(t *testing.T) {
 	client := fake.NewClientset(readyNode("pi-1", corev1.ConditionTrue))
-	cluster, err := New(client, nil, Options{VolumeStats: true, KubeletClient: http.DefaultClient}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	cluster, err := New(client, nil, Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,15 +209,16 @@ func TestBuildSnapshotMarksCheckSkipped(t *testing.T) {
 	}
 }
 
+// Without a kubelet client (pvc-usage is off) no kubelet is asked: there is
+// nothing to ask with.
 func TestVolumeStatsOffMakesNoRequests(t *testing.T) {
 	client := fake.NewClientset(readyNode("pi-1", corev1.ConditionTrue))
-	cluster, err := New(client, nil, Options{VolumeStats: false}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	cluster, err := New(client, nil, Options{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	cluster.fetchStats = func(context.Context, *corev1.Node) ([]byte, error) {
-		t.Error("the kubelet was asked although volume stats are off")
-		return nil, nil
+	if cluster.fetchStats != nil {
+		t.Fatal("a stats fetcher exists although no kubelet client was given")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
