@@ -6,7 +6,8 @@
 #
 # Every push to a branch (that is, every mirror sync that brings new commits)
 # pushes <registry>/<owner>/smokealarm:sha-<12 characters of the commit> and
-# :br-<branch>, which follows the branch.
+# :br-<branch>, which follows the branch. "Run workflow" in the Forgejo UI
+# (workflow_dispatch) builds a branch again without a new commit.
 #
 # The Forgejo side provides:
 #   runner label  xeon-host       runs on the host, with a Docker daemon (buildx)
@@ -19,6 +20,7 @@ name: build
 on:
   push:
     branches: ["**"]
+  workflow_dispatch:
 
 env:
   PLATFORMS: linux/amd64,linux/arm64
