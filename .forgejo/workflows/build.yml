@@ -25,6 +25,9 @@ env:
 
 jobs:
   image:
+    # Only real branches. A pull mirror of a GitHub repository may also carry
+    # refs/pull/<n>/head (code from forks); those must never run here.
+    if: startsWith(github.ref, 'refs/heads/')
     runs-on: xeon-host
     steps:
       - uses: actions/checkout@v4
