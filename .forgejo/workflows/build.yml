@@ -1,0 +1,81 @@
+# Image builds on a self-hosted Forgejo that pull-mirrors this repository, so that
+# a branch can be tried in a test cluster before it is merged or released.
+#
+# GitHub ignores this directory. Forgejo ignores .github/workflows as soon as
+# .forgejo/workflows exists, so ci.yml does not run there; tests stay on GitHub.
+#
+# Every push to a branch (that is, every mirror sync that brings new commits)
+# pushes <registry>/<owner>/smokealarm:sha-<12 characters of the commit> and
+# :br-<branch>, which follows the branch.
+#
+# The Forgejo side provides:
+#   runner label  xeon-host       runs on the host, with a Docker daemon (buildx)
+#                                 in DOCKER_HOST, plus git and node
+#   variables     REGISTRY        e.g. forgejo.example.org:3443
+#                 REGISTRY_USER
+#   secret        REGISTRY_TOKEN  access token with package read and write
+name: build
+
+on:
+  push:
+    branches: ["**"]
+
+env:
+  PLATFORMS: linux/amd64,linux/arm64
+
+jobs:
+  image:
+    # Only real branches. A pull mirror of a GitHub repository may also carry
+    # refs/pull/<n>/head (code from forks); those must never run here.
+    if: startsWith(github.ref, 'refs/heads/')
+    runs-on: xeon-host
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tags and Go version
+        id: meta
+        env:
+          REGISTRY: ${{ vars.REGISTRY }}
+        run: |
+          # Docker tags allow [A-Za-z0-9_.-], at most 128 characters.
+          branch=$(printf '%s' "$GITHUB_REF_NAME" | tr -c 'A-Za-z0-9_.-' '-' | cut -c1-100)
+          image="$REGISTRY/$(printf '%s' "$GITHUB_REPOSITORY" | tr 'A-Z' 'a-z')"
+          {
+            echo "image=$image"
+            echo "sha=sha-$(printf '%s' "$GITHUB_SHA" | cut -c1-12)"
+            echo "branch=br-$branch"
+            echo "go=$(awk '/^go /{print $2}' go.mod)"
+          } >> "$GITHUB_OUTPUT"
+
+      # Credentials go to a directory of this job only, not to the runner's ~/.docker.
+      - name: Log in to the registry
+        env:
+          REGISTRY: ${{ vars.REGISTRY }}
+          REGISTRY_USER: ${{ vars.REGISTRY_USER }}
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+        run: |
+          dir=$(mktemp -d)
+          echo "DOCKER_CONFIG=$dir" >> "$GITHUB_ENV"
+          printf '%s' "$REGISTRY_TOKEN" | DOCKER_CONFIG="$dir" docker login "$REGISTRY" -u "$REGISTRY_USER" --password-stdin
+
+      # The Dockerfile cross-compiles in its build stage, so no QEMU is needed.
+      # The runner's Docker daemon must use the containerd image store for a
+      # multi-platform build with the default builder.
+      - name: Build and push
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}
+        run: |
+          docker buildx build \
+            --platform "$PLATFORMS" \
+            --build-arg GO_VERSION=${{ steps.meta.outputs.go }} \
+            --label org.opencontainers.image.revision="$GITHUB_SHA" \
+            --label org.opencontainers.image.source="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            --tag "$IMAGE:${{ steps.meta.outputs.sha }}" \
+            --tag "$IMAGE:${{ steps.meta.outputs.branch }}" \
+            --push .
+          echo "pushed $IMAGE:${{ steps.meta.outputs.sha }} and :${{ steps.meta.outputs.branch }}"
+
+      - name: Log out
+        if: always()
+        run: |
+          if [ -n "${DOCKER_CONFIG:-}" ]; then rm -rf "$DOCKER_CONFIG"; fi
