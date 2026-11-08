@@ -59,11 +59,11 @@ templates:
     <div style="margin:0 0 12px 0;padding:12px 16px;background:#ffffff;border:1px solid #e0e0e0;border-left:4px solid {{if eq .Severity "critical"}}#c62828{{else}}#f9a825{{end}};border-radius:6px;">
     <strong>{{if eq .Severity "critical"}}KRITISCH{{else}}WARNUNG{{end}}: {{.Reason}}</strong>
     <table role="presentation" cellpadding="0" cellspacing="0" style="margin-top:6px;font-size:13px;">
-    <tr><td style="padding:2px 12px 2px 0;color:#5f6368;">Objekt</td><td>{{.Object}}</td></tr>
-    <tr><td style="padding:2px 12px 2px 0;color:#5f6368;">Meldung</td><td>{{.Message}}</td></tr>
-    <tr><td style="padding:2px 12px 2px 0;color:#5f6368;">Seit</td><td>{{template "zeit" .Since}}</td></tr>
+    <tr><td style="padding:2px 12px 2px 0;color:#5f6368;vertical-align:top;">Objekt</td><td>{{.Object}}</td></tr>
+    <tr><td style="padding:2px 12px 2px 0;color:#5f6368;vertical-align:top;">Meldung</td><td>{{.Message}}</td></tr>
+    <tr><td style="padding:2px 12px 2px 0;color:#5f6368;vertical-align:top;">Seit</td><td>{{template "zeit" .Since}}</td></tr>
     {{- range .Affected}}
-    <tr><td style="padding:2px 12px 2px 0;color:#5f6368;">Betroffen</td><td>{{.Object}} ({{.Reason}})</td></tr>
+    <tr><td style="padding:2px 12px 2px 0;color:#5f6368;vertical-align:top;">Betroffen</td><td>{{.Object}} ({{.Reason}})</td></tr>
     {{- end}}
     </table>
     </div>
