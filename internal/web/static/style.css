@@ -474,6 +474,7 @@ input:focus, select:focus { outline: none; border-color: var(--accent); box-shad
 .hint p { margin: 0; }
 .hint p + p { margin-top: 0.375rem; }
 /* smokealarm cannot see the cluster: this comes first on the overview. */
+.hint.targets-off { margin: 0 0 1.5rem; }
 .hint.api-problem { margin: 0 0 1.5rem; color: var(--critical-text); border-color: var(--critical-text); }
 .hint.api-problem > .icon { color: var(--critical-text); }
 

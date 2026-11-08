@@ -95,6 +95,11 @@ func screenshotPages(t *testing.T) http.Handler {
 
 	pages := map[string]string{}
 	pages["/all-good"] = get("/") // before there are any problems
+	// ntfy is switched off from here on, so the overview and the status page
+	// show it; the all-good page above stays as it was.
+	if rec := e.do(http.MethodPost, "/targets/ntfy/mute", nil, cookie); rec.Code != http.StatusSeeOther {
+		t.Fatalf("switch ntfy off: status %d", rec.Code)
+	}
 	insertScreenshotProblems(t, e, cookie)
 	insertScreenshotHistory(t, e)
 	pages["/overview"] = get("/")

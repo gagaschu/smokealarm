@@ -109,6 +109,8 @@ func (s *Server) Handler() (http.Handler, error) {
 
 	mux.Handle("POST /problems/{id}/acknowledge", action(s.acknowledge))
 	mux.Handle("POST /problems/{id}/unacknowledge", action(s.unacknowledge))
+	mux.Handle("POST /targets/{name}/mute", action(s.muteTarget))
+	mux.Handle("POST /targets/{name}/unmute", action(s.unmuteTarget))
 	mux.Handle("POST /downtimes", action(s.createDowntime))
 	mux.Handle("POST /downtimes/{id}/end", action(s.endDowntime))
 
