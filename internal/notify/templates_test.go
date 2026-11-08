@@ -282,6 +282,22 @@ func TestMailWithTextTemplateOnlyIsTextOnly(t *testing.T) {
 	}
 }
 
+func TestDescribeSaysWhenMailsAreTextOnly(t *testing.T) {
+	for _, tt := range []struct {
+		files map[string]string
+		want  string
+	}{
+		{map[string]string{"mail.tmpl": "M"}, "mail.tmpl (text only: no mail.html.tmpl)"},
+		{map[string]string{"mail.tmpl": "M", "mail.html.tmpl": "<p>H</p>"}, "mail.tmpl, mail.html.tmpl"},
+		{map[string]string{"mail.html.tmpl": "<p>H</p>"}, "mail.html.tmpl"},
+		{map[string]string{"subject.tmpl": "S"}, "subject.tmpl"},
+	} {
+		if got := loadTemplates(t, tt.files).Describe("mail"); got != tt.want {
+			t.Errorf("Describe(mail) with %v = %q, want %q", tt.files, got, tt.want)
+		}
+	}
+}
+
 func TestDescribeAndUnusedFiles(t *testing.T) {
 	templates := loadTemplates(t, map[string]string{
 		"subject.tmpl":       "S",

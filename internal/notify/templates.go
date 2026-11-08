@@ -319,7 +319,22 @@ func (t *Templates) Describe(kind string) string {
 	if len(files) == 0 {
 		return "built-in"
 	}
-	return strings.Join(files, ", ")
+	described := strings.Join(files, ", ")
+	if t.textOnly(kind) {
+		described += " (text only: no mail.html.tmpl)"
+	}
+	return described
+}
+
+// textOnly says whether mails go out without an HTML part because the user
+// has a mail.tmpl but no mail.html.tmpl (see mailHTML).
+func (t *Templates) textOnly(kind string) bool {
+	if kind != "mail" {
+		return false
+	}
+	html, _ := t.lookup(kind, partHTML)
+	text, _ := t.lookup(kind, partMail)
+	return html == nil && text != nil
 }
 
 // UnusedFiles lists, sorted, the files that no target of the given kinds
@@ -429,11 +444,11 @@ func (t *Templates) mailBody(data templateData) (string, *FallbackError, error) 
 //
 // A fallback says so, and the mail is sent anyway.
 func (t *Templates) mailHTML(data templateData) (string, *FallbackError) {
-	tmpl, file := t.lookup("mail", partHTML)
-	_, textFile := t.lookup("mail", partMail)
-	if tmpl == nil && textFile != "" {
+	if t.textOnly("mail") {
 		return "", nil
 	}
+	tmpl, file := t.lookup("mail", partHTML)
+	_, textFile := t.lookup("mail", partMail)
 	if tmpl == nil {
 		body, err := builtinHTMLBody(data)
 		if err != nil {
