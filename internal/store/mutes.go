@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"slices"
 	"time"
 )
 
@@ -77,12 +78,15 @@ func (s *Store) TargetMutes(ctx context.Context) (map[string]TargetMute, error) 
 // is then told again about the problems that fire now (firingIDs, chosen by the
 // engine), so it does not stay silent during an alarm it missed. It keeps
 // "heard the start" (start_heard_at), so their end is reported. Problems that
-// ended while it was off are marked as told without a message, because it never
-// heard about them. Everything happens in one transaction.
+// are gone at the moment but still wait for RESOLVE_AFTER (goneIDs) count as
+// ended while it was off, as at the end of a downtime: the target forgets their
+// start too, so their end stays silent, and if they come back they are new.
+// Problems that ended while it was off are marked as told without a message,
+// because it never heard about them. Everything happens in one transaction.
 //
 // It returns false and changes nothing if there is no request: the target was
 // switched off again in the meantime.
-func (s *Store) FinishUnmute(ctx context.Context, target string, firingIDs []int64, at time.Time) (finished bool, err error) {
+func (s *Store) FinishUnmute(ctx context.Context, target string, firingIDs, goneIDs []int64, at time.Time) (finished bool, err error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return false, fmt.Errorf("begin transaction: %w", err)
@@ -98,11 +102,15 @@ func (s *Store) FinishUnmute(ctx context.Context, target string, firingIDs []int
 	if err != nil || !deleted {
 		return false, err
 	}
-	for _, id := range firingIDs {
-		_, err := tx.ExecContext(ctx, `UPDATE deliveries SET firing_notified_at = NULL
-			WHERE target = ? AND finding_id = ?`, target, id)
-		if err != nil {
-			return false, fmt.Errorf("clear delivery marker of finding %d for %s: %w", id, target, err)
+	targets := []string{target}
+	for _, id := range append(slices.Clone(firingIDs), goneIDs...) {
+		if err := clearFiringDeliveries(ctx, tx, id, targets); err != nil {
+			return false, err
+		}
+	}
+	for _, id := range goneIDs {
+		if err := forgetStartHeard(ctx, tx, id, targets); err != nil {
+			return false, err
 		}
 	}
 	if err := silenceResolved(ctx, tx, target, at); err != nil {

@@ -60,20 +60,21 @@ func (f *fakeNotifier) Send(_ context.Context, n notify.Notification) error {
 // harness drives an engine with a controllable clock and controllable
 // findings, against a real SQLite file.
 type harness struct {
-	t          *testing.T
-	path       string
-	engine     *Engine
-	notifier   *fakeNotifier   // the first target
-	others     []*fakeNotifier // more targets, see addTarget
-	findings   []checks.Finding
-	skipped    map[string]string   // what the snapshot reports as unable to run
-	namespaces []*corev1.Namespace // in the snapshot, for the annotations
-	nodes      []*corev1.Node      // in the snapshot, for the node causes
-	pods       []*corev1.Pod
-	apiProblem *checks.APIProblem // in the snapshot, see apiproblem_test.go
-	checkRuns  int                // how often the fake check was executed
-	now        time.Time
-	logs       *bytes.Buffer
+	t              *testing.T
+	path           string
+	engine         *Engine
+	notifier       *fakeNotifier   // the first target
+	others         []*fakeNotifier // more targets, see addTarget
+	findings       []checks.Finding
+	skipped        map[string]string   // what the snapshot reports as unable to run
+	namespaces     []*corev1.Namespace // in the snapshot, for the annotations
+	nodes          []*corev1.Node      // in the snapshot, for the node causes
+	pods           []*corev1.Pod
+	apiProblem     *checks.APIProblem // in the snapshot, see apiproblem_test.go
+	volumesPartial bool               // the snapshot measured no volume and says so, see mutes_test.go
+	checkRuns      int                // how often the fake check was executed
+	now            time.Time
+	logs           *bytes.Buffer
 }
 
 func newHarness(t *testing.T) *harness {
@@ -102,7 +103,7 @@ func (h *harness) start() {
 
 	h.engine = &Engine{
 		Snapshot: func(_ context.Context, now time.Time) *checks.Snapshot {
-			return &checks.Snapshot{Now: now, Skipped: h.skipped, Namespaces: h.namespaces, Nodes: h.nodes, Pods: h.pods, APIProblem: h.apiProblem}
+			return &checks.Snapshot{Now: now, Skipped: h.skipped, Namespaces: h.namespaces, Nodes: h.nodes, Pods: h.pods, APIProblem: h.apiProblem, VolumeUsagePartial: h.volumesPartial}
 		},
 		Checks: []checks.Check{{
 			Name: "fake",

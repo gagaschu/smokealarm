@@ -121,6 +121,44 @@ func TestProblemEndingInTheRunOfSwitchingOnStaysSilent(t *testing.T) {
 	wantNotifications(t, h.notifier, "new:a/reminders:/resolved:", "new:/reminders:/resolved:a")
 }
 
+// With RESOLVE_AFTER the problem is only gone when the target is switched on,
+// and resolved later. It ended while the target was off, as at the end of a
+// downtime: its end stays silent, and if it comes back it is new.
+func TestProblemGoneWhileMutedAndResolvedAfterSwitchingOnStaysSilent(t *testing.T) {
+	h, second := heardByBoth(t)
+	h.engine.ResolveAfter = 5 * time.Minute
+	h.mute("second")
+	h.findings = nil
+	h.requestUnmute("second")
+	h.mustRun(time.Minute) // gone, waits for ResolveAfter; switched on
+	h.wantMuted("second", false)
+	h.mustRun(5 * time.Minute) // resolved
+	wantNotifications(t, second, "new:a/reminders:/resolved:")
+	wantNotifications(t, h.notifier, "new:a/reminders:/resolved:", "new:/reminders:/resolved:a")
+
+	h.findings = []checks.Finding{finding("a", checks.Critical)}
+	h.mustRun(time.Minute)
+	h.mustRun(2 * time.Minute) // fires again
+	wantNotifications(t, second, "new:a/reminders:/resolved:", "new:a/reminders:/resolved:")
+}
+
+// The same, but the problem comes back before RESOLVE_AFTER is over: it is
+// reported to the target as new, like after a downtime.
+func TestProblemGoneWhileMutedThatComesBackIsNew(t *testing.T) {
+	h, second := heardByBoth(t)
+	h.engine.ResolveAfter = 5 * time.Minute
+	h.mute("second")
+	h.findings = nil
+	h.requestUnmute("second")
+	h.mustRun(time.Minute) // gone; switched on
+	wantNotifications(t, second, "new:a/reminders:/resolved:")
+
+	h.findings = []checks.Finding{finding("a", checks.Critical)}
+	h.mustRun(time.Minute) // back before ResolveAfter
+	wantNotifications(t, second, "new:a/reminders:/resolved:", "new:a/reminders:/resolved:")
+	wantNotifications(t, h.notifier, "new:a/reminders:/resolved:")
+}
+
 func TestAcknowledgedProblemStaysSilentAfterSwitchingOn(t *testing.T) {
 	h, second := heardByBoth(t)
 	h.acknowledge("a")
@@ -168,6 +206,32 @@ func TestSwitchingOnWaitsForUnknownChecks(t *testing.T) {
 	h.mustRun(time.Minute)
 	h.wantMuted("second", false)
 	wantNotifications(t, second, "new:a/reminders:/resolved:", "new:a/reminders:/resolved:")
+}
+
+// A pvc-usage problem whose volume was not measured in this run (a node is
+// down) may be gone, so switching on waits as for a check whose state is
+// unknown.
+func TestSwitchingOnWaitsForAnUnmeasuredVolume(t *testing.T) {
+	h, second := twoTargets(t)
+	vol := finding("vol", checks.Critical)
+	vol.Check = "pvc-usage"
+	h.findings = []checks.Finding{vol}
+	h.mustRun(0)
+	h.mustRun(2 * time.Minute)
+	h.mute("second")
+	h.requestUnmute("second")
+
+	h.volumesPartial = true // vol is not in the (empty) measurement,
+	h.findings = nil        // so the check cannot report it
+	h.mustRun(time.Minute)
+	h.wantMuted("second", true)
+	wantNotifications(t, second, "new:vol/reminders:/resolved:")
+
+	h.volumesPartial = false
+	h.findings = []checks.Finding{vol}
+	h.mustRun(time.Minute)
+	h.wantMuted("second", false)
+	wantNotifications(t, second, "new:vol/reminders:/resolved:", "new:vol/reminders:/resolved:")
 }
 
 // The failed message is held back by a downtime, so without the explicit

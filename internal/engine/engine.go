@@ -146,7 +146,7 @@ func (e *Engine) RunOnce(ctx context.Context) error {
 	// After saveState, so a problem that ended in this run is already resolved
 	// and counts as ended while the target was off: it stays silent there.
 	// Before notify, so the target hears what still fires in this same run.
-	if err := e.finishMutes(ctx, unknown, start); err != nil {
+	if err := e.finishMutes(ctx, snap, unknown, start); err != nil {
 		errs = append(errs, err)
 	}
 	if err := e.notify(ctx, unknown, start); err != nil {

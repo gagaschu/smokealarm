@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/gagaschu/smokealarm/internal/checks"
 	"github.com/gagaschu/smokealarm/internal/notify"
 	"github.com/gagaschu/smokealarm/internal/store"
 )
@@ -18,10 +19,11 @@ import (
 // finishMutes switches on the targets the web UI asked for. Like the end of a
 // downtime, but for one target: what fires now and is meant for the target is
 // reported again as new, and what ended while it was off stays silent. If the
-// state of a check is unknown in this run it waits, so that no problem is
-// reported that may be gone. One target that fails does not hold back the
+// state of a check is unknown in this run, or a pvc-usage problem's volume was
+// not measured (a node is down), it waits, so that no problem is reported that
+// may be gone. One target that fails does not hold back the
 // others; it stays off and the next run tries again.
-func (e *Engine) finishMutes(ctx context.Context, unknown []string, now time.Time) error {
+func (e *Engine) finishMutes(ctx context.Context, snap *checks.Snapshot, unknown []string, now time.Time) error {
 	if len(unknown) > 0 {
 		return nil
 	}
@@ -42,6 +44,11 @@ func (e *Engine) finishMutes(ctx context.Context, unknown []string, now time.Tim
 	if err != nil {
 		return fmt.Errorf("load open findings: %w", err)
 	}
+	for _, rec := range open {
+		if checks.VolumeUsageUnknown(snap, rec.Check, rec.Object) {
+			return nil
+		}
+	}
 	var errs []error
 	for _, n := range requested {
 		if err := e.finishMute(ctx, n, open, now); err != nil {
@@ -52,16 +59,25 @@ func (e *Engine) finishMutes(ctx context.Context, unknown []string, now time.Tim
 }
 
 // finishMute switches one target on. An acknowledged problem keeps its marker,
-// because it stays silent until its end, which the target then hears.
+// because it stays silent until its end, which the target then hears. Only
+// problems meant for the target now are told again; one it heard but is no
+// longer meant for keeps its marker and hears the end. A problem that is gone
+// at the moment (waiting for RESOLVE_AFTER) ended while the target was off, as
+// at the end of a downtime: its end stays silent, and if it comes back it is
+// new.
 func (e *Engine) finishMute(ctx context.Context, n notify.Notifier, open []store.Record, now time.Time) error {
 	name := n.Name()
-	var ids []int64
+	var firingIDs, goneIDs []int64
 	for _, rec := range open {
-		if rec.State == store.StateFiring && rec.AcknowledgedAt == nil && e.routedTo(n, rec) {
-			ids = append(ids, rec.ID)
+		switch {
+		case rec.State != store.StateFiring || rec.AcknowledgedAt != nil || !e.routedTo(n, rec):
+		case rec.GoneSince != nil:
+			goneIDs = append(goneIDs, rec.ID)
+		default:
+			firingIDs = append(firingIDs, rec.ID)
 		}
 	}
-	finished, err := e.Store.FinishUnmute(ctx, name, ids, now)
+	finished, err := e.Store.FinishUnmute(ctx, name, firingIDs, goneIDs, now)
 	if err != nil {
 		return fmt.Errorf("switch on notification target %s: %w", n.Description(), err)
 	}

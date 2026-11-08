@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 	"time"
 )
@@ -69,7 +70,7 @@ func TestFinishUnmuteWithoutRequestDoesNothing(t *testing.T) {
 		t.Fatalf("MuteTarget: %v", err)
 	}
 
-	finished, err := s.FinishUnmute(ctx, "mail", []int64{id}, testNow.Add(time.Hour))
+	finished, err := s.FinishUnmute(ctx, "mail", []int64{id}, nil, testNow.Add(time.Hour))
 	if err != nil || finished {
 		t.Fatalf("FinishUnmute = %v, %v, want false", finished, err)
 	}
@@ -100,13 +101,25 @@ func TestFinishUnmuteClearsFiringAndSilencesResolved(t *testing.T) {
 	if _, err := s.RequestUnmute(ctx, "mail", testNow.Add(time.Minute)); err != nil {
 		t.Fatalf("RequestUnmute: %v", err)
 	}
-	finished, err := s.FinishUnmute(ctx, "mail", []int64{firingID}, testNow.Add(2*time.Hour))
+	goneID := firingRecord(t, s, "gone")
+	mustMarkFiring(t, s, "mail", goneID, testNow)
+	mustMarkFiring(t, s, "slack", goneID, testNow)
+	finished, err := s.FinishUnmute(ctx, "mail", []int64{firingID}, []int64{goneID}, testNow.Add(2*time.Hour))
 	if err != nil || !finished {
 		t.Fatalf("FinishUnmute = %v, %v, want true", finished, err)
 	}
 
-	if keys := unnotifiedKeys(t, s, "mail"); keys != "firing" {
-		t.Errorf("mail: Unnotified = %q, want only the firing problem", keys)
+	if keys := unnotifiedKeys(t, s, "mail"); keys != "firing,gone" {
+		t.Errorf("mail: Unnotified = %q, want the firing and the gone problem", keys)
+	}
+	if !startHeard(t, s, "mail", firingID) {
+		t.Error("mail: start of the firing problem forgotten, want it kept so its end is reported")
+	}
+	if startHeard(t, s, "mail", goneID) {
+		t.Error("mail: start of the gone problem kept, want it forgotten so its end stays silent")
+	}
+	if !startHeard(t, s, "slack", goneID) {
+		t.Error("slack: start of the gone problem forgotten, want only the muted target to forget it")
 	}
 	if keys := unnotifiedKeys(t, s, "slack"); keys != "resolved" {
 		t.Errorf("slack: Unnotified = %q, want the resolved problem (slack was not muted)", keys)
@@ -137,4 +150,16 @@ func TestRemovedTargetForgetsItsMute(t *testing.T) {
 	if err != nil || len(mutes) != 0 {
 		t.Errorf("TargetMutes = %v, %v, want none: a target that comes back starts afresh", mutes, err)
 	}
+}
+
+// startHeard says whether the target heard the start of the problem.
+func startHeard(t *testing.T, s *Store, target string, id int64) bool {
+	t.Helper()
+	var heard sql.NullInt64
+	err := s.db.QueryRowContext(context.Background(),
+		`SELECT start_heard_at FROM deliveries WHERE finding_id = ? AND target = ?`, id, target).Scan(&heard)
+	if err != nil {
+		t.Fatalf("read start_heard_at of %d for %s: %v", id, target, err)
+	}
+	return heard.Valid
 }
