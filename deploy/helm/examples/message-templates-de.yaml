@@ -24,7 +24,7 @@ templates:
       {{len .New}} neu, {{len .Reminders}} weiterhin kritisch, {{len .Resolved}} behoben
     {{- end}}
   mail.tmpl: |
-    {{- define "zeit"}}{{.Format "02.01.2006 15:04"}} UTC{{end -}}
+    {{- define "zeit"}}{{.Format "02.01.2006 15:04 MST"}}{{end -}}
     {{- define "problem"}}
     {{if eq .Severity "critical"}}KRITISCH{{else}}WARNUNG{{end}}: {{.Reason}}
       Objekt:    {{.Object}}
@@ -54,7 +54,7 @@ templates:
     {{end -}}
   mail.html.tmpl: |
     {{- /* HTML-Teil der Mail (html/template: Texte aus dem Cluster werden maskiert). Nur Inline-CSS, Mailprogramme können nicht mehr. */ -}}
-    {{- define "zeit"}}{{.Format "02.01.2006 15:04"}} UTC{{end -}}
+    {{- define "zeit"}}{{.Format "02.01.2006 15:04 MST"}}{{end -}}
     {{- define "problem"}}
     <div style="margin:0 0 12px 0;padding:12px 16px;background:#ffffff;border:1px solid #e0e0e0;border-left:4px solid {{if eq .Severity "critical"}}#c62828{{else}}#f9a825{{end}};border-radius:6px;">
     <strong>{{if eq .Severity "critical"}}KRITISCH{{else}}WARNUNG{{end}}: {{.Reason}}</strong>
@@ -102,7 +102,7 @@ templates:
     </body>
     </html>
   chat.tmpl: |
-    {{- define "zeit"}}{{.Format "02.01. 15:04"}} UTC{{end -}}
+    {{- define "zeit"}}{{.Format "02.01. 15:04 MST"}}{{end -}}
     {{- range .NodesDown}}Knoten {{.Name}} ausgefallen seit {{template "zeit" .Since}}{{with .Affected}}, {{len .}} betroffen{{end}}
     {{end -}}
     {{- range .New}}{{if eq .Severity "critical"}}KRITISCH{{else}}Warnung{{end}} {{.Object}}: {{.Reason}} (seit {{template "zeit" .Since}})
