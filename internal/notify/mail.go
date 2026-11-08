@@ -66,14 +66,12 @@ func (m *Mail) Description() string { return "mail (" + m.Host + ")" }
 // A *FallbackError means the mail went out with a built-in template.
 func (m *Mail) Send(ctx context.Context, n Notification) error {
 	subject, subjectFallback := m.Templates.subject("mail", n)
-	body, bodyFallback, err := m.Templates.mailBody(n)
+	data := newTemplateData(n, "mail") // the same for the text and the HTML
+	body, bodyFallback, err := m.Templates.mailBody(data)
 	if err != nil {
 		return fmt.Errorf("mail: %w", err)
 	}
-	html, htmlFallback, err := m.Templates.mailHTML(n)
-	if err != nil {
-		return fmt.Errorf("mail: %w", err)
-	}
+	html, htmlFallback := m.Templates.mailHTML(data)
 	from, recipients, err := m.addresses()
 	if err != nil {
 		return fmt.Errorf("mail: %w", err)

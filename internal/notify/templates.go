@@ -354,9 +354,15 @@ func (t *Templates) UnusedFiles(kinds []string) []string {
 type FallbackError struct {
 	File string // e.g. "slack.chat.tmpl"
 	Err  error
+	// TextOnly means the mail went out without its HTML part, so that the
+	// user's text stays visible or because the built-in HTML failed.
+	TextOnly bool
 }
 
 func (e *FallbackError) Error() string {
+	if e.TextOnly {
+		return fmt.Sprintf("template %s failed, the mail was sent as text only: %v", e.File, e.Err)
+	}
 	return fmt.Sprintf("template %s failed, sent with the built-in one: %v", e.File, e.Err)
 }
 
@@ -395,47 +401,68 @@ func (t *Templates) subject(kind string, n Notification) (string, *FallbackError
 	return subject, nil
 }
 
-// mailBody renders the mail body. The error is that of the built-in template,
-// which only a bug can cause.
-func (t *Templates) mailBody(n Notification) (string, *FallbackError, error) {
+// mailBody renders the text part of the mail. The error is that of the
+// built-in template, which only a bug can cause.
+func (t *Templates) mailBody(data templateData) (string, *FallbackError, error) {
 	tmpl, file := t.lookup("mail", partMail)
 	if tmpl != nil {
-		body, err := render(tmpl, newTemplateData(n, "mail"))
-		if err == nil && strings.TrimSpace(body) == "" {
-			err = errors.New(emptyMessage)
-		}
+		body, err := renderMail(tmpl, data)
 		if err == nil {
 			return body, nil, nil
 		}
-		builtin, builtinErr := Body(n)
+		builtin, builtinErr := builtinBody(data)
 		return builtin, &FallbackError{File: file, Err: err}, builtinErr
 	}
-	body, err := Body(n)
+	body, err := builtinBody(data)
 	return body, nil, err
 }
 
 // mailHTML renders the HTML part of the mail; empty means a mail with the
-// text only. That is so when the user has a mail.tmpl but no mail.html.tmpl:
-// mail programs show the HTML part, which would hide the user's text. The
-// error is that of the built-in template, which only a bug can cause.
-func (t *Templates) mailHTML(n Notification) (string, *FallbackError, error) {
+// text only. Mail programs show the HTML part, so it must never hide a text
+// the user wrote:
+//
+//   - a user mail.tmpl without a mail.html.tmpl: text only;
+//   - a user mail.html.tmpl that fails: the built-in HTML, or text only if
+//     there is a user mail.tmpl;
+//   - the built-in HTML that fails (only a bug can cause it): text only, so
+//     the alarm still goes out.
+//
+// A fallback says so, and the mail is sent anyway.
+func (t *Templates) mailHTML(data templateData) (string, *FallbackError) {
 	tmpl, file := t.lookup("mail", partHTML)
-	if tmpl == nil {
-		if _, text := t.lookup("mail", partMail); text != "" {
-			return "", nil, nil
-		}
-		body, err := HTMLBody(n)
-		return body, nil, err
+	_, textFile := t.lookup("mail", partMail)
+	if tmpl == nil && textFile != "" {
+		return "", nil
 	}
-	body, err := render(tmpl, newTemplateData(n, "mail"))
+	if tmpl == nil {
+		body, err := builtinHTMLBody(data)
+		if err != nil {
+			return "", &FallbackError{File: "built-in " + mailHTMLFile, Err: err, TextOnly: true}
+		}
+		return body, nil
+	}
+	body, err := renderMail(tmpl, data)
+	if err == nil {
+		return body, nil
+	}
+	if textFile != "" {
+		return "", &FallbackError{File: file, Err: err, TextOnly: true}
+	}
+	builtin, builtinErr := builtinHTMLBody(data)
+	if builtinErr != nil {
+		return "", &FallbackError{File: file, Err: errors.Join(err, builtinErr), TextOnly: true}
+	}
+	return builtin, &FallbackError{File: file, Err: err}
+}
+
+// renderMail renders a part of a mail, text or HTML; one that is empty or
+// only whitespace is an error.
+func renderMail(tmpl executor, data templateData) (string, error) {
+	body, err := render(tmpl, data)
 	if err == nil && strings.TrimSpace(body) == "" {
 		err = errors.New(emptyMessage)
 	}
-	if err == nil {
-		return body, nil, nil
-	}
-	builtin, builtinErr := HTMLBody(n)
-	return builtin, &FallbackError{File: file, Err: err}, builtinErr
+	return body, err
 }
 
 // chatBody renders the chat text for a kind of target, at most limit bytes

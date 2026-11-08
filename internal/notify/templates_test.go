@@ -171,7 +171,7 @@ func TestTemplatePrecedence(t *testing.T) {
 			t.Errorf("chat for %s = %q, want %q", tt.kind, got, tt.wantChat)
 		}
 	}
-	body, fallback, err := templates.mailBody(n)
+	body, fallback, err := templates.mailBody(newTemplateData(n, "mail"))
 	want, _ := Body(n)
 	if err != nil || fallback != nil || body != want {
 		t.Errorf("mail body without mail.tmpl = %q, %v, %v; want the built-in one", body, fallback, err)
@@ -202,9 +202,9 @@ func TestMailHTMLPrecedence(t *testing.T) {
 			if tt.files != nil {
 				templates = loadTemplates(t, tt.files)
 			}
-			html, fallback, err := templates.mailHTML(n)
-			if err != nil || fallback != nil || html != tt.want {
-				t.Errorf("mailHTML = %q, %v, %v; want %q", html, fallback, err, tt.want)
+			html, fallback := templates.mailHTML(newTemplateData(n, "mail"))
+			if fallback != nil || html != tt.want {
+				t.Errorf("mailHTML = %q, %v; want %q", html, fallback, tt.want)
 			}
 		})
 	}
@@ -217,13 +217,13 @@ func TestMailHTMLFallsBackAtRunTime(t *testing.T) {
 		"mail.html.tmpl": "{{if gt (len .New) 5}}{{index .New 9}}{{end}}<p>fine</p>",
 	})
 	n := manyPods(6, testBaseURL)
-	html, fallback, err := templates.mailHTML(n)
+	html, fallback := templates.mailHTML(newTemplateData(n, "mail"))
 	builtin, _ := HTMLBody(n)
-	if err != nil || html != builtin {
-		t.Errorf("html = %q, %v; want the built-in one", html, err)
+	if html != builtin {
+		t.Errorf("html = %q, want the built-in one", html)
 	}
-	if fallback == nil || fallback.File != "mail.html.tmpl" {
-		t.Fatalf("fallback = %v, want one for mail.html.tmpl", fallback)
+	if fallback == nil || fallback.File != "mail.html.tmpl" || fallback.TextOnly {
+		t.Fatalf("fallback = %v, want one for mail.html.tmpl with the built-in HTML", fallback)
 	}
 
 	send, sent := templateTarget(t, "mail", templates, 0)
@@ -233,6 +233,35 @@ func TestMailHTMLFallsBackAtRunTime(t *testing.T) {
 	}
 	if want, _ := Body(n); !strings.HasSuffix(sent(), want) {
 		t.Errorf("the text part changed:\n%s", sent())
+	}
+}
+
+// A user HTML template that fails next to a user text template must not
+// bring back the built-in HTML, which would hide the user's text.
+func TestFailingHTMLTemplateWithTextTemplateSendsTextOnly(t *testing.T) {
+	templates := loadTemplates(t, map[string]string{
+		"mail.tmpl":      "Eigener Text: {{.Summary}}",
+		"mail.html.tmpl": "{{if gt (len .New) 5}}{{index .New 9}}{{end}}<p>fine</p>",
+	})
+	n := manyPods(6, testBaseURL)
+	html, fallback := templates.mailHTML(newTemplateData(n, "mail"))
+	if html != "" {
+		t.Errorf("html = %q, want none", html)
+	}
+	if fallback == nil || fallback.File != "mail.html.tmpl" || !fallback.TextOnly || !strings.Contains(fallback.Error(), "text only") {
+		t.Fatalf("fallback = %v, want a text-only one for mail.html.tmpl", fallback)
+	}
+
+	server := newFakeServer(t, fakeServerOptions{})
+	m := newTestMail(server, TLSNone)
+	m.Templates = templates
+	var target *FallbackError
+	if err := m.Send(context.Background(), n); !errors.As(err, &target) || !target.TextOnly {
+		t.Errorf("Send = %v, want the text-only fallback", err)
+	}
+	header, text, _ := parseParts(t, server.received()[0].data)
+	if header.Get("Content-Type") != "text/plain; charset=UTF-8" || !strings.HasPrefix(text, "Eigener Text") {
+		t.Errorf("Content-Type = %q, text = %q; want the user's text alone", header.Get("Content-Type"), text)
 	}
 }
 
@@ -353,14 +382,14 @@ func TestGermanTemplatesGolden(t *testing.T) {
 	}
 	n := mixed()
 	subject, fallback := templates.subject("mail", n)
-	body, bodyFallback, err := templates.mailBody(n)
+	body, bodyFallback, err := templates.mailBody(newTemplateData(n, "mail"))
 	if err != nil || fallback != nil || bodyFallback != nil {
 		t.Fatalf("mail: %v, %v, %v", err, fallback, bodyFallback)
 	}
 	checkGolden(t, "de_mail.golden", subject+"\n\n"+body)
-	html, htmlFallback, err := templates.mailHTML(n)
-	if err != nil || htmlFallback != nil {
-		t.Fatalf("mail HTML: %v, %v", err, htmlFallback)
+	html, htmlFallback := templates.mailHTML(newTemplateData(n, "mail"))
+	if htmlFallback != nil {
+		t.Fatalf("mail HTML: %v", htmlFallback)
 	}
 	checkGolden(t, "de_mail.html.golden", html)
 
