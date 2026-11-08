@@ -174,8 +174,8 @@ func TestHumanDuration(t *testing.T) {
 		{20 * time.Second, "0m"},
 	}
 	for _, tt := range tests {
-		if got := humanDuration(tt.d); got != tt.want {
-			t.Errorf("humanDuration(%v) = %q, want %q", tt.d, got, tt.want)
+		if got := HumanDuration(tt.d); got != tt.want {
+			t.Errorf("HumanDuration(%v) = %q, want %q", tt.d, got, tt.want)
 		}
 	}
 }
