@@ -186,52 +186,108 @@ func TestDowntimeWinsOverSwitchingOn(t *testing.T) {
 	wantNotifications(t, second, "new:a/reminders:/resolved:", "new:a/reminders:/resolved:")
 }
 
-func TestSwitchingOnWaitsForUnknownChecks(t *testing.T) {
+// A check that never runs in this process keeps its problems (KeepProblems), so
+// its state is unknown in every run. Switching on must not wait for it.
+func TestSwitchingOnDoesNotWaitForACheckThatIsSkippedForGood(t *testing.T) {
 	h, second := heardByBoth(t)
+	h.engine.SkippedChecks = []SkippedCheck{{Name: "certs", Reason: "no permission", KeepProblems: true}}
 	h.mute("second")
 	h.requestUnmute("second")
-	h.skipped = map[string]string{"fake": "kubelet stats unavailable"}
 	h.mustRun(time.Minute)
 
-	mutes, err := h.engine.Store.TargetMutes(context.Background())
-	if err != nil {
-		t.Fatalf("TargetMutes: %v", err)
-	}
-	if m, found := mutes["second"]; !found || m.UnmuteRequestedAt == nil {
-		t.Fatalf("mutes = %+v, want second still off with a pending request", mutes)
-	}
-	wantNotifications(t, second, "new:a/reminders:/resolved:")
-
-	h.skipped = nil
-	h.mustRun(time.Minute)
 	h.wantMuted("second", false)
 	wantNotifications(t, second, "new:a/reminders:/resolved:", "new:a/reminders:/resolved:")
 }
 
+// A problem heard before the mute whose check state is unknown at switch-on
+// may be gone, so it is left as it was: it keeps its marker and is not sent
+// as new, neither in that run nor once the check runs again.
+func TestSwitchingOnLeavesAProblemOfAnUnknownCheckAsItWas(t *testing.T) {
+	h, second := heardByBoth(t)
+	h.engine.CriticalRepeatInterval = time.Hour
+	h.mute("second")
+	h.requestUnmute("second")
+	h.skipped = map[string]string{"fake": "kubelet stats unavailable"}
+	h.mustRun(time.Minute)
+	h.wantMuted("second", false)
+	wantNotifications(t, second, "new:a/reminders:/resolved:")
+
+	h.skipped = nil
+	h.mustRun(time.Minute)
+	wantNotifications(t, second, "new:a/reminders:/resolved:")
+}
+
 // A pvc-usage problem whose volume was not measured in this run (a node is
-// down) may be gone, so switching on waits as for a check whose state is
-// unknown.
-func TestSwitchingOnWaitsForAnUnmeasuredVolume(t *testing.T) {
+// down) may be gone, so it is left as it was. It does not hold back the
+// switch-on: another problem that fires is reported as new in the same run.
+func TestSwitchingOnLeavesAnUnmeasuredVolumeAsItWas(t *testing.T) {
 	h, second := twoTargets(t)
+	h.engine.CriticalRepeatInterval = time.Hour
 	vol := finding("vol", checks.Critical)
 	vol.Check = "pvc-usage"
-	h.findings = []checks.Finding{vol}
+	h.findings = []checks.Finding{vol, finding("a", checks.Critical)}
 	h.mustRun(0)
 	h.mustRun(2 * time.Minute)
+	wantNotifications(t, second, "new:a,vol/reminders:/resolved:")
 	h.mute("second")
 	h.requestUnmute("second")
 
-	h.volumesPartial = true // vol is not in the (empty) measurement,
-	h.findings = nil        // so the check cannot report it
-	h.mustRun(time.Minute)
-	h.wantMuted("second", true)
-	wantNotifications(t, second, "new:vol/reminders:/resolved:")
-
-	h.volumesPartial = false
-	h.findings = []checks.Finding{vol}
+	h.volumesPartial = true                                      // vol is not in the (empty) measurement,
+	h.findings = []checks.Finding{finding("a", checks.Critical)} // so the check cannot report it
 	h.mustRun(time.Minute)
 	h.wantMuted("second", false)
-	wantNotifications(t, second, "new:vol/reminders:/resolved:", "new:vol/reminders:/resolved:")
+	wantNotifications(t, second, "new:a,vol/reminders:/resolved:", "new:a/reminders:/resolved:")
+}
+
+// A run in which the findings could not be saved does not finish a switch-on:
+// a problem that ended in that run would still count as firing, and the target
+// would hear it as new and then as resolved. The next run finishes it.
+func TestSwitchingOnWaitsForARunThatSavedItsFindings(t *testing.T) {
+	h, second := heardByBoth(t)
+	h.engine.ResolveAfter = 0
+	vol := finding("vol", checks.Critical)
+	vol.Check = "pvc-usage"
+	h.mute("second")
+	h.findings = []checks.Finding{finding("a", checks.Critical), vol}
+	h.mustRun(time.Minute) // vol is new, not firing yet
+	h.requestUnmute("second")
+
+	// a ends, but saving fails: vol is not measured, so its open problem is
+	// set aside, and inserting it again breaks the unique key. A real check
+	// never reports an unmeasured volume; this only makes the save fail.
+	h.findings = []checks.Finding{vol}
+	h.volumesPartial = true
+	if err := h.run(time.Minute); err == nil {
+		t.Fatal("RunOnce = nil, want the save to fail")
+	}
+	h.wantMuted("second", true)
+
+	h.findings = nil
+	h.volumesPartial = false
+	h.mustRun(time.Minute)
+	h.wantMuted("second", false)
+	wantNotifications(t, second, "new:a/reminders:/resolved:")
+}
+
+// A problem the target heard, whose targets annotation then no longer names
+// it, is not told again at switch-on. As at the end of a downtime, it keeps
+// "heard the start" and hears the end, even if that end came while it was off
+// (gone, waiting for RESOLVE_AFTER).
+func TestHeardButNoLongerRoutedProblemThatEndedWhileMutedIsStillResolvedToTheTarget(t *testing.T) {
+	h, second := heardByBoth(t)
+	h.engine.ResolveAfter = 5 * time.Minute
+	h.findings = []checks.Finding{withTargets(finding("a", checks.Critical), "fake")}
+	h.mustRun(time.Minute)
+	h.mute("second")
+	h.findings = nil
+	h.mustRun(time.Minute) // gone, waits for ResolveAfter
+	h.requestUnmute("second")
+	h.mustRun(time.Minute)
+	h.wantMuted("second", false)
+	wantNotifications(t, second, "new:a/reminders:/resolved:")
+
+	h.mustRun(5 * time.Minute) // resolved
+	wantNotifications(t, second, "new:a/reminders:/resolved:", "new:/reminders:/resolved:a")
 }
 
 // The failed message is held back by a downtime, so without the explicit

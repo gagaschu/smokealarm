@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/gagaschu/smokealarm/internal/checks"
@@ -18,15 +19,14 @@ import (
 
 // finishMutes switches on the targets the web UI asked for. Like the end of a
 // downtime, but for one target: what fires now and is meant for the target is
-// reported again as new, and what ended while it was off stays silent. If the
-// state of a check is unknown in this run, or a pvc-usage problem's volume was
-// not measured (a node is down), it waits, so that no problem is reported that
-// may be gone. One target that fails does not hold back the
-// others; it stays off and the next run tries again.
+// reported again as new, and what ended while it was off stays silent. A
+// problem whose check state is unknown in this run, or whose volume was not
+// measured (a node is down), may be gone, so it is left as it was. The
+// switch-on does not wait for such a run to pass: a check that is skipped for
+// good (no permission, kubelet stats that always fail) would keep the target
+// off forever. One target that fails does not hold back the others; it stays
+// off and the next run tries again.
 func (e *Engine) finishMutes(ctx context.Context, snap *checks.Snapshot, unknown []string, now time.Time) error {
-	if len(unknown) > 0 {
-		return nil
-	}
 	mutes, err := e.Store.TargetMutes(ctx)
 	if err != nil {
 		return fmt.Errorf("load muted targets: %w", err)
@@ -44,11 +44,10 @@ func (e *Engine) finishMutes(ctx context.Context, snap *checks.Snapshot, unknown
 	if err != nil {
 		return fmt.Errorf("load open findings: %w", err)
 	}
-	for _, rec := range open {
-		if checks.VolumeUsageUnknown(snap, rec.Check, rec.Object) {
-			return nil
-		}
-	}
+	// Left out of both lists, the problem keeps the target's markers.
+	open = slices.DeleteFunc(open, func(rec store.Record) bool {
+		return slices.Contains(unknown, rec.Check) || checks.VolumeUsageUnknown(snap, rec.Check, rec.Object)
+	})
 	var errs []error
 	for _, n := range requested {
 		if err := e.finishMute(ctx, n, open, now); err != nil {
