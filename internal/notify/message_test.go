@@ -216,7 +216,7 @@ func TestResolvedDuration(t *testing.T) {
 		want       string
 	}{
 		{since.Add(3*time.Minute + 30*time.Second), "3m"},
-		{since.Add(20 * time.Second), "under 1m"},
+		{since.Add(20 * time.Second), "less than a minute"},
 		{since.Add(2*time.Hour + 10*time.Minute), "2h 10m"},
 		{since.Add(50 * time.Hour), "2d 2h"},
 		{since.Add(-time.Minute), ""}, // clocks that went wrong

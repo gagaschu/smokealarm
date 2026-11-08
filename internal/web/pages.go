@@ -1,7 +1,6 @@
 package web
 
 import (
-	"fmt"
 	"net"
 	"net/http"
 	"sort"
@@ -273,7 +272,7 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 	data.AllGood = !data.WaitingFirstRun && len(data.Problems) == 0 && len(data.HeldBack) == 0 && data.APIProblem == nil
 	if !lastRun.IsZero() {
 		data.LastRun = lastRun.In(s.zone()).Format(timeFormat)
-		data.LastRunAgo = formatAge(now.Sub(lastRun))
+		data.LastRunAgo = checks.HumanDuration(now.Sub(lastRun))
 	}
 	s.render(w, http.StatusOK, "overview", data)
 }
@@ -293,7 +292,7 @@ func newAPIProblemView(problem *checks.APIProblem, now time.Time, loc *time.Loca
 	}
 	return &apiProblemView{
 		Since:     problem.Since.In(loc).Format(timeFormat),
-		Age:       formatAge(now.Sub(problem.Since)),
+		Age:       checks.HumanDuration(now.Sub(problem.Since)),
 		Blind:     problem.Blind,
 		Resources: strings.Join(problem.Resources, ", "),
 		Error:     problem.Error,
@@ -341,7 +340,7 @@ func newProblemView(rec store.Record, now time.Time, loc *time.Location) problem
 		Reason:         rec.Reason,
 		Message:        rec.Message,
 		Since:          rec.FirstSeen.In(loc).Format(timeFormat),
-		Age:            formatAge(now.Sub(rec.FirstSeen)),
+		Age:            checks.HumanDuration(now.Sub(rec.FirstSeen)),
 		CanAcknowledge: rec.Severity == checks.Critical && rec.AcknowledgedAt == nil,
 	}
 	if rec.AcknowledgedAt != nil {
@@ -349,7 +348,7 @@ func newProblemView(rec store.Record, now time.Time, loc *time.Location) problem
 	}
 	if rec.GoneSince != nil {
 		view.GoneSince = rec.GoneSince.In(loc).Format(timeFormat)
-		view.GoneAge = formatAge(now.Sub(*rec.GoneSince))
+		view.GoneAge = checks.HumanDuration(now.Sub(*rec.GoneSince))
 	}
 	return view
 }
@@ -453,7 +452,7 @@ func (s *Server) history(w http.ResponseWriter, r *http.Request) {
 		view.NotifiesOnly, view.NotifiesNobody = s.audience(rec)
 		if rec.ResolvedAt != nil {
 			view.ResolvedAt = rec.ResolvedAt.In(s.zone()).Format(historyTimeFormat)
-			view.Lasted = formatAge(rec.ResolvedAt.Sub(rec.FirstSeen))
+			view.Lasted = checks.HumanDuration(rec.ResolvedAt.Sub(rec.FirstSeen))
 		}
 		data.History = append(data.History, view)
 	}
@@ -502,26 +501,6 @@ func formatOptionalTime(t time.Time, loc *time.Location) string {
 		return ""
 	}
 	return t.In(loc).Format(timeFormat)
-}
-
-// formatAge writes a duration in the two most useful units: "3d 4h",
-// "2h 10m", "5m".
-func formatAge(d time.Duration) string {
-	if d < time.Minute {
-		return "less than a minute"
-	}
-	days := int(d.Hours()) / 24
-	hours := int(d.Hours()) % 24
-	minutes := int(d.Minutes()) % 60
-
-	switch {
-	case days > 0:
-		return fmt.Sprintf("%dd %dh", days, hours)
-	case hours > 0:
-		return fmt.Sprintf("%dh %dm", hours, minutes)
-	default:
-		return fmt.Sprintf("%dm", minutes)
-	}
 }
 
 // clientIP is the address of the peer. X-Forwarded-For is not used because

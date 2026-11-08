@@ -169,9 +169,15 @@ func TestHumanDuration(t *testing.T) {
 		want string
 	}{
 		{5 * time.Minute, "5m"},
+		{time.Minute, "1m"},
+		{59*time.Minute + 59*time.Second, "59m"},
+		{time.Hour, "1h 0m"},
 		{90 * time.Minute, "1h 30m"},
+		{24 * time.Hour, "1d 0h"},
 		{26 * time.Hour, "1d 2h"},
-		{20 * time.Second, "0m"},
+		{3*24*time.Hour + 4*time.Hour + 30*time.Minute, "3d 4h"},
+		{20 * time.Second, "less than a minute"},
+		{-time.Hour, "less than a minute"},
 	}
 	for _, tt := range tests {
 		if got := HumanDuration(tt.d); got != tt.want {

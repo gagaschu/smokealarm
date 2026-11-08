@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/gagaschu/smokealarm/internal/checks"
 	"github.com/gagaschu/smokealarm/internal/store"
 )
 
@@ -77,7 +78,7 @@ func (s *Server) downtimes(w http.ResponseWriter, r *http.Request) {
 			Object:    d.Object.Label(),
 			Reason:    d.Reason,
 			Until:     d.ExpiresAt.In(s.zone()).Format(timeFormat),
-			Remaining: formatAge(d.ExpiresAt.Sub(now)),
+			Remaining: checks.HumanDuration(d.ExpiresAt.Sub(now)),
 			Firing:    firing[d.Key],
 		})
 	}

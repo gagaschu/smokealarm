@@ -69,9 +69,13 @@ func certRef(cert Certificate) ObjectRef {
 	return ObjectRef{Kind: KindCertificate, Namespace: cert.Meta.Namespace, Name: cert.Meta.Name}
 }
 
-// HumanDuration writes a duration as "9d 3h", "5h 20m" or "12m". The
-// notifications use it for how long a resolved problem lasted.
+// HumanDuration writes a duration in its two largest units: "9d 3h",
+// "5h 20m", "12m", or "less than a minute". The checks, the web UI and the
+// mails all use it, so a duration looks the same everywhere.
 func HumanDuration(d time.Duration) string {
+	if d < time.Minute {
+		return "less than a minute"
+	}
 	days := int(d.Hours()) / 24
 	hours := int(d.Hours()) % 24
 	minutes := int(d.Minutes()) % 60

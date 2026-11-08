@@ -92,17 +92,13 @@ func templateProblems(alerts []Alert, loc *time.Location) []templateProblem {
 }
 
 // lasted is how long a resolved problem lasted, as the mails show it: "3m",
-// "2h 10m", "under 1m". It is empty for a problem that is not resolved, or
-// whose times make no sense.
+// "2h 10m", "less than a minute". It is empty for a problem that is not
+// resolved, or whose times make no sense.
 func lasted(since, resolvedAt time.Time) string {
 	if resolvedAt.IsZero() || since.IsZero() || resolvedAt.Before(since) {
 		return ""
 	}
-	d := resolvedAt.Sub(since)
-	if d < time.Minute {
-		return "under 1m"
-	}
-	return checks.HumanDuration(d)
+	return checks.HumanDuration(resolvedAt.Sub(since))
 }
 
 // problemCount is the number of problems in all lists.

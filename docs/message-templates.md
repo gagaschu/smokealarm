@@ -57,7 +57,7 @@ Each problem in these lists has:
 | `.Kind`, `.Namespace`, `.Name` | e.g. `Pod`, `media`, `jellyfin`; the namespace is empty for nodes |
 | `.Object` | The object as one label: `Pod media/jellyfin` |
 | `.Message` | The message, always on one line |
-| `.Duration` | How long a resolved problem lasted: `3m`, `2h 10m`, `1d 4h` or `under 1m`; empty unless resolved |
+| `.Duration` | How long a resolved problem lasted: `3m`, `2h 10m`, `1d 4h` or `less than a minute`; empty unless resolved |
 | `.Since`, `.ResolvedAt` | When it was first seen and when it was resolved (zero unless resolved), in the time zone `SMOKEALARM_TIME_ZONE` (UTC by default). `MST` in a layout writes its abbreviation, for example `CET`. Format them with a Go layout: `{{.Since.Format "02.01.2006 15:04"}}` |
 | `.Affected` | For a node that is down: the problems it holds back, each with `.Object` and `.Reason` |
 
