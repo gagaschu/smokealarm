@@ -4,7 +4,11 @@ escaped. The sections and their order are those of mail.tmpl (nodes down,
 new problems, reminders, resolved).
 
 Mail programs know little CSS: tables for the layout, inline styles only, no
-images, no web fonts, nothing loaded from elsewhere.
+images, no web fonts, nothing loaded from elsewhere. The button's colour is on
+its table cell (bgcolor), because Outlook for Windows ignores the padding and
+background of a link. Outlook also ignores max-width, so there the mail is as
+wide as the window; the usual cure, a conditional comment, is not possible
+because html/template removes comments.
 */ -}}
 {{- define "time"}}{{if not .IsZero}}{{.Format "2006-01-02 15:04:05 MST"}}{{end}}{{end -}}
 {{- define "badge" -}}
@@ -96,7 +100,9 @@ images, no web fonts, nothing loaded from elsewhere.
 {{- end}}
 {{- if .BaseURL}}
 <tr><td style="padding:16px 0 0 0;">
-<a href="{{.BaseURL}}" style="display:inline-block;padding:10px 20px;border-radius:6px;background:#1a73e8;color:#ffffff;font-size:14px;font-weight:bold;text-decoration:none;">Details</a>
+<table role="presentation" cellpadding="0" cellspacing="0"><tr><td bgcolor="#1a73e8" style="border-radius:6px;background:#1a73e8;">
+<a href="{{.BaseURL}}" style="display:inline-block;padding:10px 20px;border-radius:6px;color:#ffffff;font-size:14px;font-weight:bold;text-decoration:none;">Details</a>
+</td></tr></table>
 </td></tr>
 {{- end}}
 </table>

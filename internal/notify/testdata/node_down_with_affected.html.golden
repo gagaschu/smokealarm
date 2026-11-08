@@ -74,7 +74,9 @@
 </table>
 </td></tr>
 <tr><td style="padding:16px 0 0 0;">
-<a href="https://smokealarm.example.com" style="display:inline-block;padding:10px 20px;border-radius:6px;background:#1a73e8;color:#ffffff;font-size:14px;font-weight:bold;text-decoration:none;">Details</a>
+<table role="presentation" cellpadding="0" cellspacing="0"><tr><td bgcolor="#1a73e8" style="border-radius:6px;background:#1a73e8;">
+<a href="https://smokealarm.example.com" style="display:inline-block;padding:10px 20px;border-radius:6px;color:#ffffff;font-size:14px;font-weight:bold;text-decoration:none;">Details</a>
+</td></tr></table>
 </td></tr>
 </table>
 </td></tr>

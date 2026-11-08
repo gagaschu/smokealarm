@@ -15,7 +15,12 @@ All notable changes to this project are documented here. The format is based on
 ### Changed
 
 - Resolved problems in the mail show their last severity (`[WARNING] VolumeAlmostFull`) instead of `[RESOLVED]`, and the Resolved line says how long the problem lasted: `Resolved: 2026-11-08 03:04:14 CET (after 3m)`.
-- If you have your own `mail.tmpl` but no `mail.html.tmpl`, mails stay text only, so your text is not hidden behind the built-in HTML. Add a `mail.html.tmpl` to get HTML too.
+- If you have your own `mail.tmpl` but no `mail.html.tmpl`, mails stay text only, so your text is not hidden behind the built-in HTML; the status page says "text only" next to the templates. Add a `mail.html.tmpl` to get HTML too. If your `mail.html.tmpl` fails with a notification while you have a `mail.tmpl`, that mail goes out as text only too.
+- A certificate that expires or expired less than a minute ago says "less than a minute" instead of "0m", as the web UI already did.
+
+### Fixed
+
+- The German example `message-templates-de.yaml` wrote "UTC" after every time, also when `SMOKEALARM_TIME_ZONE` is another zone. It now writes the zone of the time (`CET`, `CEST`, ...).
 
 ## [0.1.0] - 2026-11-06
 
