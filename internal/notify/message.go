@@ -107,6 +107,16 @@ func Body(n Notification) (string, error) {
 	return render(tmpl, newTemplateData(n, "mail"))
 }
 
+// HTMLBody renders the HTML mail body with the built-in template
+// (templates/mail.html.tmpl).
+func HTMLBody(n Notification) (string, error) {
+	tmpl, err := builtinHTMLTemplate()
+	if err != nil {
+		return "", err
+	}
+	return render(tmpl, newTemplateData(n, "mail"))
+}
+
 // oneLine puts a text on a single line. Part of a message comes from the
 // cluster (image pull errors, event texts), and whoever can write there could
 // otherwise add lines that look like a section of the mail or a link.

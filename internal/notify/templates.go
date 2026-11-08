@@ -3,6 +3,7 @@ package notify
 import (
 	"errors"
 	"fmt"
+	htmltemplate "html/template"
 	"log/slog"
 	"maps"
 	"os"
@@ -23,6 +24,7 @@ const maxTemplateSize = 64 << 10
 const (
 	partSubject = "subject"
 	partMail    = "mail"
+	partHTML    = "html" // the HTML part of a mail, only as mail.html.tmpl
 	partChat    = "chat"
 )
 
@@ -36,13 +38,18 @@ const emptyMessage = "renders an empty text"
 //
 //	subject.tmpl          the subject of every target
 //	<kind>.subject.tmpl   the subject of one kind (mail, ntfy, telegram, slack, teams)
-//	mail.tmpl             the mail body
+//	mail.tmpl             the mail body (text)
+//	mail.html.tmpl        the HTML part of the mail (html/template)
 //	chat.tmpl             the text of every chat target
 //	<kind>.chat.tmpl      the text of one chat target (ntfy, telegram, slack, teams)
 //
+// A user mail.tmpl without a mail.html.tmpl makes the mail text only, so the
+// user's text is not hidden behind the built-in HTML, which mail programs
+// would show instead.
+//
 // A nil *Templates means the built-in templates only.
 type Templates struct {
-	files map[string]*template.Template // by file name
+	files map[string]executor // by file name
 }
 
 // kindsOf returns the kinds of targets that use a part.
@@ -52,7 +59,7 @@ func kindsOf(part string) []string {
 		return []string{"mail", "ntfy", "telegram", "slack", "teams"}
 	case partChat:
 		return []string{"ntfy", "telegram", "slack", "teams"}
-	default:
+	default: // partMail, partHTML
 		return []string{"mail"}
 	}
 }
@@ -60,6 +67,7 @@ func kindsOf(part string) []string {
 // templateFiles maps every valid file name to the kinds of targets it is for.
 func templateFiles() map[string][]string {
 	files := map[string][]string{}
+	files[mailHTMLFile] = kindsOf(partHTML) // the only name for the HTML part
 	for _, part := range []string{partSubject, partMail, partChat} {
 		files[part+".tmpl"] = kindsOf(part)
 		if part == partMail {
@@ -89,7 +97,7 @@ func LoadTemplates(dir string, logger *slog.Logger) (*Templates, error) {
 		return nil, fmt.Errorf("read template directory: %w", err)
 	}
 	valid := templateFiles()
-	t := &Templates{files: map[string]*template.Template{}}
+	t := &Templates{files: map[string]executor{}}
 	var errs []error
 	for _, entry := range entries {
 		name := entry.Name()
@@ -129,7 +137,7 @@ func isFile(path string) bool {
 // loadTemplateFile reads, parses and checks one file. It returns nil without
 // an error for a directory. The files of a ConfigMap volume are links, so the
 // type of the entry says nothing; os.Stat follows the link.
-func loadTemplateFile(path string, valid map[string][]string) (*template.Template, error) {
+func loadTemplateFile(path string, valid map[string][]string) (executor, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, err
@@ -151,11 +159,29 @@ func loadTemplateFile(path string, valid map[string][]string) (*template.Templat
 	}
 	// The name of the template is the file name, so that errors from
 	// text/template ("template: chat.tmpl:3: ...") name the file.
-	tmpl, err := template.New(name).Parse(string(content))
+	tmpl, err := parseTemplate(name, string(content))
 	if err != nil {
 		return nil, err
 	}
 	if err := checkTemplate(tmpl, partOf(name), kinds); err != nil {
+		return nil, err
+	}
+	return tmpl, nil
+}
+
+// parseTemplate parses a file with html/template for the HTML part, which
+// escapes the texts from the cluster, and with text/template for all others.
+// A nil template inside a non-nil interface must not be returned.
+func parseTemplate(name, content string) (executor, error) {
+	if name == mailHTMLFile {
+		tmpl, err := htmltemplate.New(name).Parse(content)
+		if err != nil {
+			return nil, err
+		}
+		return tmpl, nil
+	}
+	tmpl, err := template.New(name).Parse(content)
+	if err != nil {
 		return nil, err
 	}
 	return tmpl, nil
@@ -171,7 +197,7 @@ func partOf(name string) string {
 // target it is for, so that a branch for one target or for a shortened text is
 // checked too. Only the full sample must give some text: a template may well
 // say nothing about a notification that has nothing it shows.
-func checkTemplate(tmpl *template.Template, part string, kinds []string) error {
+func checkTemplate(tmpl executor, part string, kinds []string) error {
 	for _, kind := range kinds {
 		for i, data := range sampleData(kind) {
 			text, err := renderPart(tmpl, part, data)
@@ -187,8 +213,8 @@ func checkTemplate(tmpl *template.Template, part string, kinds []string) error {
 }
 
 // renderPart renders one part without shortening: a subject on one line, a
-// chat text trimmed, a mail as it is.
-func renderPart(tmpl *template.Template, part string, data templateData) (string, error) {
+// chat text trimmed, a mail (text or HTML) as it is.
+func renderPart(tmpl executor, part string, data templateData) (string, error) {
 	switch part {
 	case partSubject:
 		return renderSubject(tmpl, data)
@@ -250,12 +276,17 @@ func sampleData(kind string) []templateData {
 
 // lookup finds the user template for a part and a kind of target: its own
 // file first, then the general one. It returns nil if there is none.
-func (t *Templates) lookup(kind, part string) (*template.Template, string) {
+func (t *Templates) lookup(kind, part string) (executor, string) {
 	if t == nil {
 		return nil, ""
 	}
-	names := []string{part + ".tmpl"}
-	if part != partMail {
+	var names []string
+	switch part {
+	case partMail:
+		names = []string{mailFile}
+	case partHTML:
+		names = []string{mailHTMLFile}
+	default:
 		names = []string{kind + "." + part + ".tmpl", part + ".tmpl"}
 	}
 	for _, name := range names {
@@ -271,7 +302,7 @@ func (t *Templates) lookup(kind, part string) (*template.Template, string) {
 // targets without templates (webhook, log).
 func (t *Templates) Describe(kind string) string {
 	var parts []string
-	for _, part := range []string{partSubject, partMail, partChat} {
+	for _, part := range []string{partSubject, partMail, partHTML, partChat} {
 		if slices.Contains(kindsOf(part), kind) {
 			parts = append(parts, part)
 		}
@@ -381,6 +412,30 @@ func (t *Templates) mailBody(n Notification) (string, *FallbackError, error) {
 	}
 	body, err := Body(n)
 	return body, nil, err
+}
+
+// mailHTML renders the HTML part of the mail; empty means a mail with the
+// text only. That is so when the user has a mail.tmpl but no mail.html.tmpl:
+// mail programs show the HTML part, which would hide the user's text. The
+// error is that of the built-in template, which only a bug can cause.
+func (t *Templates) mailHTML(n Notification) (string, *FallbackError, error) {
+	tmpl, file := t.lookup("mail", partHTML)
+	if tmpl == nil {
+		if _, text := t.lookup("mail", partMail); text != "" {
+			return "", nil, nil
+		}
+		body, err := HTMLBody(n)
+		return body, nil, err
+	}
+	body, err := render(tmpl, newTemplateData(n, "mail"))
+	if err == nil && strings.TrimSpace(body) == "" {
+		err = errors.New(emptyMessage)
+	}
+	if err == nil {
+		return body, nil, nil
+	}
+	builtin, builtinErr := HTMLBody(n)
+	return builtin, &FallbackError{File: file, Err: err}, builtinErr
 }
 
 // chatBody renders the chat text for a kind of target, at most limit bytes

@@ -8,11 +8,14 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"mime"
+	"mime/multipart"
 	"mime/quotedprintable"
 	"net"
 	"net/mail"
 	"net/smtp"
+	"net/textproto"
 	"strconv"
 	"strings"
 	"time"
@@ -33,7 +36,8 @@ const (
 	TLSNone     = "none"     // no encryption, for local testing only
 )
 
-// Mail sends notifications as plaintext mails over SMTP.
+// Mail sends notifications over SMTP, as a text and an HTML part
+// (multipart/alternative), or as text only (see Templates.mailHTML).
 type Mail struct {
 	Host     string
 	Port     int
@@ -66,18 +70,22 @@ func (m *Mail) Send(ctx context.Context, n Notification) error {
 	if err != nil {
 		return fmt.Errorf("mail: %w", err)
 	}
+	html, htmlFallback, err := m.Templates.mailHTML(n)
+	if err != nil {
+		return fmt.Errorf("mail: %w", err)
+	}
 	from, recipients, err := m.addresses()
 	if err != nil {
 		return fmt.Errorf("mail: %w", err)
 	}
-	msg, err := m.buildMessage(from, recipients, subject, body)
+	msg, err := m.buildMessage(from, recipients, subject, body, html)
 	if err != nil {
 		return fmt.Errorf("mail: %w", err)
 	}
 	if err := m.deliver(ctx, from.Address, recipients, msg); err != nil {
 		return err
 	}
-	return fallbacks(subjectFallback, bodyFallback)
+	return fallbacks(subjectFallback, bodyFallback, htmlFallback)
 }
 
 // addresses parses the configured sender and recipients.
@@ -100,10 +108,12 @@ func (m *Mail) addresses() (*mail.Address, []*mail.Address, error) {
 	return from, recipients, nil
 }
 
-// buildMessage assembles headers and body. The body is quoted-printable
-// because Kubernetes messages can contain non-ASCII text, which strict mail
-// servers do not accept as 8bit.
-func (m *Mail) buildMessage(from *mail.Address, to []*mail.Address, subject, body string) ([]byte, error) {
+// buildMessage assembles headers and body: the text alone, or the text and
+// the HTML as two alternatives, text first, because mail programs show the
+// last one they can. Every part is quoted-printable because Kubernetes
+// messages can contain non-ASCII text, which strict mail servers do not
+// accept as 8bit.
+func (m *Mail) buildMessage(from *mail.Address, to []*mail.Address, subject, text, html string) ([]byte, error) {
 	messageID, err := newMessageID(from.Address)
 	if err != nil {
 		return nil, err
@@ -121,22 +131,56 @@ func (m *Mail) buildMessage(from *mail.Address, to []*mail.Address, subject, bod
 		{"Date", m.Now().Format(time.RFC1123Z)},
 		{"Message-ID", messageID},
 		{"MIME-Version", "1.0"},
-		{"Content-Type", "text/plain; charset=UTF-8"},
-		{"Content-Transfer-Encoding", "quoted-printable"},
 	}
 	for _, h := range headers {
 		msg.WriteString(h.name + ": " + h.value + "\r\n")
 	}
-	msg.WriteString("\r\n")
 
-	qp := quotedprintable.NewWriter(&msg)
-	if _, err := qp.Write([]byte(body)); err != nil {
-		return nil, fmt.Errorf("encode body: %w", err)
+	if html == "" {
+		msg.WriteString("Content-Type: " + textPlain + "\r\n")
+		msg.WriteString("Content-Transfer-Encoding: quoted-printable\r\n\r\n")
+		if err := writeQuotedPrintable(&msg, text); err != nil {
+			return nil, err
+		}
+		return msg.Bytes(), nil
 	}
-	if err := qp.Close(); err != nil {
+
+	parts := multipart.NewWriter(&msg)
+	msg.WriteString("Content-Type: multipart/alternative; boundary=" + parts.Boundary() + "\r\n\r\n")
+	for _, part := range []struct{ contentType, content string }{
+		{textPlain, text},
+		{"text/html; charset=UTF-8", html},
+	} {
+		w, err := parts.CreatePart(textproto.MIMEHeader{
+			"Content-Type":              {part.contentType},
+			"Content-Transfer-Encoding": {"quoted-printable"},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("encode body: %w", err)
+		}
+		if err := writeQuotedPrintable(w, part.content); err != nil {
+			return nil, err
+		}
+	}
+	if err := parts.Close(); err != nil {
 		return nil, fmt.Errorf("encode body: %w", err)
 	}
 	return msg.Bytes(), nil
+}
+
+// textPlain is the content type of the text part.
+const textPlain = "text/plain; charset=UTF-8"
+
+// writeQuotedPrintable writes a text quoted-printable encoded.
+func writeQuotedPrintable(w io.Writer, text string) error {
+	qp := quotedprintable.NewWriter(w)
+	if _, err := qp.Write([]byte(text)); err != nil {
+		return fmt.Errorf("encode body: %w", err)
+	}
+	if err := qp.Close(); err != nil {
+		return fmt.Errorf("encode body: %w", err)
+	}
+	return nil
 }
 
 // encodeSubject removes line breaks (they would let a value start new header
