@@ -168,7 +168,63 @@ func TestSubjectAndBodyGolden(t *testing.T) {
 				t.Fatalf("Body: %v", err)
 			}
 			checkGolden(t, tt.name+".golden", body)
+			html, err := HTMLBody(tt.n)
+			if err != nil {
+				t.Fatalf("HTMLBody: %v", err)
+			}
+			checkGolden(t, tt.name+".html.golden", html)
 		})
+	}
+}
+
+// The HTML part escapes every text from the cluster: whoever can write a
+// message there must not be able to add markup, a script or a link.
+func TestHTMLBodyEscapesClusterTexts(t *testing.T) {
+	evil := crashLoop()
+	evil.Reason = `<img src=x onerror=alert(1)>`
+	evil.Message = `<script>alert("x")</script> & <a href="https://evil.example">click</a>`
+	evil.Object.Name = `pod"><b>bold</b>`
+	gone := resolved(crashLoop())
+	gone.Message = "<b>resolved</b>"
+	html, err := HTMLBody(Notification{
+		New:      []Alert{evil},
+		Resolved: []Alert{gone},
+		BaseURL:  "javascript:alert(1)",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, raw := range []string{"<script", "<img", "<b>", `href="https://evil.example"`, "javascript:"} {
+		if strings.Contains(html, raw) {
+			t.Errorf("HTML contains %q unescaped:\n%s", raw, html)
+		}
+	}
+	for _, escaped := range []string{"&lt;script&gt;", "&lt;img src=x", "&amp; &lt;a href=", "&lt;b&gt;resolved&lt;/b&gt;"} {
+		if !strings.Contains(html, escaped) {
+			t.Errorf("HTML does not contain %q", escaped)
+		}
+	}
+	if !strings.Contains(html, `href="#ZgotmplZ"`) {
+		t.Errorf("a javascript: base URL was not neutralized:\n%s", html)
+	}
+}
+
+func TestResolvedDuration(t *testing.T) {
+	since := time.Date(2026, 11, 8, 3, 0, 44, 0, time.UTC)
+	for _, tt := range []struct {
+		resolvedAt time.Time
+		want       string
+	}{
+		{since.Add(3*time.Minute + 30*time.Second), "3m"},
+		{since.Add(20 * time.Second), "under 1m"},
+		{since.Add(2*time.Hour + 10*time.Minute), "2h 10m"},
+		{since.Add(50 * time.Hour), "2d 2h"},
+		{since.Add(-time.Minute), ""}, // clocks that went wrong
+		{time.Time{}, ""},             // not resolved
+	} {
+		if got := lasted(since, tt.resolvedAt); got != tt.want {
+			t.Errorf("lasted(%v) = %q, want %q", tt.resolvedAt.Sub(since), got, tt.want)
+		}
 	}
 }
 

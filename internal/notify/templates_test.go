@@ -75,6 +75,11 @@ func TestLoadTemplatesErrors(t *testing.T) {
 		{"only for a node down alone", map[string]string{"subject.tmpl": "{{if or .Resolved .Reminders}}R{{else}}{{(index .New 0).Reason}}{{end}}"}, []string{"subject.tmpl", "index"}},
 		{"empty", map[string]string{"ntfy.subject.tmpl": "{{/* nothing */}}  \n"}, []string{"ntfy.subject.tmpl", "empty"}},
 		{"several", map[string]string{"chat.tmpl": "{{.A}}", "mail.tmpl": "{{.B}}"}, []string{"chat.tmpl", "mail.tmpl"}},
+		{"html only as mail.html.tmpl", map[string]string{"html.tmpl": "x"}, []string{"html.tmpl", "unknown"}},
+		{"no html for chat targets", map[string]string{"slack.html.tmpl": "x"}, []string{"slack.html.tmpl", "unknown"}},
+		{"html syntax error", map[string]string{"mail.html.tmpl": "<p>\n{{if .New}}</p>"}, []string{"mail.html.tmpl:2"}},
+		{"html unknown field", map[string]string{"mail.html.tmpl": "<p>{{range .Resolved}}{{.Sinse}}{{end}}</p>"}, []string{"mail.html.tmpl", "Sinse"}},
+		{"html empty", map[string]string{"mail.html.tmpl": "  \n"}, []string{"mail.html.tmpl", "empty"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -173,15 +178,91 @@ func TestTemplatePrecedence(t *testing.T) {
 	}
 }
 
+// The HTML part: the built-in one, the user's, or none when the user has a
+// text template only, which the HTML would hide.
+func TestMailHTMLPrecedence(t *testing.T) {
+	n := mixed()
+	builtin, err := HTMLBody(n)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		name  string
+		files map[string]string
+		want  string
+	}{
+		{"no templates", nil, builtin},
+		{"a subject only", map[string]string{"subject.tmpl": "S"}, builtin},
+		{"a text template only", map[string]string{"mail.tmpl": "M"}, ""},
+		{"an HTML template only", map[string]string{"mail.html.tmpl": "<p>{{.Target}}</p>"}, "<p>mail</p>"},
+		{"both", map[string]string{"mail.tmpl": "M", "mail.html.tmpl": "<p>H</p>"}, "<p>H</p>"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var templates *Templates
+			if tt.files != nil {
+				templates = loadTemplates(t, tt.files)
+			}
+			html, fallback, err := templates.mailHTML(n)
+			if err != nil || fallback != nil || html != tt.want {
+				t.Errorf("mailHTML = %q, %v, %v; want %q", html, fallback, err, tt.want)
+			}
+		})
+	}
+}
+
+// A user HTML template that fails with a real notification sends the
+// built-in HTML and says so; the text part is not affected.
+func TestMailHTMLFallsBackAtRunTime(t *testing.T) {
+	templates := loadTemplates(t, map[string]string{
+		"mail.html.tmpl": "{{if gt (len .New) 5}}{{index .New 9}}{{end}}<p>fine</p>",
+	})
+	n := manyPods(6, testBaseURL)
+	html, fallback, err := templates.mailHTML(n)
+	builtin, _ := HTMLBody(n)
+	if err != nil || html != builtin {
+		t.Errorf("html = %q, %v; want the built-in one", html, err)
+	}
+	if fallback == nil || fallback.File != "mail.html.tmpl" {
+		t.Fatalf("fallback = %v, want one for mail.html.tmpl", fallback)
+	}
+
+	send, sent := templateTarget(t, "mail", templates, 0)
+	var target *FallbackError
+	if err := send(n); !errors.As(err, &target) || target.File != "mail.html.tmpl" {
+		t.Errorf("Send = %v, want the fallback for mail.html.tmpl", err)
+	}
+	if want, _ := Body(n); !strings.HasSuffix(sent(), want) {
+		t.Errorf("the text part changed:\n%s", sent())
+	}
+}
+
+// A mail with a user text template and no HTML template goes out as text only.
+func TestMailWithTextTemplateOnlyIsTextOnly(t *testing.T) {
+	server := newFakeServer(t, fakeServerOptions{})
+	m := newTestMail(server, TLSNone)
+	m.Templates = loadTemplates(t, map[string]string{"mail.tmpl": "Eigener Text: {{.Summary}}"})
+	if err := m.Send(context.Background(), oneProblem()); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	header, text, html := parseParts(t, server.received()[0].data)
+	if header.Get("Content-Type") != "text/plain; charset=UTF-8" || html != "" {
+		t.Errorf("Content-Type = %q, html = %q; want text only", header.Get("Content-Type"), html)
+	}
+	if strings.TrimSpace(text) != "Eigener Text: 1 new problem" {
+		t.Errorf("text = %q", text)
+	}
+}
+
 func TestDescribeAndUnusedFiles(t *testing.T) {
 	templates := loadTemplates(t, map[string]string{
 		"subject.tmpl":       "S",
 		"mail.tmpl":          "M",
+		"mail.html.tmpl":     "<p>H</p>",
 		"slack.chat.tmpl":    "C",
 		"teams.subject.tmpl": "T",
 	})
 	for kind, want := range map[string]string{
-		"mail":     "subject.tmpl, mail.tmpl",
+		"mail":     "subject.tmpl, mail.tmpl, mail.html.tmpl",
 		"slack":    "subject.tmpl, slack.chat.tmpl",
 		"teams":    "teams.subject.tmpl",
 		"telegram": "subject.tmpl",
@@ -194,7 +275,7 @@ func TestDescribeAndUnusedFiles(t *testing.T) {
 	if got := strings.Join(templates.UnusedFiles([]string{"mail", "slack"}), ","); got != "teams.subject.tmpl" {
 		t.Errorf("UnusedFiles = %q", got)
 	}
-	if got := strings.Join(templates.UnusedFiles([]string{"webhook"}), ","); got != "mail.tmpl,slack.chat.tmpl,subject.tmpl,teams.subject.tmpl" {
+	if got := strings.Join(templates.UnusedFiles([]string{"webhook"}), ","); got != "mail.html.tmpl,mail.tmpl,slack.chat.tmpl,subject.tmpl,teams.subject.tmpl" {
 		t.Errorf("UnusedFiles for the webhook only = %q", got)
 	}
 }
@@ -277,6 +358,11 @@ func TestGermanTemplatesGolden(t *testing.T) {
 		t.Fatalf("mail: %v, %v, %v", err, fallback, bodyFallback)
 	}
 	checkGolden(t, "de_mail.golden", subject+"\n\n"+body)
+	html, htmlFallback, err := templates.mailHTML(n)
+	if err != nil || htmlFallback != nil {
+		t.Fatalf("mail HTML: %v, %v", err, htmlFallback)
+	}
+	checkGolden(t, "de_mail.html.golden", html)
 
 	chat, fallback := templates.chatBody("ntfy", n, 4000)
 	if fallback != nil {

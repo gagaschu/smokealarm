@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="de">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>NODE DOWN: pi-3 (&#43; 2 new problems, 1 still critical, 1 resolved)</title></head>
+<body style="margin:0;padding:24px 12px;background:#f1f3f4;font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#202124;">
+<div style="max-width:600px;margin:0 auto;">
+<div style="font-size:12px;font-weight:bold;letter-spacing:1px;color:#5f6368;">PI-CLUSTER</div>
+<h2 style="font-size:14px;color:#5f6368;margin:20px 0 8px 0;">Ausgefallene Knoten</h2>
+<div style="margin:0 0 12px 0;padding:12px 16px;background:#ffffff;border:1px solid #e0e0e0;border-left:4px solid #c62828;border-radius:6px;">
+<strong>KRITISCH: NotReady</strong>
+<table role="presentation" cellpadding="0" cellspacing="0" style="margin-top:6px;font-size:13px;">
+<tr><td style="padding:2px 12px 2px 0;color:#5f6368;">Objekt</td><td>Node pi-3</td></tr>
+<tr><td style="padding:2px 12px 2px 0;color:#5f6368;">Meldung</td><td>node is not ready for 10m0s (status Unknown): Kubelet stopped posting node status.</td></tr>
+<tr><td style="padding:2px 12px 2px 0;color:#5f6368;">Seit</td><td>03.11.2026 10:00 UTC</td></tr>
+<tr><td style="padding:2px 12px 2px 0;color:#5f6368;">Betroffen</td><td>Deployment media/sonarr (ReplicasUnavailable)</td></tr>
+<tr><td style="padding:2px 12px 2px 0;color:#5f6368;">Betroffen</td><td>Pod media/sonarr-7d9f-x2k4 (CrashLoopBackOff)</td></tr>
+</table>
+</div>
+<h2 style="font-size:14px;color:#5f6368;margin:20px 0 8px 0;">Neue Probleme</h2>
+<div style="margin:0 0 12px 0;padding:12px 16px;background:#ffffff;border:1px solid #e0e0e0;border-left:4px solid #c62828;border-radius:6px;">
+<strong>KRITISCH: CrashLoopBackOff</strong>
+<table role="presentation" cellpadding="0" cellspacing="0" style="margin-top:6px;font-size:13px;">
+<tr><td style="padding:2px 12px 2px 0;color:#5f6368;">Objekt</td><td>Pod media/jellyfin</td></tr>
+<tr><td style="padding:2px 12px 2px 0;color:#5f6368;">Meldung</td><td>container jellyfin keeps crashing (7 restarts), last exit code 137 (Error)</td></tr>
+<tr><td style="padding:2px 12px 2px 0;color:#5f6368;">Seit</td><td>03.11.2026 10:00 UTC</td></tr>
+</table>
+</div>
+<div style="margin:0 0 12px 0;padding:12px 16px;background:#ffffff;border:1px solid #e0e0e0;border-left:4px solid #f9a825;border-radius:6px;">
+<strong>WARNUNG: ReplicasUnavailable</strong>
+<table role="presentation" cellpadding="0" cellspacing="0" style="margin-top:6px;font-size:13px;">
+<tr><td style="padding:2px 12px 2px 0;color:#5f6368;">Objekt</td><td>Deployment media/sonarr</td></tr>
+<tr><td style="padding:2px 12px 2px 0;color:#5f6368;">Meldung</td><td>1/2 replicas available</td></tr>
+<tr><td style="padding:2px 12px 2px 0;color:#5f6368;">Seit</td><td>03.11.2026 10:30 UTC</td></tr>
+</table>
+</div>
+<h2 style="font-size:14px;color:#5f6368;margin:20px 0 8px 0;">Weiterhin kritisch</h2>
+<div style="margin:0 0 12px 0;padding:12px 16px;background:#ffffff;border:1px solid #e0e0e0;border-left:4px solid #c62828;border-radius:6px;">
+<strong>KRITISCH: NotReady</strong>
+<table role="presentation" cellpadding="0" cellspacing="0" style="margin-top:6px;font-size:13px;">
+<tr><td style="padding:2px 12px 2px 0;color:#5f6368;">Objekt</td><td>Node pi-2</td></tr>
+<tr><td style="padding:2px 12px 2px 0;color:#5f6368;">Meldung</td><td>node is not ready for 10m0s (status Unknown): Kubelet stopped posting node status.</td></tr>
+<tr><td style="padding:2px 12px 2px 0;color:#5f6368;">Seit</td><td>03.11.2026 10:00 UTC</td></tr>
+</table>
+</div>
+<h2 style="font-size:14px;color:#5f6368;margin:20px 0 8px 0;">Behoben</h2>
+<div style="margin:0 0 12px 0;padding:12px 16px;background:#ffffff;border:1px solid #e0e0e0;border-left:4px solid #2e7d32;border-radius:6px;">
+<strong>ReplicasUnavailable</strong>: Deployment media/sonarr<br>
+<span style="font-size:13px;color:#5f6368;">seit 03.11.2026 10:30 UTC, behoben 03.11.2026 12:30 UTC (nach 2h 0m)</span>
+</div>
+<p><a href="https://smokealarm.example.com" style="display:inline-block;padding:10px 20px;border-radius:6px;background:#1a73e8;color:#ffffff;font-weight:bold;text-decoration:none;">Details</a></p>
+</div>
+</body>
+</html>
