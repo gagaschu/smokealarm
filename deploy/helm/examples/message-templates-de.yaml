@@ -1,7 +1,9 @@
 # Messages in German, with the cluster name in every subject, through your own
 # message templates (docs/message-templates.md). The subject is used by every
-# target; the mail and the chat targets (ntfy, Telegram, Slack, Teams) each
-# get their own text. A file named after a target replaces the general one for
+# target; the mail (text and HTML) and the chat targets (ntfy, Telegram,
+# Slack, Teams) each get their own text. Without mail.html.tmpl the mail would
+# be sent as text only, so that mail.tmpl is not hidden behind the built-in
+# English HTML. A file named after a target replaces the general one for
 # that target only, e.g. slack.chat.tmpl or ntfy.subject.tmpl.
 #
 #   helm install smokealarm oci://ghcr.io/gagaschu/charts/smokealarm -n smokealarm --create-namespace \
@@ -22,7 +24,7 @@ templates:
       {{len .New}} neu, {{len .Reminders}} weiterhin kritisch, {{len .Resolved}} behoben
     {{- end}}
   mail.tmpl: |
-    {{- define "zeit"}}{{.Format "02.01.2006 15:04"}} UTC{{end -}}
+    {{- define "zeit"}}{{.Format "02.01.2006 15:04 MST"}}{{end -}}
     {{- define "problem"}}
     {{if eq .Severity "critical"}}KRITISCH{{else}}WARNUNG{{end}}: {{.Reason}}
       Objekt:    {{.Object}}
@@ -50,8 +52,57 @@ templates:
     {{- with .BaseURL}}
     Details: {{.}}
     {{end -}}
+  mail.html.tmpl: |
+    {{- /* HTML-Teil der Mail (html/template: Texte aus dem Cluster werden maskiert). Nur Inline-CSS, Mailprogramme können nicht mehr. */ -}}
+    {{- define "zeit"}}{{.Format "02.01.2006 15:04 MST"}}{{end -}}
+    {{- define "problem"}}
+    <div style="margin:0 0 12px 0;padding:12px 16px;background:#ffffff;border:1px solid #e0e0e0;border-left:4px solid {{if eq .Severity "critical"}}#c62828{{else}}#f9a825{{end}};border-radius:6px;">
+    <strong>{{if eq .Severity "critical"}}KRITISCH{{else}}WARNUNG{{end}}: {{.Reason}}</strong>
+    <table role="presentation" cellpadding="0" cellspacing="0" style="margin-top:6px;font-size:13px;">
+    <tr><td style="padding:2px 12px 2px 0;color:#5f6368;vertical-align:top;">Objekt</td><td>{{.Object}}</td></tr>
+    <tr><td style="padding:2px 12px 2px 0;color:#5f6368;vertical-align:top;">Meldung</td><td>{{.Message}}</td></tr>
+    <tr><td style="padding:2px 12px 2px 0;color:#5f6368;vertical-align:top;">Seit</td><td>{{template "zeit" .Since}}</td></tr>
+    {{- range .Affected}}
+    <tr><td style="padding:2px 12px 2px 0;color:#5f6368;vertical-align:top;">Betroffen</td><td>{{.Object}} ({{.Reason}})</td></tr>
+    {{- end}}
+    </table>
+    </div>
+    {{- end -}}
+    <!DOCTYPE html>
+    <html lang="de">
+    <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{{.Summary}}</title></head>
+    <body style="margin:0;padding:24px 12px;background:#f1f3f4;font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#202124;">
+    <div style="max-width:600px;margin:0 auto;">
+    <div style="font-size:12px;font-weight:bold;letter-spacing:1px;color:#5f6368;">PI-CLUSTER</div>
+    {{- if .NodesDown}}
+    <h2 style="font-size:14px;color:#5f6368;margin:20px 0 8px 0;">Ausgefallene Knoten</h2>
+    {{- range .NodesDown}}{{template "problem" .}}{{end}}
+    {{- end}}
+    {{- if .New}}
+    <h2 style="font-size:14px;color:#5f6368;margin:20px 0 8px 0;">Neue Probleme</h2>
+    {{- range .New}}{{template "problem" .}}{{end}}
+    {{- end}}
+    {{- if .Reminders}}
+    <h2 style="font-size:14px;color:#5f6368;margin:20px 0 8px 0;">Weiterhin kritisch</h2>
+    {{- range .Reminders}}{{template "problem" .}}{{end}}
+    {{- end}}
+    {{- if .Resolved}}
+    <h2 style="font-size:14px;color:#5f6368;margin:20px 0 8px 0;">Behoben</h2>
+    {{- range .Resolved}}
+    <div style="margin:0 0 12px 0;padding:12px 16px;background:#ffffff;border:1px solid #e0e0e0;border-left:4px solid #2e7d32;border-radius:6px;">
+    <strong>{{.Reason}}</strong>: {{.Object}}<br>
+    <span style="font-size:13px;color:#5f6368;">seit {{template "zeit" .Since}}, behoben {{template "zeit" .ResolvedAt}}{{with .Duration}} (nach {{.}}){{end}}</span>
+    </div>
+    {{- end}}
+    {{- end}}
+    {{- with .BaseURL}}
+    <p><a href="{{.}}" style="display:inline-block;padding:10px 20px;border-radius:6px;background:#1a73e8;color:#ffffff;font-weight:bold;text-decoration:none;">Details</a></p>
+    {{- end}}
+    </div>
+    </body>
+    </html>
   chat.tmpl: |
-    {{- define "zeit"}}{{.Format "02.01. 15:04"}} UTC{{end -}}
+    {{- define "zeit"}}{{.Format "02.01. 15:04 MST"}}{{end -}}
     {{- range .NodesDown}}Knoten {{.Name}} ausgefallen seit {{template "zeit" .Since}}{{with .Affected}}, {{len .}} betroffen{{end}}
     {{end -}}
     {{- range .New}}{{if eq .Severity "critical"}}KRITISCH{{else}}Warnung{{end}} {{.Object}}: {{.Reason}} (seit {{template "zeit" .Since}})

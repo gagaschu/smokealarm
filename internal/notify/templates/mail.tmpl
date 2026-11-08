@@ -33,11 +33,11 @@ STILL CRITICAL
 {{template "affected" .}}{{end}}{{end}}{{if .Resolved}}
 RESOLVED
 {{range .Resolved}}
-[RESOLVED] {{.Reason}}
+[{{template "severity" .}}] {{.Reason}}
   Object:   {{.Object}}
   Message:  {{.Message}}
   Since:    {{template "time" .Since}}
-  Resolved: {{template "time" .ResolvedAt}}
+  Resolved: {{template "time" .ResolvedAt}}{{if .Duration}} (after {{.Duration}}){{end}}
 {{end}}{{end}}{{if .BaseURL}}
 Details: {{.BaseURL}}
 {{end -}}

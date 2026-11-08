@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"embed"
 	"fmt"
+	htmltemplate "html/template"
+	"io"
 	"strings"
 	"text/template"
 )
@@ -16,10 +18,18 @@ var builtinFiles embed.FS
 
 // The parts of a message that have a template, by their file names.
 const (
-	subjectFile = "subject.tmpl"
-	mailFile    = "mail.tmpl"
-	chatFile    = "chat.tmpl"
+	subjectFile  = "subject.tmpl"
+	mailFile     = "mail.tmpl"
+	mailHTMLFile = "mail.html.tmpl"
+	chatFile     = "chat.tmpl"
 )
+
+// executor is a parsed template: text/template for every text, html/template
+// for the HTML part of a mail, which escapes what comes from the cluster.
+type executor interface {
+	Execute(w io.Writer, data any) error
+	Name() string
+}
 
 // builtinTemplate parses one of the built-in templates. Parsing takes
 // microseconds, so it is done for each message instead of keeping state.
@@ -31,8 +41,17 @@ func builtinTemplate(name string) (*template.Template, error) {
 	return tmpl, nil
 }
 
+// builtinHTMLTemplate parses the built-in HTML mail (templates/mail.html.tmpl).
+func builtinHTMLTemplate() (*htmltemplate.Template, error) {
+	tmpl, err := htmltemplate.ParseFS(builtinFiles, "templates/"+mailHTMLFile)
+	if err != nil {
+		return nil, fmt.Errorf("parse built-in template %s: %w", mailHTMLFile, err)
+	}
+	return tmpl, nil
+}
+
 // render executes a template.
-func render(tmpl *template.Template, data templateData) (string, error) {
+func render(tmpl executor, data templateData) (string, error) {
 	var out bytes.Buffer
 	if err := tmpl.Execute(&out, data); err != nil {
 		return "", fmt.Errorf("render %s: %w", tmpl.Name(), err)
@@ -50,7 +69,7 @@ const maxSubjectLength = 200
 // renderSubject renders a subject, puts it on one line and cuts it at
 // maxSubjectLength. It goes into the mail header and the ntfy header, where a
 // line break would start a header of its own.
-func renderSubject(tmpl *template.Template, data templateData) (string, error) {
+func renderSubject(tmpl executor, data templateData) (string, error) {
 	subject, err := render(tmpl, data)
 	if err != nil {
 		return "", err
@@ -60,7 +79,7 @@ func renderSubject(tmpl *template.Template, data templateData) (string, error) {
 
 // renderChat renders a chat text without spaces and blank lines at its start
 // and end, which the services would show or drop depending on the client.
-func renderChat(tmpl *template.Template, data templateData) (string, error) {
+func renderChat(tmpl executor, data templateData) (string, error) {
 	text, err := render(tmpl, data)
 	if err != nil {
 		return "", err
@@ -82,7 +101,7 @@ func renderChat(tmpl *template.Template, data templateData) (string, error) {
 // does not count as fitting (a template that only lists problems renders
 // nothing without them). If nothing fits, the text with the fewest problems
 // that says something is cut.
-func fitChat(tmpl *template.Template, data templateData, limit int) (string, error) {
+func fitChat(tmpl executor, data templateData, limit int) (string, error) {
 	text, err := renderChat(tmpl, data)
 	if err != nil || len(text) <= limit {
 		return text, err

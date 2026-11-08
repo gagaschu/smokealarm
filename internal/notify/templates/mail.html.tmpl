@@ -1,0 +1,112 @@
+{{- /*
+The HTML part of the mail, an html/template: every text from the cluster is
+escaped. The sections and their order are those of mail.tmpl (nodes down,
+new problems, reminders, resolved).
+
+Mail programs know little CSS: tables for the layout, inline styles only, no
+images, no web fonts, nothing loaded from elsewhere. The button's colour is on
+its table cell (bgcolor), because Outlook for Windows ignores the padding and
+background of a link. Outlook also ignores max-width, so there the mail is as
+wide as the window; the usual cure, a conditional comment, is not possible
+because html/template removes comments.
+*/ -}}
+{{- define "time"}}{{if not .IsZero}}{{.Format "2006-01-02 15:04:05 MST"}}{{end}}{{end -}}
+{{- define "badge" -}}
+{{- if eq .Severity "critical" -}}
+<span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#c62828;color:#ffffff;font-size:11px;font-weight:bold;letter-spacing:0.5px;">CRITICAL</span>
+{{- else -}}
+<span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#f9a825;color:#3e2700;font-size:11px;font-weight:bold;letter-spacing:0.5px;">WARNING</span>
+{{- end -}}
+{{- end -}}
+{{- define "heading" -}}
+<tr><td style="padding:24px 0 8px 0;font-size:12px;font-weight:bold;letter-spacing:1px;color:#5f6368;text-transform:uppercase;">{{.}}</td></tr>
+{{- end -}}
+{{- define "affected" -}}
+{{- if .Affected}}
+<tr><td colspan="2" style="padding:8px 0 2px 0;font-size:13px;color:#5f6368;">Affected, not reported on their own while the node is down:</td></tr>
+{{- range .Affected}}
+<tr><td colspan="2" style="padding:1px 0 1px 12px;font-size:13px;color:#202124;">&bull; {{.Object}}: {{.Reason}}</td></tr>
+{{- end}}
+{{- end -}}
+{{- end -}}
+{{- define "problem" -}}
+<tr><td style="padding:0 0 12px 0;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:separate;background:#ffffff;border:1px solid #e0e0e0;border-left:4px solid {{if eq .Severity "critical"}}#c62828{{else}}#f9a825{{end}};border-radius:6px;">
+<tr><td style="padding:12px 16px;">
+<table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
+<tr><td colspan="2" style="padding:0 0 8px 0;">{{template "badge" .}} <strong style="font-size:15px;color:#202124;">{{.Reason}}</strong></td></tr>
+<tr><td style="padding:2px 12px 2px 0;color:#5f6368;font-size:13px;white-space:nowrap;vertical-align:top;">Object</td><td style="padding:2px 0;font-size:13px;color:#202124;word-break:break-word;">{{.Object}}</td></tr>
+<tr><td style="padding:2px 12px 2px 0;color:#5f6368;font-size:13px;white-space:nowrap;vertical-align:top;">Message</td><td style="padding:2px 0;font-size:13px;color:#202124;word-break:break-word;">{{.Message}}</td></tr>
+<tr><td style="padding:2px 12px 2px 0;color:#5f6368;font-size:13px;white-space:nowrap;vertical-align:top;">Since</td><td style="padding:2px 0;font-size:13px;color:#202124;word-break:break-word;">{{template "time" .Since}}</td></tr>
+{{template "affected" .}}
+</table>
+</td></tr>
+</table>
+</td></tr>
+{{- end -}}
+{{- define "resolved" -}}
+<tr><td style="padding:0 0 12px 0;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:separate;background:#ffffff;border:1px solid #e0e0e0;border-left:4px solid #2e7d32;border-radius:6px;">
+<tr><td style="padding:12px 16px;">
+<table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
+<tr><td colspan="2" style="padding:0 0 8px 0;"><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#e8eaed;color:#5f6368;font-size:11px;font-weight:bold;letter-spacing:0.5px;">{{if eq .Severity "critical"}}CRITICAL{{else}}WARNING{{end}}</span> <strong style="font-size:15px;color:#202124;">{{.Reason}}</strong></td></tr>
+<tr><td style="padding:2px 12px 2px 0;color:#5f6368;font-size:13px;white-space:nowrap;vertical-align:top;">Object</td><td style="padding:2px 0;font-size:13px;color:#202124;word-break:break-word;">{{.Object}}</td></tr>
+<tr><td style="padding:2px 12px 2px 0;color:#5f6368;font-size:13px;white-space:nowrap;vertical-align:top;">Message</td><td style="padding:2px 0;font-size:13px;color:#202124;word-break:break-word;">{{.Message}}</td></tr>
+<tr><td style="padding:2px 12px 2px 0;color:#5f6368;font-size:13px;white-space:nowrap;vertical-align:top;">Since</td><td style="padding:2px 0;font-size:13px;color:#202124;word-break:break-word;">{{template "time" .Since}}</td></tr>
+<tr><td style="padding:2px 12px 2px 0;color:#5f6368;font-size:13px;white-space:nowrap;vertical-align:top;">Resolved</td><td style="padding:2px 0;font-size:13px;color:#2e7d32;">{{template "time" .ResolvedAt}}{{if .Duration}} (after {{.Duration}}){{end}}</td></tr>
+</table>
+</td></tr>
+</table>
+</td></tr>
+{{- end -}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>{{.Summary}}</title>
+</head>
+<body style="margin:0;padding:0;background:#f1f3f4;">
+<div style="display:none;max-height:0;overflow:hidden;">{{.Summary}}</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f1f3f4;">
+<tr><td align="center" style="padding:24px 12px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+<tr><td style="padding:0 0 4px 0;font-size:12px;font-weight:bold;letter-spacing:1px;color:#5f6368;">SMOKEALARM</td></tr>
+<tr><td style="padding:0;font-size:20px;font-weight:bold;color:#202124;">{{.Summary}}</td></tr>
+{{- if .NodesDown}}
+{{template "heading" "Node down"}}
+{{- range .NodesDown}}
+{{template "problem" .}}
+{{- end}}
+{{- end}}
+{{- if .New}}
+{{template "heading" "New problems"}}
+{{- range .New}}
+{{template "problem" .}}
+{{- end}}
+{{- end}}
+{{- if .Reminders}}
+{{template "heading" "Still critical"}}
+{{- range .Reminders}}
+{{template "problem" .}}
+{{- end}}
+{{- end}}
+{{- if .Resolved}}
+{{template "heading" "Resolved"}}
+{{- range .Resolved}}
+{{template "resolved" .}}
+{{- end}}
+{{- end}}
+{{- if .BaseURL}}
+<tr><td style="padding:16px 0 0 0;">
+<table role="presentation" cellpadding="0" cellspacing="0"><tr><td bgcolor="#1a73e8" style="border-radius:6px;background:#1a73e8;">
+<a href="{{.BaseURL}}" style="display:inline-block;padding:10px 20px;border-radius:6px;color:#ffffff;font-size:14px;font-weight:bold;text-decoration:none;">Details</a>
+</td></tr></table>
+</td></tr>
+{{- end}}
+</table>
+</td></tr>
+</table>
+</body>
+</html>

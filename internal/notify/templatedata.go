@@ -36,6 +36,7 @@ type templateProblem struct {
 	Message    string
 	Since      time.Time // in SMOKEALARM_TIME_ZONE
 	ResolvedAt time.Time // in SMOKEALARM_TIME_ZONE; zero unless resolved
+	Duration   string    // how long it lasted, e.g. "3m" or "2h 10m"; empty unless resolved
 	Affected   []templateAffected
 }
 
@@ -77,6 +78,7 @@ func templateProblems(alerts []Alert, loc *time.Location) []templateProblem {
 			Message:    oneLine(a.Message),
 			Since:      a.Since.In(loc),
 			ResolvedAt: a.ResolvedAt.In(loc),
+			Duration:   lasted(a.Since, a.ResolvedAt),
 		}
 		for _, affected := range a.Affected {
 			p.Affected = append(p.Affected, templateAffected{
@@ -87,6 +89,16 @@ func templateProblems(alerts []Alert, loc *time.Location) []templateProblem {
 		problems = append(problems, p)
 	}
 	return problems
+}
+
+// lasted is how long a resolved problem lasted, as the mails show it: "3m",
+// "2h 10m", "less than a minute". It is empty for a problem that is not
+// resolved, or whose times make no sense.
+func lasted(since, resolvedAt time.Time) string {
+	if resolvedAt.IsZero() || since.IsZero() || resolvedAt.Before(since) {
+		return ""
+	}
+	return checks.HumanDuration(resolvedAt.Sub(since))
 }
 
 // problemCount is the number of problems in all lists.

@@ -1,15 +1,16 @@
 # Message templates
 
-You can change the wording and layout of the messages with your own templates, for example to write them in German, name the cluster in every subject, or make the phone message shorter. Templates cover the subject and the text of mail, ntfy, Telegram, Slack and Teams. The [webhook](notifications.md#webhook) keeps its JSON format.
+You can change the wording and layout of the messages with your own templates, for example to write them in German, name the cluster in every subject, or make the phone message shorter. Templates cover the subject and the text of mail, ntfy, Telegram, Slack and Teams, and the HTML part of the mail. The [webhook](notifications.md#webhook) keeps its JSON format.
 
-They are Go [text/template](https://pkg.go.dev/text/template) files in the directory `SMOKEALARM_TEMPLATE_DIR`. In the chart you set them under `templates` (file name → content); see [values.yaml](../deploy/helm/smokealarm/values.yaml) and the German example [message-templates-de.yaml](../deploy/helm/examples/message-templates-de.yaml).
+They are Go [text/template](https://pkg.go.dev/text/template) files (the HTML part: [html/template](https://pkg.go.dev/html/template)) in the directory `SMOKEALARM_TEMPLATE_DIR`. In the chart you set them under `templates` (file name → content); see [values.yaml](../deploy/helm/smokealarm/values.yaml) and the German example [message-templates-de.yaml](../deploy/helm/examples/message-templates-de.yaml).
 
 ## Files
 
 | File | Used for |
 |---|---|
 | `subject.tmpl` | The subject of every target: the mail subject, the ntfy title, the first line on Telegram, the header on Slack and Teams |
-| `mail.tmpl` | The mail body |
+| `mail.tmpl` | The text part of the mail |
+| `mail.html.tmpl` | The HTML part of the mail, an html/template (see below) |
 | `chat.tmpl` | The text of ntfy, Telegram, Slack and Teams |
 | `<target>.subject.tmpl` | The subject of one target: `mail`, `ntfy`, `telegram`, `slack` or `teams` |
 | `<target>.chat.tmpl` | The text of one chat target: `ntfy`, `telegram`, `slack` or `teams` |
@@ -25,6 +26,12 @@ A short chat text in German:
 {{end}}{{if .Omitted}}… und {{.Omitted}} weitere
 {{end}}{{.BaseURL}}
 ```
+
+### The HTML mail
+
+A mail has a text part and an HTML part; mail programs show the HTML one. `mail.html.tmpl` is an [html/template](https://pkg.go.dev/html/template): it gets the same fields and functions, and escapes every value, so a message from the cluster can never add markup or a link, and a `.BaseURL` that is not a web address becomes `#ZgotmplZ`. Mail programs know little CSS, so use tables and inline `style` attributes, and nothing loaded from elsewhere (no images, no web fonts).
+
+If you have your own `mail.tmpl` but no `mail.html.tmpl`, the mail is sent as text only, because mail programs would otherwise show the built-in English HTML and hide your text. To keep your text and get HTML too, add a `mail.html.tmpl`; the German example has one. The status page then says "text only" next to the templates of the mail. If your `mail.html.tmpl` fails with a real notification, the mail gets the built-in HTML instead, or goes out as text only if you also have a `mail.tmpl`.
 
 ## Fields
 
@@ -50,6 +57,7 @@ Each problem in these lists has:
 | `.Kind`, `.Namespace`, `.Name` | e.g. `Pod`, `media`, `jellyfin`; the namespace is empty for nodes |
 | `.Object` | The object as one label: `Pod media/jellyfin` |
 | `.Message` | The message, always on one line |
+| `.Duration` | How long a resolved problem lasted: `3m`, `2h 10m`, `1d 4h` or `less than a minute`; empty unless resolved |
 | `.Since`, `.ResolvedAt` | When it was first seen and when it was resolved (zero unless resolved), in the time zone `SMOKEALARM_TIME_ZONE` (UTC by default). `MST` in a layout writes its abbreviation, for example `CET`. Format them with a Go layout: `{{.Since.Format "02.01.2006 15:04"}}` |
 | `.Affected` | For a node that is down: the problems it holds back, each with `.Object` and `.Reason` |
 
@@ -68,7 +76,8 @@ At startup smokealarm renders every file with made-up notifications, for every t
 - a syntax error,
 - an unknown field (`{{.Sinse}}`),
 - a file name that isn't in the table above (`slak.chat.tmpl`),
-- a template that renders nothing.
+- a template that renders nothing,
+- `html.tmpl` or `<target>.html.tmpl`: the HTML part is `mail.html.tmpl` only.
 
 A file for a target that isn't configured, and a file whose name doesn't end in `.tmpl` (`chat.tpl`), are only logged as a warning.
 

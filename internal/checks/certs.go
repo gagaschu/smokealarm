@@ -52,13 +52,13 @@ func CertExpiry(snap *Snapshot, opts Options) []Finding {
 
 		switch {
 		case remaining <= 0:
-			msg := fmt.Sprintf("expired %s ago (%s)", humanDuration(-remaining), when)
+			msg := fmt.Sprintf("expired %s ago (%s)", HumanDuration(-remaining), when)
 			findings = append(findings, newEscalatingFinding(checkCertExpiry, Critical, ref, "expiry", "Expired", msg))
 		case remaining < certCriticalBefore:
-			msg := fmt.Sprintf("expires in %s (%s)", humanDuration(remaining), when)
+			msg := fmt.Sprintf("expires in %s (%s)", HumanDuration(remaining), when)
 			findings = append(findings, newEscalatingFinding(checkCertExpiry, Critical, ref, "expiry", "ExpiresVerySoon", msg))
 		case remaining < certWarnBefore:
-			msg := fmt.Sprintf("expires in %s (%s)", humanDuration(remaining), when)
+			msg := fmt.Sprintf("expires in %s (%s)", HumanDuration(remaining), when)
 			findings = append(findings, newEscalatingFinding(checkCertExpiry, Warning, ref, "expiry", "ExpiresSoon", msg))
 		}
 	}
@@ -69,8 +69,13 @@ func certRef(cert Certificate) ObjectRef {
 	return ObjectRef{Kind: KindCertificate, Namespace: cert.Meta.Namespace, Name: cert.Meta.Name}
 }
 
-// humanDuration writes a duration as "9d 3h", "5h 20m" or "12m".
-func humanDuration(d time.Duration) string {
+// HumanDuration writes a duration in its two largest units: "9d 3h",
+// "5h 20m", "12m", or "less than a minute". The checks, the web UI and the
+// mails all use it, so a duration looks the same everywhere.
+func HumanDuration(d time.Duration) string {
+	if d < time.Minute {
+		return "less than a minute"
+	}
 	days := int(d.Hours()) / 24
 	hours := int(d.Hours()) % 24
 	minutes := int(d.Minutes()) % 60

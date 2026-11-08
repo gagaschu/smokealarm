@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"io"
 	"mime"
+	"mime/multipart"
 	"mime/quotedprintable"
 	"net/mail"
 	"strings"
@@ -30,18 +31,69 @@ func oneProblem() Notification {
 	return Notification{New: []Alert{crashLoop()}, BaseURL: "https://smokealarm.example.com"}
 }
 
-// parse splits a received message into its headers and decoded body.
+// parse splits a received message into its headers and decoded text, with
+// CRLF line ends normalized.
 func parse(t *testing.T, data string) (mail.Header, string) {
+	t.Helper()
+	header, text, _ := parseParts(t, data)
+	return header, text
+}
+
+// parseParts splits a received message into its headers, its text and its
+// HTML part (empty for a mail with the text only). A multipart mail must have
+// exactly a text and an HTML part, in this order, both quoted-printable.
+func parseParts(t *testing.T, data string) (header mail.Header, text, html string) {
 	t.Helper()
 	msg, err := mail.ReadMessage(strings.NewReader(data))
 	if err != nil {
 		t.Fatalf("received data is not a valid message: %v\n%s", err, data)
 	}
-	body, err := io.ReadAll(quotedprintable.NewReader(msg.Body))
+	mediaType, params, err := mime.ParseMediaType(msg.Header.Get("Content-Type"))
 	if err != nil {
-		t.Fatalf("decode body: %v", err)
+		t.Fatalf("Content-Type %q: %v", msg.Header.Get("Content-Type"), err)
 	}
-	return msg.Header, string(body)
+	normalize := func(b []byte) string { return strings.ReplaceAll(string(b), "\r\n", "\n") }
+	if mediaType == "text/plain" {
+		if cte := msg.Header.Get("Content-Transfer-Encoding"); cte != "quoted-printable" {
+			t.Errorf("Content-Transfer-Encoding = %q", cte)
+		}
+		body, err := io.ReadAll(quotedprintable.NewReader(msg.Body))
+		if err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		return msg.Header, normalize(body), ""
+	}
+	if mediaType != "multipart/alternative" {
+		t.Fatalf("Content-Type = %q, want text/plain or multipart/alternative", mediaType)
+	}
+	reader := multipart.NewReader(msg.Body, params["boundary"])
+	var types, bodies []string
+	for {
+		// The part reader decodes quoted-printable itself and then removes
+		// the Content-Transfer-Encoding header, so it is checked by the
+		// raw data below.
+		part, err := reader.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("read part: %v", err)
+		}
+		body, err := io.ReadAll(part)
+		if err != nil {
+			t.Fatalf("decode part: %v", err)
+		}
+		types = append(types, part.Header.Get("Content-Type"))
+		bodies = append(bodies, normalize(body))
+	}
+	want := []string{"text/plain; charset=UTF-8", "text/html; charset=UTF-8"}
+	if strings.Join(types, ",") != strings.Join(want, ",") {
+		t.Fatalf("parts = %q, want %q", types, want)
+	}
+	if n := strings.Count(data, "Content-Transfer-Encoding: quoted-printable"); n != 2 {
+		t.Errorf("%d quoted-printable parts, want 2", n)
+	}
+	return msg.Header, bodies[0], bodies[1]
 }
 
 func TestMailDeliversMessage(t *testing.T) {
@@ -60,7 +112,7 @@ func TestMailDeliversMessage(t *testing.T) {
 		t.Errorf("envelope = %s -> %v", got[0].from, got[0].to)
 	}
 
-	header, body := parse(t, got[0].data)
+	header, body, html := parseParts(t, got[0].data)
 	if want := "[smokealarm] CRITICAL: CrashLoopBackOff media/jellyfin"; header.Get("Subject") != want {
 		t.Errorf("Subject = %q, want %q", header.Get("Subject"), want)
 	}
@@ -73,16 +125,19 @@ func TestMailDeliversMessage(t *testing.T) {
 	if !strings.HasSuffix(header.Get("Message-Id"), "@example.com>") {
 		t.Errorf("Message-ID = %q", header.Get("Message-Id"))
 	}
-	if header.Get("Content-Type") != "text/plain; charset=UTF-8" {
-		t.Errorf("Content-Type = %q", header.Get("Content-Type"))
-	}
 	wantBody, err := Body(oneProblem())
 	if err != nil {
 		t.Fatal(err)
 	}
-	// SMTP uses CRLF line ends; compare with normalized ones.
-	if strings.ReplaceAll(body, "\r\n", "\n") != wantBody {
+	if body != wantBody {
 		t.Errorf("body = %q, want %q", body, wantBody)
+	}
+	wantHTML, err := HTMLBody(oneProblem())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if html != strings.ReplaceAll(wantHTML, "\r\n", "\n") {
+		t.Errorf("html = %q, want %q", html, wantHTML)
 	}
 }
 
@@ -261,7 +316,7 @@ func TestMailNonASCIIText(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("received %d messages", len(got))
 	}
-	header, body := parse(t, got[0].data)
+	header, body, html := parseParts(t, got[0].data)
 	// The subject is an encoded word; the standard decoder must recover it.
 	decoded, err := new(mime.WordDecoder).DecodeHeader(header.Get("Subject"))
 	if err != nil || !strings.Contains(decoded, "Störung") {
@@ -269,6 +324,9 @@ func TestMailNonASCIIText(t *testing.T) {
 	}
 	if !strings.Contains(body, "Container läuft nicht – bitte prüfen") {
 		t.Errorf("body lost its non-ASCII text: %q", body)
+	}
+	if !strings.Contains(html, "Container läuft nicht – bitte prüfen") {
+		t.Errorf("HTML lost its non-ASCII text: %q", html)
 	}
 }
 

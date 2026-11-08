@@ -35,7 +35,11 @@ smtp:
   password: "..."
 ```
 
-A mail looks like this:
+A mail has an HTML part, which mail programs show, and the same content as plain text for everything else:
+
+![A mail with new, still critical and resolved problems](screenshots/mail.png)
+
+The text part looks like this:
 
 ```
 Subject: [smokealarm] CRITICAL: CrashLoopBackOff media/jellyfin
@@ -51,6 +55,20 @@ NEW PROBLEMS
 
 Details: https://smokealarm.example.com
 ```
+
+A problem that went away is listed under RESOLVED with its last severity and how long it lasted:
+
+```
+RESOLVED
+
+[WARNING] VolumeAlmostFull
+  Object:   PersistentVolumeClaim plex/backup-tar
+  Message:  87.0% full (9.5 TiB of 10.9 TiB used)
+  Since:    2026-11-08 03:00:44 CET
+  Resolved: 2026-11-08 03:04:14 CET (after 3m)
+```
+
+The wording and layout of both parts can be changed with [message templates](message-templates.md). With your own `mail.tmpl` and no `mail.html.tmpl`, mails are sent as text only.
 
 If one run finds several changes, the subject is a count (`[smokealarm] 3 new problems, 1 resolved`) and the body lists all of them, critical problems first. A problem you were already told about triggers a new mail if it becomes critical.
 

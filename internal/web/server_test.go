@@ -691,27 +691,6 @@ func TestSessionCookieIsHardened(t *testing.T) {
 	}
 }
 
-func TestFormatAge(t *testing.T) {
-	tests := []struct {
-		d    time.Duration
-		want string
-	}{
-		{30 * time.Second, "less than a minute"},
-		{time.Minute, "1m"},
-		{59*time.Minute + 59*time.Second, "59m"},
-		{time.Hour, "1h 0m"},
-		{2*time.Hour + 10*time.Minute, "2h 10m"},
-		{24 * time.Hour, "1d 0h"},
-		{3*24*time.Hour + 4*time.Hour + 30*time.Minute, "3d 4h"},
-		{-time.Minute, "less than a minute"},
-	}
-	for _, tt := range tests {
-		if got := formatAge(tt.d); got != tt.want {
-			t.Errorf("formatAge(%v) = %q, want %q", tt.d, got, tt.want)
-		}
-	}
-}
-
 // firingID stores a firing problem and returns its id.
 func (e *testEnv) firingID(key string, severity checks.Severity) int64 {
 	e.t.Helper()

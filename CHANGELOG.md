@@ -6,6 +6,22 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- Mails now have an HTML part next to the text (`multipart/alternative`): one card per problem with a coloured severity badge, and a Details button when `SMOKEALARM_BASE_URL` is set. Mail programs that show only text get the same content as before.
+- Message template `mail.html.tmpl` (Helm: `templates`) replaces the HTML part. It is an html/template, so every text from the cluster is escaped. The German example `message-templates-de.yaml` has one.
+- Template field `.Duration`: how long a resolved problem lasted, e.g. `3m` or `2h 10m`.
+
+### Changed
+
+- Resolved problems in the mail show their last severity (`[WARNING] VolumeAlmostFull`) instead of `[RESOLVED]`, and the Resolved line says how long the problem lasted: `Resolved: 2026-11-08 03:04:14 CET (after 3m)`.
+- If you have your own `mail.tmpl` but no `mail.html.tmpl`, mails stay text only, so your text is not hidden behind the built-in HTML; the status page says "text only" next to the templates. Add a `mail.html.tmpl` to get HTML too. If your `mail.html.tmpl` fails with a notification while you have a `mail.tmpl`, that mail goes out as text only too.
+- A certificate that expires or expired less than a minute ago says "less than a minute" instead of "0m", as the web UI already did.
+
+### Fixed
+
+- The German example `message-templates-de.yaml` wrote "UTC" after every time, also when `SMOKEALARM_TIME_ZONE` is another zone. It now writes the zone of the time (`CET`, `CEST`, ...).
+
 ## [0.1.0] - 2026-11-06
 
 The first public release. smokealarm runs inside your cluster, checks it with a fixed set of

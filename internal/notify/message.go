@@ -100,11 +100,31 @@ func splitNodesDown(alerts []Alert) (nodes, others []Alert) {
 // Body renders the plaintext mail body with the built-in template
 // (templates/mail.tmpl).
 func Body(n Notification) (string, error) {
+	return builtinBody(newTemplateData(n, "mail"))
+}
+
+// HTMLBody renders the HTML mail body with the built-in template
+// (templates/mail.html.tmpl).
+func HTMLBody(n Notification) (string, error) {
+	return builtinHTMLBody(newTemplateData(n, "mail"))
+}
+
+// builtinBody renders the built-in text of a mail.
+func builtinBody(data templateData) (string, error) {
 	tmpl, err := builtinTemplate(mailFile)
 	if err != nil {
 		return "", err
 	}
-	return render(tmpl, newTemplateData(n, "mail"))
+	return render(tmpl, data)
+}
+
+// builtinHTMLBody renders the built-in HTML of a mail.
+func builtinHTMLBody(data templateData) (string, error) {
+	tmpl, err := builtinHTMLTemplate()
+	if err != nil {
+		return "", err
+	}
+	return render(tmpl, data)
 }
 
 // oneLine puts a text on a single line. Part of a message comes from the

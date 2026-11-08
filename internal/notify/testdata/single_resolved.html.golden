@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>1 resolved</title>
+</head>
+<body style="margin:0;padding:0;background:#f1f3f4;">
+<div style="display:none;max-height:0;overflow:hidden;">1 resolved</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f1f3f4;">
+<tr><td align="center" style="padding:24px 12px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+<tr><td style="padding:0 0 4px 0;font-size:12px;font-weight:bold;letter-spacing:1px;color:#5f6368;">SMOKEALARM</td></tr>
+<tr><td style="padding:0;font-size:20px;font-weight:bold;color:#202124;">1 resolved</td></tr>
+<tr><td style="padding:24px 0 8px 0;font-size:12px;font-weight:bold;letter-spacing:1px;color:#5f6368;text-transform:uppercase;">Resolved</td></tr>
+<tr><td style="padding:0 0 12px 0;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:separate;background:#ffffff;border:1px solid #e0e0e0;border-left:4px solid #2e7d32;border-radius:6px;">
+<tr><td style="padding:12px 16px;">
+<table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
+<tr><td colspan="2" style="padding:0 0 8px 0;"><span style="display:inline-block;padding:2px 8px;border-radius:4px;background:#e8eaed;color:#5f6368;font-size:11px;font-weight:bold;letter-spacing:0.5px;">CRITICAL</span> <strong style="font-size:15px;color:#202124;">CrashLoopBackOff</strong></td></tr>
+<tr><td style="padding:2px 12px 2px 0;color:#5f6368;font-size:13px;white-space:nowrap;vertical-align:top;">Object</td><td style="padding:2px 0;font-size:13px;color:#202124;word-break:break-word;">Pod media/jellyfin</td></tr>
+<tr><td style="padding:2px 12px 2px 0;color:#5f6368;font-size:13px;white-space:nowrap;vertical-align:top;">Message</td><td style="padding:2px 0;font-size:13px;color:#202124;word-break:break-word;">container jellyfin keeps crashing (7 restarts), last exit code 137 (Error)</td></tr>
+<tr><td style="padding:2px 12px 2px 0;color:#5f6368;font-size:13px;white-space:nowrap;vertical-align:top;">Since</td><td style="padding:2px 0;font-size:13px;color:#202124;word-break:break-word;">2026-11-03 10:00:00 UTC</td></tr>
+<tr><td style="padding:2px 12px 2px 0;color:#5f6368;font-size:13px;white-space:nowrap;vertical-align:top;">Resolved</td><td style="padding:2px 0;font-size:13px;color:#2e7d32;">2026-11-03 12:30:00 UTC (after 2h 30m)</td></tr>
+</table>
+</td></tr>
+</table>
+</td></tr>
+<tr><td style="padding:16px 0 0 0;">
+<table role="presentation" cellpadding="0" cellspacing="0"><tr><td bgcolor="#1a73e8" style="border-radius:6px;background:#1a73e8;">
+<a href="https://smokealarm.example.com" style="display:inline-block;padding:10px 20px;border-radius:6px;color:#ffffff;font-size:14px;font-weight:bold;text-decoration:none;">Details</a>
+</td></tr></table>
+</td></tr>
+</table>
+</td></tr>
+</table>
+</body>
+</html>
