@@ -31,7 +31,7 @@ A short chat text in German:
 
 A mail has a text part and an HTML part; mail programs show the HTML one. `mail.html.tmpl` is an [html/template](https://pkg.go.dev/html/template): it gets the same fields and functions, and escapes every value, so a message from the cluster can never add markup or a link, and a `.BaseURL` that is not a web address becomes `#ZgotmplZ`. Mail programs know little CSS, so use tables and inline `style` attributes, and nothing loaded from elsewhere (no images, no web fonts).
 
-If you have your own `mail.tmpl` but no `mail.html.tmpl`, the mail is sent as text only, because mail programs would otherwise show the built-in English HTML and hide your text. To keep your text and get HTML too, add a `mail.html.tmpl`; the German example has one.
+If you have your own `mail.tmpl` but no `mail.html.tmpl`, the mail is sent as text only, because mail programs would otherwise show the built-in English HTML and hide your text. To keep your text and get HTML too, add a `mail.html.tmpl`; the German example has one. The status page then says "text only" next to the templates of the mail. If your `mail.html.tmpl` fails with a real notification, the mail gets the built-in HTML instead, or goes out as text only if you also have a `mail.tmpl`.
 
 ## Fields
 
