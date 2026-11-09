@@ -251,8 +251,13 @@ func takeScreenshot(t *testing.T, chrome, pageURL, file string, shot screenshot)
 		fmt.Sprintf("--window-size=%d,%d", shot.width, shot.height),
 		"--screenshot=" + file,
 	}
+	// Always set the color scheme: without it headless Chrome follows the
+	// system setting, and on a Mac in dark mode the light images come out dark.
+	// 0 is dark, 1 is light.
 	if shot.dark {
-		args = append(args, "--force-dark-mode")
+		args = append(args, "--blink-settings=preferredColorScheme=0")
+	} else {
+		args = append(args, "--blink-settings=preferredColorScheme=1")
 	}
 	if os.Geteuid() == 0 {
 		// Chrome does not start as root with its sandbox, e.g. in a container.
