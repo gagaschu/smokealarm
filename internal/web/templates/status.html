@@ -27,14 +27,15 @@
 {{else}}
 <div class="table-wrap">
 <table>
-  <thead><tr><th>Target</th><th>State</th><th>Last sent</th><th>Last error</th></tr></thead>
+  <thead><tr><th>Target</th><th>State</th><th>Last sent</th><th>Last error</th><th>Notifications</th></tr></thead>
   <tbody>
     {{range .Status.Targets}}
     <tr>
       <td class="nowrap mono" data-label="Target">{{.Description}}<span class="below">{{if .CriticalOnly}}critical problems only{{else}}all problems{{end}}</span>{{if .Templates}}<span class="below">templates: {{.Templates}}</span>{{end}}</td>
-      <td class="nowrap" data-label="State">{{if .LastError}}<span class="pill alert">sending failed</span>{{else if .TemplateError}}<span class="pill alert">built-in template used</span>{{else}}<span class="pill ok">ok</span>{{end}}</td>
+      <td class="nowrap" data-label="State">{{if .MutedSince}}<span class="pill">off</span><span class="below">{{if .Unmuting}}being switched on{{else}}since {{.MutedSince}}{{end}}</span>{{else if .LastError}}<span class="pill alert">sending failed</span>{{else if .TemplateError}}<span class="pill alert">built-in template used</span>{{else}}<span class="pill ok">ok</span>{{end}}</td>
       <td class="nowrap time" data-label="Last sent">{{if .LastSentAt}}{{.LastSentAt}}{{else}}<span class="footnote">nothing since the start</span>{{end}}</td>
       <td class="wrap" data-label="Last error">{{if .LastError}}<span class="error">{{.LastError}}</span> <span class="footnote">({{.LastErrorAt}})</span>{{end}}{{if .TemplateError}}<span class="below"><span class="error">{{.TemplateError}}</span> <span class="footnote">({{.TemplateErrorAt}})</span></span>{{end}}</td>
+      <td class="nowrap" data-label="Notifications">{{if and .MutedSince (not .Unmuting)}}<form method="post" action="{{.UnmuteURL}}"><button class="small" type="submit">{{template "icon-undo"}}Switch on</button></form>{{else}}<form method="post" action="{{.MuteURL}}"><button class="small" type="submit">{{template "icon-bell-off"}}Switch off</button></form>{{end}}</td>
     </tr>
     {{end}}
   </tbody>

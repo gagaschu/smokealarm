@@ -15,11 +15,17 @@ import (
 
 // notify tells every target what it has not been told yet. The targets are
 // independent: one that fails does not stop the others, and only it is tried
-// again at the next run.
+// again at the next run. A target that is switched off is skipped completely,
+// also while it waits to be switched on, so its markers stay as they are and
+// finishMutes decides what it hears once it is on again.
 func (e *Engine) notify(ctx context.Context, unknown []string, now time.Time) error {
 	silenced, err := e.Store.DowntimeKeys(ctx)
 	if err != nil {
 		return fmt.Errorf("load downtimes: %w", err)
+	}
+	muted, err := e.Store.TargetMutes(ctx)
+	if err != nil {
+		return fmt.Errorf("load muted targets: %w", err)
 	}
 	open, err := e.Store.OpenRecords(ctx)
 	if err != nil {
@@ -27,6 +33,9 @@ func (e *Engine) notify(ctx context.Context, unknown []string, now time.Time) er
 	}
 	var errs []error
 	for _, target := range e.Notifiers {
+		if _, off := muted[target.Name()]; off {
+			continue
+		}
 		if err := e.notifyTarget(ctx, target, unknown, silenced, open, now); err != nil {
 			errs = append(errs, err)
 		}

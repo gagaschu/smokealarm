@@ -12,6 +12,16 @@ A target you add later doesn't get the history. In its first run it hears about 
 
 The first start after upgrading from a version without targets takes over what the old version already reported, so nothing is sent twice. A target you add in that same step only hears what comes next.
 
+## Switching a target off
+
+On the status page, every target has a **Switch off** button. Use it when a target is not to be bothered for a while, for example a chat during planned work, while the other targets keep working. It switches off one target only; each Telegram chat is its own target, so you switch off one chat at a time. The log-only fallback (used when no target is set up) has no button.
+
+While a target is off, it gets nothing: no first message, no reminder and no "resolved". The other targets are not affected. The overview names every target that is off, with the time it was switched off, and links to the status page, also when everything else is fine. A target stays off until you switch it on, also across restarts. There is no automatic end.
+
+**Switch on** works like the end of a [downtime](how-it-works.md#downtimes), for this one target. It takes effect in the next run, so it can take until then; the status page says "being switched on" in the meantime. What is still firing and not acknowledged is reported as new, as if the target had just learned about it. What ended while the target was off stays silent, and so does a problem that is already gone but waits for `SMOKEALARM_RESOLVE_AFTER`. Acknowledged problems and problems in a downtime stay silent, as everywhere else. A problem that this run cannot judge (the connection to the Kubernetes API is incomplete, its check cannot run, or the usage of its volume could not be measured) is left as it was, so that nothing is reported that may be gone: if the target heard about it before it was switched off, it is not told again, and it hears the end. Switching on does not wait for such problems. Switching on also clears the last sending error of the target, because what it still owes is sent again or is over.
+
+If you press **Switch off** while a target is waiting to be switched on, it stays off. A target you remove from the configuration forgets that it was off; if you add it back, it counts as new and is on.
+
 ## Secrets and network
 
 Tokens and webhook URLs are secrets: whoever has one can post to your channel. The Helm chart keeps them in its Secret (or reads them from `existingSecret`), never as plain values in the Deployment. They never show up in the log, in error messages or on the status page. The status page only shows the name of the target, such as `slack`, `webhook`, `ntfy` or `telegram (chat -1001234567890)`.

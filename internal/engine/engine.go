@@ -140,7 +140,14 @@ func (e *Engine) RunOnce(ctx context.Context) error {
 	if err := e.finishDowntimes(ctx, snap, findings, unknown, start); err != nil {
 		errs = append(errs, err)
 	}
+	// finishMutes comes after saveState, so a problem that ended in this run is
+	// already resolved and counts as ended while the target was off: it stays
+	// silent there. Before notify, so the target hears what still fires in this
+	// same run. If saving failed, such a problem would still be "firing" and be
+	// sent as new, then as resolved; the next run finishes the switch-on.
 	if err := e.saveState(ctx, snap, findings, unknown, start); err != nil {
+		errs = append(errs, err)
+	} else if err := e.finishMutes(ctx, snap, unknown, start); err != nil {
 		errs = append(errs, err)
 	}
 	if err := e.notify(ctx, unknown, start); err != nil {

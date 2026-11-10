@@ -1,4 +1,13 @@
 {{define "content"}}
+{{if .MutedTargets}}
+<aside class="hint targets-off">
+  {{template "icon-info"}}
+  <div>
+    {{range .MutedTargets}}<p><strong>Notifications are off</strong> for {{.Description}} (since {{.Since}}{{if .Unmuting}}, being switched on{{end}}).</p>
+    {{end}}<p><a href="/status">Status</a></p>
+  </div>
+</aside>
+{{end}}
 {{with .APIProblem}}
 <div class="hint api-problem">
   {{template "icon-info"}}

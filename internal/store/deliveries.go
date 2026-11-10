@@ -217,6 +217,10 @@ func forgetTarget(ctx context.Context, tx *sql.Tx, name string) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM deliveries WHERE target = ?`, name); err != nil {
 		return fmt.Errorf("delete deliveries of notification target %s: %w", name, err)
 	}
+	// A target that comes back starts afresh, switched on.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM target_mutes WHERE target = ?`, name); err != nil {
+		return fmt.Errorf("delete mute of notification target %s: %w", name, err)
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM targets WHERE name = ?`, name); err != nil {
 		return fmt.Errorf("delete notification target %s: %w", name, err)
 	}

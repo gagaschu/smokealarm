@@ -8,6 +8,7 @@ All notable changes to this project are documented here. The format is based on
 
 ### Added
 
+- Notification targets can be switched off and on on the status page. While a target is off it sends nothing; when it is switched on it reports what is still firing as new. The overview names every target that is off.
 - Mails now have an HTML part next to the text (`multipart/alternative`): one card per problem with a coloured severity badge, and a Details button when `SMOKEALARM_BASE_URL` is set. Mail programs that show only text get the same content as before.
 - Message template `mail.html.tmpl` (Helm: `templates`) replaces the HTML part. It is an html/template, so every text from the cluster is escaped. The German example `message-templates-de.yaml` has one.
 - Template field `.Duration`: how long a resolved problem lasted, e.g. `3m` or `2h 10m`.

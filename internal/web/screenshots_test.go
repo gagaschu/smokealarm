@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -35,6 +36,13 @@ import (
 // screenshotDir is where the README and the docs expect the images, seen from this package.
 const screenshotDir = "../../docs/screenshots"
 
+// framedWindowWidth is the browser window for images narrower than it, such as
+// the phone images. Chrome on macOS does not make a window narrower than about
+// 500 CSS pixels: the page would be laid out for that width, but the image cut
+// at the requested one. So a narrow page is shown in an iframe of its own size
+// inside a wider window, and the image is cut to the iframe afterwards.
+const framedWindowWidth = 800
+
 // screenshot is one image for the README or the docs.
 type screenshot struct {
 	file   string // file name in screenshotDir
@@ -44,6 +52,13 @@ type screenshot struct {
 	height int
 	trim   bool // cut off the empty background below the content
 }
+
+// framed says that the image is narrower than a window can be on every system,
+// see framedWindowWidth.
+func (s screenshot) framed() bool { return s.width < framedWindowWidth }
+
+// windowWidth is the width of the browser window in CSS pixels.
+func (s screenshot) windowWidth() int { return max(s.width, framedWindowWidth) }
 
 func screenshots() []screenshot {
 	return []screenshot{
@@ -73,7 +88,14 @@ func TestScreenshots(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		takeScreenshot(t, chrome, server.URL+shot.path, file, shot)
+		pageURL := server.URL + shot.path
+		if shot.framed() {
+			pageURL = fmt.Sprintf("%s/phone%s?width=%d&height=%d", server.URL, shot.path, shot.width, shot.height)
+		}
+		takeScreenshot(t, chrome, pageURL, file, shot)
+		if shot.framed() {
+			cropTo(t, file, 2*shot.width, 2*shot.height) // twice the density, see takeScreenshot
+		}
 		if shot.trim {
 			trimBackground(t, file)
 		}
@@ -95,6 +117,11 @@ func screenshotPages(t *testing.T) http.Handler {
 
 	pages := map[string]string{}
 	pages["/all-good"] = get("/") // before there are any problems
+	// ntfy is switched off from here on, so the overview and the status page
+	// show it; the all-good page above stays as it was.
+	if rec := e.do(http.MethodPost, "/targets/ntfy/mute", nil, cookie); rec.Code != http.StatusSeeOther {
+		t.Fatalf("switch ntfy off: status %d", rec.Code)
+	}
 	insertScreenshotProblems(t, e, cookie)
 	insertScreenshotHistory(t, e)
 	pages["/overview"] = get("/")
@@ -105,11 +132,43 @@ func screenshotPages(t *testing.T) http.Handler {
 	mux.Handle("GET /static/", e.handler)
 	for path, html := range pages {
 		mux.HandleFunc("GET "+path, func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = io.WriteString(w, html) // a failed write shows up in the image
+			writeHTML(w, html)
 		})
 	}
-	return securityHeaders(mux)
+
+	// The pages of the framed images (see framedWindowWidth) go without the
+	// security headers, which forbid frames and the inline style of the frame.
+	outer := http.NewServeMux()
+	outer.Handle("/", securityHeaders(mux))
+	outer.HandleFunc("GET /frame/{page}", func(w http.ResponseWriter, r *http.Request) {
+		html, found := pages["/"+r.PathValue("page")]
+		if !found {
+			http.NotFound(w, r)
+			return
+		}
+		writeHTML(w, html)
+	})
+	outer.HandleFunc("GET /phone/{page}", phoneFrame)
+	return outer
+}
+
+// phoneFrame shows a page in an iframe of the size in the query, at the top
+// left of the window.
+func phoneFrame(w http.ResponseWriter, r *http.Request) {
+	width, errW := strconv.Atoi(r.URL.Query().Get("width"))
+	height, errH := strconv.Atoi(r.URL.Query().Get("height"))
+	if errW != nil || errH != nil {
+		http.Error(w, "width and height are required", http.StatusBadRequest)
+		return
+	}
+	writeHTML(w, fmt.Sprintf(`<!doctype html><html><body style="margin:0">`+
+		`<iframe src="/frame/%s" width="%d" height="%d" style="border:0;display:block"></iframe></body></html>`,
+		url.PathEscape(r.PathValue("page")), width, height))
+}
+
+func writeHTML(w http.ResponseWriter, html string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = io.WriteString(w, html) // a failed write shows up in the image
 }
 
 // screenshotStatus is what the engine reports: mail and ntfy are set up, and Argo CD is
@@ -243,11 +302,16 @@ func takeScreenshot(t *testing.T, chrome, pageURL, file string, shot screenshot)
 		"--hide-scrollbars",
 		"--force-device-scale-factor=2",  // sharp on high-resolution screens
 		"--force-prefers-reduced-motion", // no animation caught halfway
-		fmt.Sprintf("--window-size=%d,%d", shot.width, shot.height),
+		fmt.Sprintf("--window-size=%d,%d", shot.windowWidth(), shot.height),
 		"--screenshot=" + file,
 	}
+	// Always set the color scheme: without it headless Chrome follows the
+	// system setting, and on a Mac in dark mode the light images come out dark.
+	// 0 is dark, 1 is light.
 	if shot.dark {
-		args = append(args, "--force-dark-mode")
+		args = append(args, "--blink-settings=preferredColorScheme=0")
+	} else {
+		args = append(args, "--blink-settings=preferredColorScheme=1")
 	}
 	if os.Geteuid() == 0 {
 		// Chrome does not start as root with its sandbox, e.g. in a container.
@@ -288,6 +352,19 @@ func trimBackground(t *testing.T, file string) {
 	trimmed := image.NewRGBA(image.Rect(0, 0, bounds.Dx(), bottom-bounds.Min.Y))
 	draw.Draw(trimmed, trimmed.Bounds(), img, bounds.Min, draw.Src)
 	writePNG(t, file, trimmed)
+}
+
+// cropTo cuts the image to its top left width × height pixels.
+func cropTo(t *testing.T, file string, width, height int) {
+	t.Helper()
+	img := readPNG(t, file)
+	bounds := img.Bounds()
+	if bounds.Dx() < width || bounds.Dy() < height {
+		t.Fatalf("%s is %dx%d, smaller than %dx%d", file, bounds.Dx(), bounds.Dy(), width, height)
+	}
+	cropped := image.NewRGBA(image.Rect(0, 0, width, height))
+	draw.Draw(cropped, cropped.Bounds(), img, bounds.Min, draw.Src)
+	writePNG(t, file, cropped)
 }
 
 // rowHasOnly reports whether every pixel in row y has the given color.

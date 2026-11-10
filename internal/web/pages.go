@@ -3,6 +3,7 @@ package web
 import (
 	"net"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -50,7 +51,8 @@ type page struct {
 	AcknowledgedAny   bool // the same for removing an acknowledgement
 	WaitingFirstRun   bool
 	AllGood           bool
-	APIProblem        *apiProblemView // nil if the data is up to date
+	APIProblem        *apiProblemView   // nil if the data is up to date
+	MutedTargets      []mutedTargetView // notification targets that are switched off
 	LastRun           string
 	LastRunAgo        string
 
@@ -129,6 +131,13 @@ type targetView struct {
 	// template, because a user template failed.
 	TemplateError   string
 	TemplateErrorAt string
+
+	// The buttons post to MuteURL and UnmuteURL, escaped here so that the
+	// template stays simple. A target that is off has MutedSince set.
+	MuteURL    string
+	UnmuteURL  string
+	MutedSince string
+	Unmuting   bool // switch-on requested, the engine has not finished it yet
 }
 
 type checkView struct {
@@ -266,6 +275,11 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 	data.HeldBack = heldBackViews(held, now, s.zone())
 
 	status := s.Status()
+	data.MutedTargets, err = s.mutedTargets(r.Context(), status.Targets)
+	if err != nil {
+		s.serverError(w, "load muted targets", err)
+		return
+	}
 	lastRun := status.LastRun
 	data.WaitingFirstRun = lastRun.IsZero()
 	data.APIProblem = newAPIProblemView(status.APIProblem, now, s.zone())
@@ -460,14 +474,19 @@ func (s *Server) history(w http.ResponseWriter, r *http.Request) {
 }
 
 // status shows how smokealarm itself is doing.
-func (s *Server) status(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	st := s.Status()
+	mutes, err := s.Store.TargetMutes(r.Context())
+	if err != nil {
+		s.serverError(w, "load target mutes", err)
+		return
+	}
 
 	view := statusView{
 		LastRun:      formatOptionalTime(st.LastRun, s.zone()),
 		LastRunError: st.LastRunError,
 		APIProblem:   newAPIProblemView(st.APIProblem, s.Now(), s.zone()),
-		Targets:      targetViews(st.Targets, s.zone()),
+		Targets:      targetViews(st.Targets, mutes, s.zone()),
 	}
 	view.LogOnly = len(st.Targets) == 1 && st.Targets[0].Name == "log"
 	for _, c := range st.Checks {
@@ -478,10 +497,13 @@ func (s *Server) status(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-func targetViews(targets []engine.TargetStatus, loc *time.Location) []targetView {
+func targetViews(targets []engine.TargetStatus, mutes map[string]store.TargetMute, loc *time.Location) []targetView {
 	var views []targetView
 	for _, t := range targets {
-		views = append(views, targetView{
+		escaped := url.PathEscape(t.Name)
+		view := targetView{
+			MuteURL:         "/targets/" + escaped + "/mute",
+			UnmuteURL:       "/targets/" + escaped + "/unmute",
 			Description:     t.Description,
 			CriticalOnly:    t.CriticalOnly,
 			LastSentAt:      formatOptionalTime(t.LastSentAt, loc),
@@ -490,7 +512,12 @@ func targetViews(targets []engine.TargetStatus, loc *time.Location) []targetView
 			Templates:       t.Templates,
 			TemplateError:   t.TemplateError,
 			TemplateErrorAt: formatOptionalTime(t.TemplateErrorAt, loc),
-		})
+		}
+		if m, off := mutes[t.Name]; off {
+			view.MutedSince = m.MutedAt.In(loc).Format(timeFormat)
+			view.Unmuting = m.UnmuteRequestedAt != nil
+		}
+		views = append(views, view)
 	}
 	return views
 }
