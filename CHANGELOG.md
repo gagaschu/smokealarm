@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-10
+
 ### Added
 
 - Notification targets can be switched off and on on the status page. While a target is off it sends nothing; when it is switched on it reports what is still firing as new. The overview names every target that is off.
@@ -62,5 +64,6 @@ checks that need no configuration, and tells you when a problem starts or ends.
 - Container image `ghcr.io/gagaschu/smokealarm` for `linux/amd64` and `linux/arm64`: one static binary on `distroless/static:nonroot`, writes only to `/data` (SQLite).
 - Helm chart `oci://ghcr.io/gagaschu/charts/smokealarm` (source in `deploy/helm/smokealarm`) with read-only RBAC, switches for the optional permissions, and examples in `deploy/helm/examples` ([docs/installation.md](docs/installation.md)).
 
-[Unreleased]: https://github.com/gagaschu/smokealarm/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/gagaschu/smokealarm/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/gagaschu/smokealarm/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/gagaschu/smokealarm/releases/tag/v0.1.0
