@@ -37,3 +37,5 @@ A release is a Git tag:
 
 The tag `v0.1.0` pushes `:0.1.0` and `:0.1`, `:latest` if it is the highest release tag (a fix `v0.1.1` after `v0.2.0` leaves `latest` on 0.2.0), and after the image the chart as `oci://ghcr.io/gagaschu/charts/smokealarm` version `0.1.0`. Chart versions are only published from release tags, never from `main`. A pre-release such as `v0.2.0-rc.1` pushes only the image `:0.2.0-rc.1`, no chart; try it from a checkout with `--set image.tag=0.2.0-rc.1`. The workflow fails before building if the tag does not match the chart, because the chart uses `appVersion` as its default image tag.
 
+Last, the workflow creates the GitHub release for the tag (a re-run updates it). Its notes are the tag's section of CHANGELOG.md, printed by [cmd/releasenotes](../cmd/releasenotes/main.go) (`go run ./cmd/releasenotes v0.2.0` shows them), plus the image and chart. A pre-release is marked as one and takes its own section, else the one of its version, else `## [Unreleased]`, skipping empty ones; only its own section adds the compare link. "Latest" follows the same rule as the image tag. The workflow fails before building if that section is missing or empty.
+
