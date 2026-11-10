@@ -5,8 +5,9 @@
 //
 // A release (v1.2.3) needs its own section "## [1.2.3] - <date>". A pre-release
 // (v1.2.3-rc.1) takes its own section, else the one of 1.2.3, else
-// "## [Unreleased]". It fails if that section is missing or empty, so a tag
-// without a changelog fails before anything is built.
+// "## [Unreleased]"; an empty section is skipped. It fails if there is no
+// non-empty section, so a tag without a changelog fails before anything is
+// built.
 package main
 
 import (
@@ -61,41 +62,58 @@ func notesFor(changelog, version string) (string, error) {
 	if m[2] != "" {
 		names = append(names, m[1], "Unreleased")
 	}
+	empty := ""
 	for _, name := range names {
 		body, ok := section(changelog, name)
 		if !ok {
 			continue
 		}
 		if body == "" {
-			return "", fmt.Errorf("section [%s] in the changelog is empty", name)
+			if empty == "" {
+				empty = name
+			}
+			continue
 		}
-		if link, ok := linkFor(changelog, name); ok && name != "Unreleased" {
+		// Only the tag's own section: the link of 1.2.3 for v1.2.3-rc.1 would
+		// point at a tag that does not exist yet.
+		if link, ok := linkFor(changelog, name); ok && name == full {
 			body += "\n\n**Full Changelog**: " + link
 		}
 		return body + "\n", nil
+	}
+	if empty != "" {
+		return "", fmt.Errorf("section [%s] in the changelog is empty", empty)
 	}
 	return "", fmt.Errorf("the changelog has no section [%s]", strings.Join(names, "], ["))
 }
 
 // section returns the trimmed text under "## [name]" up to the next "## "
-// heading or the link definitions at the end.
+// heading. The last section ends before the link definitions at the end of
+// the changelog; link definitions inside a section are kept.
 func section(changelog, name string) (string, bool) {
 	var body []string
-	found := false
+	found, last := false, true
 	for line := range strings.SplitSeq(changelog, "\n") {
 		line = strings.TrimRight(line, "\r")
 		if strings.HasPrefix(line, "## ") {
 			if found {
+				last = false
 				break
 			}
 			found = line == "## ["+name+"]" || strings.HasPrefix(line, "## ["+name+"] ")
 			continue
 		}
-		if found && linkRe.MatchString(line) {
-			break
-		}
 		if found {
 			body = append(body, line)
+		}
+	}
+	if last {
+		for len(body) > 0 {
+			l := body[len(body)-1]
+			if strings.TrimSpace(l) != "" && !linkRe.MatchString(l) {
+				break
+			}
+			body = body[:len(body)-1]
 		}
 	}
 	return strings.TrimSpace(strings.Join(body, "\n")), found
