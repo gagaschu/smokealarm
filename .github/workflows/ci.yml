@@ -7,6 +7,8 @@
 #               :latest; after the image the Helm chart as
 #               oci://ghcr.io/gagaschu/charts/smokealarm, version 1.2.3.
 #               A pre-release such as v1.2.3-rc.1 pushes only :1.2.3-rc.1.
+#               At the end a GitHub release with the notes from CHANGELOG.md
+#               (a pre-release is marked as one).
 #
 # A version tag must match version/appVersion in the Helm chart, because the
 # chart uses appVersion as its default image tag.
@@ -70,12 +72,20 @@ jobs:
             exit 1
           fi
 
+      # Fails before anything is built if the changelog has no notes for the
+      # tag (see cmd/releasenotes).
+      - name: Changelog has notes for the tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: go run ./cmd/releasenotes "$GITHUB_REF_NAME" > /dev/null
+
   image:
     needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+    outputs:
+      latest: ${{ steps.release.outputs.latest }}
     steps:
       - uses: actions/checkout@v7
 
@@ -172,3 +182,46 @@ jobs:
         run: |
           echo "$TOKEN" | helm registry login ghcr.io --username "${{ github.actor }}" --password-stdin
           helm push dist/smokealarm-"${GITHUB_REF_NAME#v}".tgz "$CHART_REPO"
+
+  # The GitHub release, last, so it only appears once the image (and for a
+  # release the chart) it names exists. A pre-release skips "chart", which is
+  # why this runs on "skipped" too. "Latest" follows the same rule as the image
+  # tag. A re-run updates the release instead of failing.
+  release:
+    needs: [image, chart]
+    if: >-
+      !cancelled() && startsWith(github.ref, 'refs/tags/v') &&
+      needs.image.result == 'success' &&
+      (needs.chart.result == 'success' || needs.chart.result == 'skipped')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LATEST: ${{ needs.image.outputs.latest == 'true' }}
+        run: |
+          tag="$GITHUB_REF_NAME"
+          version="${tag#v}"
+          case "$tag" in *-*) pre=true ;; *) pre=false ;; esac
+          {
+            go run ./cmd/releasenotes "$tag"
+            echo
+            echo "**Image**: \`$IMAGE:$version\`"
+            if [ "$pre" = false ]; then
+              echo
+              echo "**Helm chart**: \`$CHART_REPO/smokealarm\`, version $version ([installation](https://github.com/gagaschu/smokealarm/blob/main/docs/installation.md))"
+            fi
+          } > notes.md
+          if gh release view "$tag" > /dev/null 2>&1; then
+            gh release edit "$tag" --title "$tag" --notes-file notes.md --prerelease="$pre" --latest="$LATEST"
+          else
+            gh release create "$tag" --verify-tag --title "$tag" --notes-file notes.md --prerelease="$pre" --latest="$LATEST"
+          fi
