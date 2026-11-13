@@ -78,6 +78,10 @@ ingress:
 
 Read [Security](security.md) before you make the UI reachable from outside your network.
 
+## Outside the cluster
+
+smokealarm can also run outside the cluster it watches, so it still reports a cluster that fails as a whole: with Docker Compose or systemd on a host, or in another cluster. See [Outside the cluster](outside-cluster.md).
+
 ## Notifications
 
 Without a notification target, state changes only go to the log. Mail, ntfy, Telegram, Slack, Microsoft Teams and a generic webhook are built in. [Notifications](notifications.md) explains how to set up each one.

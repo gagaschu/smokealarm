@@ -94,4 +94,9 @@ See [Routing](routing.md). Each of these is refused if its target is not configu
 
 ## Outside the cluster
 
-For local runs smokealarm also reads the standard `KUBECONFIG` variable. In a pod it uses the service account.
+smokealarm can watch a cluster from outside: from a host, or from a pod in another cluster. See [Outside the cluster](outside-cluster.md).
+
+| Variable | Default | Description |
+|---|---|---|
+| `KUBECONFIG` | – | The standard variable of kubectl: the kubeconfig file (or files, separated by `:`). If set, smokealarm uses it even in a pod, where it would otherwise use the service account. Without it, outside a pod smokealarm reads `~/.kube/config`. |
+| `SMOKEALARM_KUBE_CONTEXT` | (the current context) | The context of the kubeconfig to watch. Set, it also makes smokealarm use the kubeconfig in a pod. An unknown context stops the start. The chart sets it from `kubeconfig.context`. |
