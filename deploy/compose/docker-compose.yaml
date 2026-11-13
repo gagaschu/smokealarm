@@ -1,0 +1,38 @@
+# smokealarm outside the cluster it watches, with Docker Compose.
+# See docs/outside-cluster.md.
+#
+# Next to this file:
+#   kube/kubeconfig   built from the notes of the externalAccess install; its
+#   kube/token        tokenFile is /etc/smokealarm/kube/token
+#   smokealarm.env    the SMOKEALARM_ variables, at least
+#                       SMOKEALARM_ADMIN_USER=admin
+#                       SMOKEALARM_ADMIN_PASSWORD_HASH='$2a$10$...'
+#                     (in single quotes, or Compose reads the $ as variables)
+#                     and the notification targets (docs/configuration.md)
+#
+# The image runs as user 65532, which must be able to read kube/:
+#   chown -R 65532 kube && chmod 0700 kube && chmod 0600 kube/*
+#
+#   docker compose up -d
+services:
+  smokealarm:
+    image: ghcr.io/gagaschu/smokealarm:latest   # better: a fixed version, e.g. :0.2.0
+    restart: unless-stopped
+    env_file: smokealarm.env
+    environment:
+      KUBECONFIG: /etc/smokealarm/kube/kubeconfig
+      # Outside a pod "auto" means text; most log collectors want JSON.
+      SMOKEALARM_LOG_FORMAT: json
+    volumes:
+      - ./kube:/etc/smokealarm/kube:ro
+      # The SQLite database (the image sets SMOKEALARM_DB_PATH=/data/smokealarm.db).
+      - data:/data
+    ports:
+      - "8080:8080"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+
+volumes:
+  data:

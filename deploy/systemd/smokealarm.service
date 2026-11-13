@@ -1,0 +1,53 @@
+# smokealarm outside the cluster it watches, as a systemd service.
+# See docs/outside-cluster.md.
+#
+#   install -m 0755 bin/smokealarm /usr/local/bin/smokealarm
+#   groupadd --system smokealarm && useradd --system --gid smokealarm --no-create-home smokealarm
+#   install -d -m 0750 -g smokealarm /etc/smokealarm /etc/smokealarm/kube
+#   install -m 0640 -g smokealarm smokealarm.env /etc/smokealarm/
+#   install -m 0640 -g smokealarm kubeconfig token /etc/smokealarm/kube/
+#   install -m 0644 deploy/systemd/smokealarm.service /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now smokealarm
+#
+# /etc/smokealarm/smokealarm.env holds the SMOKEALARM_ variables (at least
+# SMOKEALARM_ADMIN_USER and SMOKEALARM_ADMIN_PASSWORD_HASH). kubeconfig and
+# token are built from the notes of the externalAccess install, whose tokenFile
+# is /etc/smokealarm/kube/token.
+
+[Unit]
+Description=smokealarm - Kubernetes health monitoring
+Documentation=https://github.com/gagaschu/smokealarm
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/smokealarm
+EnvironmentFile=/etc/smokealarm/smokealarm.env
+Environment=KUBECONFIG=/etc/smokealarm/kube/kubeconfig
+# The database lives in /var/lib/smokealarm, the only place it writes to.
+Environment=SMOKEALARM_DB_PATH=/var/lib/smokealarm/smokealarm.db
+Environment=TMPDIR=/var/lib/smokealarm
+StateDirectory=smokealarm
+StateDirectoryMode=0750
+User=smokealarm
+Group=smokealarm
+Restart=on-failure
+RestartSec=10s
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target
