@@ -80,10 +80,13 @@ func run() error {
 		}
 	}()
 
-	clients, err := kube.NewClients()
+	clients, err := kube.NewClients(cfg.KubeContext)
 	if err != nil {
 		return fmt.Errorf("create clients: %w", err)
 	}
+	// Which cluster is watched, so a wrong context shows at once. Host is only
+	// the address of the API server, never a credential.
+	logger.Info("connected to the Kubernetes API", "source", clients.Source, "server", clients.Config.Host)
 	activeChecks, unavailable, features, err := chooseChecks(ctx, logger, clients, enabledChecks)
 	if err != nil {
 		return err
