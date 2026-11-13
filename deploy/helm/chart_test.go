@@ -928,6 +928,9 @@ config:
 disabledChecks: [pod-restarts]
 kubelet:
   caConfigMap: kubelet-ca
+kubeconfig:
+  existingSecret: other-cluster
+  context: blue
 smtp:
   host: mail.example.com
   port: 465
@@ -1001,6 +1004,7 @@ func TestEverySettingBecomesAnEnvironmentVariable(t *testing.T) {
 		"SMOKEALARM_DISABLED_CHECKS":          "pod-restarts",
 		"SMOKEALARM_KUBELET_CA_FILE":          "/etc/smokealarm/kubelet-ca/ca.crt",
 		"SMOKEALARM_TEMPLATE_DIR":             "/etc/smokealarm/templates",
+		"SMOKEALARM_KUBE_CONTEXT":             "blue",
 		"SMOKEALARM_SMTP_HOST":                "mail.example.com",
 		"SMOKEALARM_SMTP_PORT":                "465",
 		"SMOKEALARM_SMTP_TLS":                 "tls",
@@ -1107,6 +1111,9 @@ func TestExamplesRender(t *testing.T) {
 				t.Fatalf("helm template failed: %v\n%s", err, out)
 			}
 			r := parseRelease(t, out)
+			if isExternalAccess(r) {
+				return // only the access, nothing to configure: see TestExternalAccess
+			}
 			if !r.has("Deployment") {
 				t.Fatalf("rendered %v, want at least a Deployment", r.kinds())
 			}
@@ -1311,5 +1318,154 @@ func TestOIDCCAFromAConfigMap(t *testing.T) {
 	if !mounted || !found {
 		t.Errorf("want oidc-ca mounted read-only from the ConfigMap oidc-ca (key ca.crt); mounts %+v, volumes %+v",
 			pod.Containers[0].VolumeMounts, pod.Volumes)
+	}
+}
+
+// isExternalAccess says whether r is the access for an instance outside the
+// cluster: the token Secret and no smokealarm.
+func isExternalAccess(r *release) bool {
+	for _, o := range r.objects {
+		if o.GetKind() == "Secret" && strings.HasSuffix(o.GetName(), "-token") {
+			return !r.has("Deployment")
+		}
+	}
+	return false
+}
+
+const externalAccess = "externalAccess:\n  enabled: true\n"
+
+// The access for an instance outside the cluster: the ServiceAccount, the
+// read-only ClusterRole and a token, nothing else, and no password hash needed.
+func TestExternalAccess(t *testing.T) {
+	out, err := helmTemplate(t, "smokealarm", externalAccess)
+	if err != nil {
+		t.Fatalf("helm template without a password hash failed: %v\n%s", err, out)
+	}
+	r := parseRelease(t, out)
+	want := []string{"ClusterRole", "ClusterRoleBinding", "Secret", "ServiceAccount"}
+	if got := r.kinds(); strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("kinds = %v, want %v", got, want)
+	}
+
+	var secret corev1.Secret
+	r.as("Secret", &secret)
+	if secret.Type != corev1.SecretTypeServiceAccountToken || secret.Name != "smokealarm-token" ||
+		secret.Annotations[corev1.ServiceAccountNameKey] != "smokealarm" {
+		t.Errorf("secret = %s %q %v, want a service-account-token for smokealarm", secret.Type, secret.Name, secret.Annotations)
+	}
+	if len(secret.StringData) != 0 || len(secret.Data) != 0 {
+		t.Error("the token Secret must be left for Kubernetes to fill")
+	}
+
+	var binding rbacv1.ClusterRoleBinding
+	r.as("ClusterRoleBinding", &binding)
+	if len(binding.Subjects) != 1 || binding.Subjects[0].Name != "smokealarm" || binding.Subjects[0].Namespace != "monitoring" {
+		t.Errorf("binding subjects = %+v, want the service account", binding.Subjects)
+	}
+	var role rbacv1.ClusterRole
+	r.as("ClusterRole", &role)
+	for _, rule := range role.Rules {
+		for _, verb := range rule.Verbs {
+			if verb != "get" && verb != "list" && verb != "watch" {
+				t.Errorf("rule %+v allows %q, want reading only", rule, verb)
+			}
+		}
+	}
+}
+
+// The rbac switches work the same way for the access, and the notes name the
+// checks the instance outside must switch off.
+func TestExternalAccessFollowsTheRBACSwitches(t *testing.T) {
+	values := externalAccess + "rbac:\n  nodesStats: false\n  argocd: false\n"
+	var role rbacv1.ClusterRole
+	render(t, values).as("ClusterRole", &role)
+	for _, rule := range role.Rules {
+		for _, res := range rule.Resources {
+			if res == "nodes/stats" || res == "applications" {
+				t.Errorf("the ClusterRole grants %s although its switch is off", res)
+			}
+		}
+	}
+
+	notes := helmNotes(t, values)
+	for _, text := range []string{"smokealarm-token", "set users.smokealarm.tokenFile", "SMOKEALARM_DISABLED_CHECKS=pvc-usage,argocd-health,argocd-sync"} {
+		if !strings.Contains(notes, text) {
+			t.Errorf("notes do not contain %q:\n%s", text, notes)
+		}
+	}
+	for _, text := range []string{"port-forward", "Log in as"} {
+		if strings.Contains(notes, text) {
+			t.Errorf("notes contain %q, but smokealarm is not installed here:\n%s", text, notes)
+		}
+	}
+}
+
+func TestExternalAccessRefusesWhatCannotWork(t *testing.T) {
+	tests := map[string]string{
+		"with a kubeconfig":         externalAccess + "kubeconfig:\n  existingSecret: other\n",
+		"without rbac":              externalAccess + "rbac:\n  create: false\n",
+		"without a service account": externalAccess + "serviceAccount:\n  create: false\n",
+	}
+	for name, values := range tests {
+		t.Run(name, func(t *testing.T) {
+			out, err := helmTemplate(t, "smokealarm", values)
+			if err == nil || !strings.Contains(out, "externalAccess.enabled") {
+				t.Errorf("err = %v, output %q; want a hint about externalAccess.enabled", err, out)
+			}
+		})
+	}
+}
+
+// Values of an older release have neither block; the chart still renders.
+func TestNoOutsideBlocks(t *testing.T) {
+	r := render(t, "externalAccess: null\nkubeconfig: null\n")
+	if !r.has("Deployment") || !r.has("ClusterRole") {
+		t.Errorf("kinds = %v, want the usual install", r.kinds())
+	}
+}
+
+// Watching another cluster: the kubeconfig from the Secret, read-only, as
+// KUBECONFIG; no permissions and no token of this cluster.
+func TestKubeconfigFromASecret(t *testing.T) {
+	r := render(t, "kubeconfig:\n  existingSecret: other-cluster\n  key: prod.yaml\n")
+	if r.has("ClusterRole") || r.has("ClusterRoleBinding") {
+		t.Errorf("kinds = %v, want no permissions in this cluster", r.kinds())
+	}
+	env := r.env()
+	if env["KUBECONFIG"] != "/etc/smokealarm/kube/prod.yaml" {
+		t.Errorf("KUBECONFIG = %q", env["KUBECONFIG"])
+	}
+	if _, set := env["SMOKEALARM_KUBE_CONTEXT"]; set {
+		t.Error("SMOKEALARM_KUBE_CONTEXT is set without kubeconfig.context")
+	}
+
+	spec := r.deployment().Spec.Template.Spec
+	if spec.AutomountServiceAccountToken == nil || *spec.AutomountServiceAccountToken {
+		t.Error("the token of this cluster is mounted although the kubeconfig is used")
+	}
+	var sa corev1.ServiceAccount
+	r.as("ServiceAccount", &sa)
+	if sa.AutomountServiceAccountToken == nil || *sa.AutomountServiceAccountToken {
+		t.Error("the ServiceAccount still mounts its token")
+	}
+
+	mounted := false
+	for _, m := range spec.Containers[0].VolumeMounts {
+		if m.Name == "kubeconfig" {
+			mounted = m.MountPath == "/etc/smokealarm/kube" && m.ReadOnly
+		}
+	}
+	if !mounted {
+		t.Errorf("mounts = %+v, want the kubeconfig read-only at /etc/smokealarm/kube", spec.Containers[0].VolumeMounts)
+	}
+	found := false
+	for _, v := range spec.Volumes {
+		if v.Name == "kubeconfig" && v.Secret != nil {
+			// All keys: the kubeconfig may name a token file next to it.
+			found = v.Secret.SecretName == "other-cluster" && len(v.Secret.Items) == 0
+		}
+	}
+	if !found {
+		t.Errorf("volumes = %+v, want the whole Secret other-cluster", spec.Volumes)
 	}
 }
