@@ -144,3 +144,44 @@ values of an older release) do not stop the rendering.
 {{- .caConfigMap -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+"true" if only the access for an instance outside the cluster is installed
+(externalAccess.enabled), else empty. Written so that values without the block
+(an upgrade that reuses older values) do not stop the rendering.
+*/}}
+{{- define "smokealarm.externalAccess" -}}
+{{- with .Values.externalAccess -}}
+{{- if .enabled -}}true{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/* The Secret with the kubeconfig of the cluster to watch, or empty. */}}
+{{- define "smokealarm.kubeconfigSecret" -}}
+{{- with .Values.kubeconfig -}}
+{{- .existingSecret -}}
+{{- end -}}
+{{- end -}}
+
+{{/* The ClusterRole is needed only when smokealarm watches this cluster. */}}
+{{- define "smokealarm.createRBAC" -}}
+{{- if and .Values.rbac.create (not (include "smokealarm.kubeconfigSecret" .)) -}}true{{- end -}}
+{{- end -}}
+
+{{/*
+Stops combinations that cannot work. Included by the ServiceAccount, which is
+rendered in every mode.
+*/}}
+{{- define "smokealarm.validateOutsideModes" -}}
+{{- if include "smokealarm.externalAccess" . -}}
+{{- if include "smokealarm.kubeconfigSecret" . -}}
+{{- fail "externalAccess.enabled and kubeconfig.existingSecret exclude each other: the first installs the access for an instance outside this cluster, the second runs smokealarm here against another cluster. Install them as two releases, one in each cluster." -}}
+{{- end -}}
+{{- if not .Values.rbac.create -}}
+{{- fail "externalAccess.enabled needs rbac.create=true: the access it installs is the ClusterRole." -}}
+{{- end -}}
+{{- if not .Values.serviceAccount.create -}}
+{{- fail "externalAccess.enabled needs serviceAccount.create=true: the token belongs to the ServiceAccount of this release." -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}

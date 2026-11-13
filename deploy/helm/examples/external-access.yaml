@@ -1,0 +1,10 @@
+# Only the access for a smokealarm that runs outside this cluster (on a host
+# with Docker or systemd, or in another cluster): the ServiceAccount, the
+# read-only ClusterRole and a token. smokealarm itself is not installed, so no
+# password hash is needed. The notes after the install show how to build the
+# kubeconfig. See docs/outside-cluster.md.
+#
+#   helm install smokealarm-access oci://ghcr.io/gagaschu/charts/smokealarm -n smokealarm --create-namespace \
+#     -f deploy/helm/examples/external-access.yaml
+externalAccess:
+  enabled: true

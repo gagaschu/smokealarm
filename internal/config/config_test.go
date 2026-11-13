@@ -254,6 +254,30 @@ func TestKubeletCAFileIsRead(t *testing.T) {
 	}
 }
 
+func TestKubeContextIsRead(t *testing.T) {
+	cfg, err := Load(env(map[string]string{"SMOKEALARM_KUBE_CONTEXT": "prod-cluster"}))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.KubeContext != "prod-cluster" {
+		t.Errorf("KubeContext = %q", cfg.KubeContext)
+	}
+	if cfg, _ := Load(env(nil)); cfg.KubeContext != "" {
+		t.Errorf("KubeContext without the variable = %q, want empty", cfg.KubeContext)
+	}
+}
+
+// A context with a space at the end comes from a copy and paste, and would only
+// fail later with "not found".
+func TestInvalidKubeContextIsRefused(t *testing.T) {
+	for _, value := range []string{" prod", "prod ", "prod\n", "pr\x00od"} {
+		_, err := Load(env(map[string]string{"SMOKEALARM_KUBE_CONTEXT": value}))
+		if err == nil || !strings.Contains(err.Error(), "SMOKEALARM_KUBE_CONTEXT") {
+			t.Errorf("SMOKEALARM_KUBE_CONTEXT=%q: err = %v, want an error naming the variable", value, err)
+		}
+	}
+}
+
 // net/smtp refuses to send a password over an unencrypted connection to another
 // host, so every mail would fail at runtime.
 func TestSMTPLoginWithoutEncryption(t *testing.T) {

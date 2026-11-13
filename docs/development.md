@@ -14,6 +14,8 @@ export SMOKEALARM_ADMIN_PASSWORD_HASH="$(make -s hash-password)"
 make run         # runs against the cluster from KUBECONFIG, UI on http://localhost:8080
 ```
 
+To pick another context of your kubeconfig, set `SMOKEALARM_KUBE_CONTEXT`. The start log names the context and the API server.
+
 `make run` sets the user to `admin` and uses plain-text logs and a cookie that works over HTTP. The [variables](configuration.md) override all of this.
 
 `pvc-usage` then calls the kubelets from your machine, with the credentials of your kubeconfig, so the node IPs must be reachable from there. Otherwise the check is skipped with the reason on the status page.

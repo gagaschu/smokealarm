@@ -1,3 +1,5 @@
+{{- /* Not with externalAccess: then only the access is installed. */ -}}
+{{- if not (include "smokealarm.externalAccess" .) }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -33,7 +35,12 @@ spec:
       {{- end }}
     spec:
       serviceAccountName: {{ include "smokealarm.serviceAccountName" . }}
+      {{- if include "smokealarm.kubeconfigSecret" . }}
+      # The kubeconfig is used instead; the token of this cluster is not needed.
+      automountServiceAccountToken: false
+      {{- else }}
       automountServiceAccountToken: true
+      {{- end }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -143,6 +150,15 @@ spec:
             - name: SMOKEALARM_TELEGRAM_CHAT_IDS
               value: {{ join "," . | quote }}
             {{- end }}
+            {{- if include "smokealarm.kubeconfigSecret" . }}
+            # Set, KUBECONFIG wins over the service account: the other cluster is watched.
+            - name: KUBECONFIG
+              value: /etc/smokealarm/kube/{{ .Values.kubeconfig.key | default "config" }}
+            {{- with .Values.kubeconfig.context }}
+            - name: SMOKEALARM_KUBE_CONTEXT
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
             {{- if include "smokealarm.kubeletCAConfigMap" . }}
             - name: SMOKEALARM_KUBELET_CA_FILE
               value: /etc/smokealarm/kubelet-ca/ca.crt
@@ -222,6 +238,11 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+            {{- if include "smokealarm.kubeconfigSecret" . }}
+            - name: kubeconfig
+              mountPath: /etc/smokealarm/kube
+              readOnly: true
+            {{- end }}
             {{- if include "smokealarm.kubeletCAConfigMap" . }}
             - name: kubelet-ca
               mountPath: /etc/smokealarm/kubelet-ca
@@ -245,6 +266,12 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
+        {{- if include "smokealarm.kubeconfigSecret" . }}
+        - name: kubeconfig
+          # The whole Secret: the kubeconfig may point to a token file next to it.
+          secret:
+            secretName: {{ include "smokealarm.kubeconfigSecret" . }}
+        {{- end }}
         {{- if include "smokealarm.kubeletCAConfigMap" . }}
         - name: kubelet-ca
           configMap:
@@ -278,3 +305,4 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+{{- end }}

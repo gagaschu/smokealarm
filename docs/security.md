@@ -8,6 +8,8 @@ The optional permissions each have a switch: `rbac.nodesStats` for `pvc-usage`, 
 
 `nodes/stats` grants resource statistics only: no logs, no command execution, no list of pods. Earlier versions read the stats through the API server, which needs `get` on `nodes/proxy`, and the Kubernetes documentation ([RBAC good practices](https://kubernetes.io/docs/concepts/security/rbac-good-practices/#access-to-proxy-subresource-of-nodes)) warns that this reaches the whole kubelet API. smokealarm now asks the kubelets itself and never needs `nodes/proxy`. The rule only exists while `pvc-usage` is active. If you don't need the check, set `rbac.nodesStats=false` or add `pvc-usage` to `disabledChecks`, and the permission goes away. Values files that still set the old `rbac.nodesProxy` are refused with a hint.
 
+For an instance [outside the cluster](outside-cluster.md), `externalAccess.enabled=true` installs the same ClusterRole with a ServiceAccount and a token Secret, and nothing else. The token doesn't expire. Revoke it by deleting the Secret `<release>-token`. The kubeconfig and the token file built from it give read access to the whole cluster, so keep them readable only by smokealarm. With `kubeconfig.existingSecret`, the chart creates no ClusterRole in the cluster smokealarm runs in and doesn't mount that cluster's service account token.
+
 ## Volume usage and the kubelet
 
 `pvc-usage` calls `https://<node InternalIP>:<kubelet port>/stats/summary` on every Ready node (the port the node publishes, usually 10250) with the service account token. The kubelet checks the token and the permission itself. This needs three things from the cluster. If one is missing, the check is skipped and the status page says which.

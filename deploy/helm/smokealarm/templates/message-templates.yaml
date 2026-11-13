@@ -1,3 +1,5 @@
+{{- /* Not with externalAccess: then only the access is installed. */ -}}
+{{- if not (include "smokealarm.externalAccess" .) }}
 {{- if .Values.templates }}
 # The message templates from the values (docs/message-templates.md). They
 # are mounted at /etc/smokealarm/templates; smokealarm checks them at startup
@@ -10,4 +12,5 @@ metadata:
     {{- include "smokealarm.labels" . | nindent 4 }}
 data:
   {{- toYaml .Values.templates | nindent 2 }}
+{{- end }}
 {{- end }}

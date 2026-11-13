@@ -1,0 +1,13 @@
+# Run smokealarm in this cluster and watch another one, for example from a
+# management cluster. Build the kubeconfig in the other cluster with
+# examples/external-access.yaml, then put it into a Secret here together with
+# the token file it points to (/etc/smokealarm/kube/token):
+#
+#   kubectl -n smokealarm create secret generic other-cluster \
+#     --from-file=config=./kubeconfig --from-file=token=./token
+#   helm install smokealarm oci://ghcr.io/gagaschu/charts/smokealarm -n smokealarm \
+#     -f deploy/helm/examples/watch-other-cluster.yaml --set-string auth.passwordHash="$HASH"
+#
+# No ClusterRole is created here: smokealarm reads nothing in this cluster.
+kubeconfig:
+  existingSecret: other-cluster

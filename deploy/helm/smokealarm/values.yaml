@@ -187,6 +187,31 @@ serviceAccount:
   name: ""
   annotations: {}
 
+# --- Outside the cluster -------------------------------------------------------
+# smokealarm can run outside the cluster it watches: on a host with Docker or
+# systemd, or in another cluster. See docs/outside-cluster.md.
+#
+# externalAccess: install only the access for such an instance in the cluster
+# to watch: the ServiceAccount, the read-only ClusterRole (with the rbac
+# switches above) and a Secret with a token for it. No Deployment, volume,
+# Service or Ingress, and no auth.passwordHash needed. The notes printed after
+# the install show how to build the kubeconfig from that Secret.
+externalAccess:
+  enabled: false
+
+# kubeconfig: watch another cluster from this one. Put a kubeconfig into a
+# Secret in the release namespace, with the token file it names, if any:
+#   kubectl -n smokealarm create secret generic other-cluster \
+#     --from-file=config=./kubeconfig --from-file=token=./token
+# and name it here. The Secret is mounted read-only at /etc/smokealarm/kube (a
+# tokenFile in the kubeconfig is then /etc/smokealarm/kube/token), and
+# KUBECONFIG is set to the file under "key", so it wins over the service account. No ClusterRole is created in this cluster then, and
+# the service account token is not mounted: smokealarm does not read it.
+kubeconfig:
+  existingSecret: ""
+  key: config               # the key in the Secret that holds the kubeconfig
+  context: ""               # SMOKEALARM_KUBE_CONTEXT; "" = the current context of the file
+
 # --- Storage ---------------------------------------------------------------------
 # The history and the login sessions live in a SQLite database on this volume.
 persistence:
