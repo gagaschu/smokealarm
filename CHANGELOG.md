@@ -6,6 +6,17 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- smokealarm can run outside the cluster it watches, so it still reports a cluster that fails as a whole: on a host with Docker Compose or systemd (examples in `deploy/compose/` and `deploy/systemd/`), or in another cluster. See docs/outside-cluster.md.
+- `SMOKEALARM_KUBE_CONTEXT`: the context of the kubeconfig to watch. The start log names the context and the API server.
+- Helm: `externalAccess.enabled` installs only the access for an instance outside the cluster (ServiceAccount, the read-only ClusterRole, a token Secret) and prints how to build the kubeconfig. Example `external-access.yaml`.
+- Helm: `kubeconfig.existingSecret` (with `kubeconfig.key` and `kubeconfig.context`) runs smokealarm against another cluster. No ClusterRole is created in the cluster it runs in. Example `watch-other-cluster.yaml`.
+
+### Changed
+
+- A set `KUBECONFIG` now wins over the service account in a pod as well. Before, it was ignored there.
+
 ## [0.2.0] - 2026-11-10
 
 ### Added

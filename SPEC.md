@@ -166,6 +166,7 @@ Ignoring:
 - Validate at startup; abort with a clear message on errors.
 - Time zone (since phase 25): SMOKEALARM_TIME_ZONE (IANA name, default UTC; `Local` is refused) is the zone for every time shown or entered: web UI, downtime form, mails, chat messages and the times in check messages. Only the display changes: stored times and all comparisons stay absolute (Unix seconds), and the time fields of the webhook JSON (since, resolved_at) stay in UTC; its subject and message are the same texts as for the other targets, with times in the configured zone. In the downtime form, a wall-clock time that exists twice (the clocks go back) is read as the earlier moment that is still in the future, unless the other one is the end of the running downtime, which is then kept. Message templates get their times in this zone.
 - Runs in the cluster (in-cluster config) and locally against KUBECONFIG – for development on macOS (Apple Silicon) against a local k3s.
+- Since phase 32 also as a supported way outside the cluster it watches (a host with Docker Compose or systemd, or a pod in another cluster): a set KUBECONFIG or SMOKEALARM_KUBE_CONTEXT wins over the in-cluster config. The chart can install only the access (externalAccess.enabled: ServiceAccount, the read-only ClusterRole, a token Secret) or run against another cluster (kubeconfig.existingSecret). One instance watches one cluster; a cluster name in the messages is a later phase.
 - Complete table of all variables in docs/configuration.md.
 
 ## Security

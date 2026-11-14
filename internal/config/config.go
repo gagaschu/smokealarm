@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // Config holds all settings.
@@ -55,6 +56,10 @@ type Config struct {
 	// Empty = the built-in messages only. The files are checked at startup by
 	// notify.LoadTemplates, not here, so there is one place for it.
 	TemplateDir string
+	// KubeContext is the kubeconfig context to watch (SMOKEALARM_KUBE_CONTEXT).
+	// Set, it makes smokealarm use the kubeconfig even inside a pod. Empty =
+	// the in-cluster config, or the current context of the kubeconfig.
+	KubeContext string
 }
 
 // Load builds the configuration. The lookup function is injected (instead of
@@ -91,8 +96,12 @@ func Load(getenv func(string) string) (Config, error) {
 		CronJobTimeZone:   r.text("SMOKEALARM_CRONJOB_TIME_ZONE", ""),
 		KubeletCAFile:     r.text("SMOKEALARM_KUBELET_CA_FILE", ""),
 		TemplateDir:       r.text("SMOKEALARM_TEMPLATE_DIR", ""),
+		KubeContext:       r.text("SMOKEALARM_KUBE_CONTEXT", ""),
 	}
 
+	if c := cfg.KubeContext; c != strings.TrimSpace(c) || strings.ContainsFunc(c, unicode.IsControl) {
+		r.fail("SMOKEALARM_KUBE_CONTEXT: must not start or end with spaces or contain control characters")
+	}
 	if cfg.CheckInterval <= 0 {
 		r.fail("SMOKEALARM_CHECK_INTERVAL: must be greater than zero")
 	}

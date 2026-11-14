@@ -67,6 +67,7 @@ For a permanent setup with ingress and TLS, and without `cookieSecure=false`, se
 - [Routing](docs/routing.md): which problems go to which target
 - [Message templates](docs/message-templates.md): your own wording for the messages
 - [Configuration](docs/configuration.md): all environment variables
+- [Outside the cluster](docs/outside-cluster.md): watch a cluster from a host or from another cluster
 - [Login with OIDC](docs/oidc.md): log in through your identity provider, next to the password
 - [Security](docs/security.md): permissions, the kubelet, login
 - [Troubleshooting](docs/troubleshooting.md)

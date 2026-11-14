@@ -1,3 +1,32 @@
+{{- if include "smokealarm.externalAccess" . -}}
+{{- $ns := .Release.Namespace -}}
+{{- $secret := printf "%s-token" (include "smokealarm.fullname" .) -}}
+The access for a smokealarm outside this cluster is installed: the
+ServiceAccount {{ $ns }}/{{ include "smokealarm.serviceAccountName" . }}, its read-only ClusterRole and the token
+in the Secret {{ $ns }}/{{ $secret }}. smokealarm itself is not installed here.
+
+Build a kubeconfig for it (in an empty directory; keep the files private):
+  kubectl -n {{ $ns }} get secret {{ $secret }} -o jsonpath='{.data.token}' | base64 -d > token
+  kubectl -n {{ $ns }} get secret {{ $secret }} -o jsonpath='{.data.ca\.crt}' | base64 -d > ca.crt
+  chmod 600 token
+  kubectl config --kubeconfig=kubeconfig set-cluster watched \
+    --server="$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')" \
+    --certificate-authority=ca.crt --embed-certs
+  kubectl config --kubeconfig=kubeconfig set users.smokealarm.tokenFile /etc/smokealarm/kube/token
+  kubectl config --kubeconfig=kubeconfig set-context watched --cluster=watched --user=smokealarm
+  kubectl config --kubeconfig=kubeconfig use-context watched
+
+Copy kubeconfig and token to the machine that runs smokealarm (the token to
+the path set above) and set KUBECONFIG to the kubeconfig there. The --server
+address must be reachable from that machine. See docs/outside-cluster.md.
+The token is valid until the Secret is deleted.
+{{- with include "smokealarm.disabledChecks" . }}
+
+These checks are switched off here, and their permissions are not granted.
+Switch them off in the instance outside as well, or they fail:
+  SMOKEALARM_DISABLED_CHECKS={{ . }}
+{{- end }}
+{{- else -}}
 smokealarm {{ .Chart.AppVersion }} is installed.
 
 Open the web UI:
@@ -48,4 +77,5 @@ state changes are only written to the log. Check the log with:
 Disabled checks: {{ . }}
 When a check is switched off, its open problems are closed and reported as
 "resolved" in the next mail, although the cause may still exist.
+{{- end }}
 {{- end }}
