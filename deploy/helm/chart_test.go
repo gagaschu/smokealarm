@@ -1373,6 +1373,32 @@ func TestExternalAccess(t *testing.T) {
 	}
 }
 
+// Every template that belongs to smokealarm itself must stay out, also with the
+// options that add objects. A new template without the guard fails here.
+func TestExternalAccessWithEveryOptionInstallsOnlyTheAccess(t *testing.T) {
+	values := externalAccess + `ingress:
+  enabled: true
+templates:
+  subject.tmpl: "{{.Summary}}"
+notifications:
+  ntfy:
+    topic: alarm
+    token: secret
+kubelet:
+  caConfigMap: kubelet-ca
+`
+	want := []string{"ClusterRole", "ClusterRoleBinding", "Secret", "ServiceAccount"}
+	r := render(t, values)
+	if got := r.kinds(); strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("kinds = %v, want %v", got, want)
+	}
+	var secret corev1.Secret
+	r.as("Secret", &secret)
+	if secret.Type != corev1.SecretTypeServiceAccountToken {
+		t.Errorf("the only Secret is %s %q, want the token", secret.Type, secret.Name)
+	}
+}
+
 // The rbac switches work the same way for the access, and the notes name the
 // checks the instance outside must switch off.
 func TestExternalAccessFollowsTheRBACSwitches(t *testing.T) {

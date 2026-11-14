@@ -11,7 +11,7 @@
 #                     and the notification targets (docs/configuration.md)
 #
 # The image runs as user 65532, which must be able to read kube/:
-#   chown -R 65532 kube && chmod 0700 kube && chmod 0600 kube/*
+#   chmod 0700 kube && chmod 0600 kube/* && sudo chown -R 65532 kube
 #
 #   docker compose up -d
 services:

@@ -21,11 +21,11 @@ helm install smokealarm-access oci://ghcr.io/gagaschu/charts/smokealarm \
 
 No password hash is needed for this. The `rbac.*` switches work as usual (see [Security](security.md#permissions-in-the-cluster)). If you turn one off, the notes after the install list the checks you must switch off in the instance outside with `SMOKEALARM_DISABLED_CHECKS`. Otherwise they fail for lack of permission, and `api-connection` reports it.
 
-The token doesn't expire. It stays valid until the Secret `smokealarm-access-token` is deleted. To revoke it, delete the Secret and run `helm upgrade` to get a new token.
+The token doesn't expire. It stays valid until its Secret is deleted. The Secret is called `smokealarm-access-token` for the release name used here; the notes after the install print the name for yours. To revoke the token, delete the Secret and run `helm upgrade` to get a new token.
 
 ## 2. The kubeconfig
 
-The notes after the install print the commands. In an empty directory:
+The notes after the install print the commands, with the name of the Secret for your release. In an empty directory:
 
 ```sh
 kubectl -n smokealarm get secret smokealarm-access-token -o jsonpath='{.data.token}' | base64 -d > token
@@ -53,7 +53,7 @@ smokealarm uses the kubeconfig when `KUBECONFIG` is set or `SMOKEALARM_KUBE_CONT
 level=INFO msg="connected to the Kubernetes API" source="kubeconfig context \"watched\"" server=https://k8s.example.org:6443
 ```
 
-`SMOKEALARM_KUBE_CONTEXT` picks a context from a kubeconfig with several clusters. Without it, smokealarm takes the current context. An unknown context stops the start with an error.
+`SMOKEALARM_KUBE_CONTEXT` picks a context from a kubeconfig with several clusters. Without it, smokealarm takes the current context. An unknown context stops the start with an error. So does a kubeconfig file that doesn't exist or has no current context: smokealarm never falls back to the service account once it was told to use a kubeconfig.
 
 All other settings are the usual [variables](configuration.md).
 
@@ -63,7 +63,8 @@ All other settings are the usual [variables](configuration.md).
 
 ```sh
 mkdir kube && cp kubeconfig token kube/
-sudo chown -R 65532 kube && chmod 0700 kube && chmod 0600 kube/*   # the image runs as user 65532
+chmod 0700 kube && chmod 0600 kube/*
+sudo chown -R 65532 kube   # the image runs as user 65532
 cat > smokealarm.env <<'EOF'
 SMOKEALARM_ADMIN_USER=admin
 SMOKEALARM_ADMIN_PASSWORD_HASH='<the hash, in single quotes>'

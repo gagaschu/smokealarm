@@ -153,7 +153,7 @@ spec:
             {{- if include "smokealarm.kubeconfigSecret" . }}
             # Set, KUBECONFIG wins over the service account: the other cluster is watched.
             - name: KUBECONFIG
-              value: /etc/smokealarm/kube/{{ .Values.kubeconfig.key | default "config" }}
+              value: {{ printf "/etc/smokealarm/kube/%s" (.Values.kubeconfig.key | default "config") | quote }}
             {{- with .Values.kubeconfig.context }}
             - name: SMOKEALARM_KUBE_CONTEXT
               value: {{ . | quote }}
