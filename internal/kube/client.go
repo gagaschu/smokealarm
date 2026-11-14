@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
@@ -31,7 +32,7 @@ type Clients struct {
 // NewClients connects to the cluster. See loadRestConfig for which
 // configuration it uses. kubeContext is SMOKEALARM_KUBE_CONTEXT.
 func NewClients(kubeContext string) (Clients, error) {
-	cfg, source, err := loadRestConfig(os.Getenv, rest.InClusterConfig, kubeContext)
+	cfg, source, err := loadRestConfig(os.Getenv, rest.InClusterConfig, clientcmd.RecommendedHomeFile, kubeContext)
 	if err != nil {
 		return Clients{}, err
 	}
@@ -53,11 +54,13 @@ func NewClients(kubeContext string) (Clients, error) {
 //     inside a pod. That is how an instance in one cluster watches another;
 //     the in-cluster config would silently watch the wrong one.
 //  2. Otherwise inside a pod the service account (inCluster).
-//  3. Otherwise the usual kubeconfig lookup (~/.kube/config).
+//  3. Otherwise the kubeconfig in homeFile (~/.kube/config).
 //
-// getenv and inCluster are injected so tests need no cluster.
-func loadRestConfig(getenv func(string) string, inCluster func() (*rest.Config, error), kubeContext string) (*rest.Config, string, error) {
-	if kubeContext == "" && getenv("KUBECONFIG") == "" {
+// getenv, inCluster and homeFile are injected so tests need no cluster and do
+// not read the kubeconfig of the machine they run on.
+func loadRestConfig(getenv func(string) string, inCluster func() (*rest.Config, error), homeFile, kubeContext string) (*rest.Config, string, error) {
+	files := filepath.SplitList(getenv("KUBECONFIG"))
+	if kubeContext == "" && len(files) == 0 {
 		cfg, err := inCluster()
 		if err == nil {
 			return cfg, "in-cluster", nil
@@ -66,38 +69,53 @@ func loadRestConfig(getenv func(string) string, inCluster func() (*rest.Config, 
 			return nil, "", fmt.Errorf("load in-cluster config: %w", err)
 		}
 	}
-	return loadKubeconfig(getenv("KUBECONFIG"), kubeContext)
+	if len(files) == 0 {
+		files = []string{homeFile}
+	}
+	return loadKubeconfig(files, kubeContext)
 }
 
-// loadKubeconfig reads the kubeconfig files in path (the KUBECONFIG list; empty
-// means ~/.kube/config) and builds the config of kubeContext, or of the
-// current context if that is empty.
-func loadKubeconfig(path, kubeContext string) (*rest.Config, string, error) {
-	// The files are set here instead of read from the environment by
-	// client-go, so tests can pass them.
-	rules := clientcmd.NewDefaultClientConfigLoadingRules()
-	rules.Precedence = []string{clientcmd.RecommendedHomeFile}
-	if path != "" {
-		rules.Precedence = filepath.SplitList(path)
+// loadKubeconfig reads the kubeconfig files and builds the config of
+// kubeContext, or of the current context if that is empty.
+//
+// It never falls back to the in-cluster config: client-go's deferred loader
+// does that for a missing or empty kubeconfig, and smokealarm would then watch
+// the cluster it runs in although it was told to watch another.
+func loadKubeconfig(files []string, kubeContext string) (*rest.Config, string, error) {
+	// client-go skips files that do not exist, so a wrong path would only show
+	// as an empty configuration.
+	found := false
+	for _, file := range files {
+		if _, err := os.Stat(file); err == nil {
+			found = true
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return nil, "", fmt.Errorf("load kubeconfig: %w", err)
+		}
 	}
-	loader := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules,
-		&clientcmd.ConfigOverrides{CurrentContext: kubeContext})
+	list := strings.Join(files, string(filepath.ListSeparator))
+	if !found {
+		return nil, "", fmt.Errorf("load kubeconfig: %s does not exist (set by KUBECONFIG, or ~/.kube/config without it)", list)
+	}
 
-	raw, err := loader.RawConfig()
+	rules := &clientcmd.ClientConfigLoadingRules{Precedence: files}
+	raw, err := rules.Load()
 	if err != nil {
-		return nil, "", fmt.Errorf("load kubeconfig: %w", err)
+		return nil, "", fmt.Errorf("load kubeconfig %s: %w", list, err)
 	}
 	name := raw.CurrentContext
 	if kubeContext != "" {
 		if _, ok := raw.Contexts[kubeContext]; !ok {
-			return nil, "", fmt.Errorf("SMOKEALARM_KUBE_CONTEXT: context %q not found in the kubeconfig", kubeContext)
+			return nil, "", fmt.Errorf("SMOKEALARM_KUBE_CONTEXT: context %q not found in the kubeconfig %s", kubeContext, list)
 		}
 		name = kubeContext
 	}
+	if name == "" {
+		return nil, "", fmt.Errorf("load kubeconfig %s: it has no current-context; set one or name the context with SMOKEALARM_KUBE_CONTEXT", list)
+	}
 
-	cfg, err := loader.ClientConfig()
+	cfg, err := clientcmd.NewNonInteractiveClientConfig(*raw, name, &clientcmd.ConfigOverrides{}, rules).ClientConfig()
 	if err != nil {
-		return nil, "", fmt.Errorf("load kubeconfig: %w", err)
+		return nil, "", fmt.Errorf("load kubeconfig %s: %w", list, err)
 	}
 	return cfg, fmt.Sprintf("kubeconfig context %q", name), nil
 }
